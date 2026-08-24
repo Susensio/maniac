@@ -1,4 +1,3 @@
-import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -44,7 +43,7 @@ def install_manpage(
 ) -> Path:
     """Copy compiled roff manpage into local man directory."""
     src = Path(source_file)
-    dest_dir = Path(os.path.expanduser(str(target_dir)))
+    dest_dir = Path(target_dir).expanduser()
     dest_dir.mkdir(parents=True, exist_ok=True)
 
     dest_file = dest_dir / src.name

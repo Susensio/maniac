@@ -5,9 +5,6 @@ from pathlib import Path
 
 from loguru import logger
 
-# Guard limit to avoid hitting OS ARG_MAX limits
-MAX_PROMPT_LENGTH = 1_500_000
-
 
 def run_llm_synthesis(
     prompt: str,
@@ -15,37 +12,39 @@ def run_llm_synthesis(
     work_base_dir: str | Path = "data/tmp",
     timeout: int = 300,
 ) -> str:
-    """Execute LLM generation via ~/bin/sandbox agy in an isolated directory."""
+    """Execute LLM generation via ~/bin/sandbox agy in an isolated directory using a prompt file."""
     base_dir = Path(work_base_dir).resolve()
     base_dir.mkdir(parents=True, exist_ok=True)
 
     tmp_dir = Path(tempfile.mkdtemp(prefix=f"maniac_{tool_name}_", dir=str(base_dir)))
     logger.debug("Created temporary workspace for LLM at {}", tmp_dir)
 
+    # Write prompt to workspace file to prevent exceeding OS argument length limits
+    prompt_file = tmp_dir / "prompt.md"
+    prompt_file.write_text(prompt, encoding="utf-8")
+
     sandbox_bin = Path.home() / "bin" / "sandbox"
     agy_bin = shutil.which("agy")
 
+    driver_instruction = (
+        f"Read the prompt and context in prompt.md in the current directory, "
+        f"follow all formatting rules and guidelines strictly, "
+        f"and output ONLY the raw synthesized Markdown manpage for '{tool_name}'."
+    )
+
     if sandbox_bin.exists():
-        cmd = [str(sandbox_bin), "agy", "-p"]
+        cmd = [
+            str(sandbox_bin),
+            "agy",
+            "--dangerously-skip-permissions",
+            "-p",
+            driver_instruction,
+        ]
     elif agy_bin:
-        cmd = [agy_bin, "-p"]
+        cmd = [agy_bin, "--dangerously-skip-permissions", "-p", driver_instruction]
     else:
         logger.error("Neither ~/bin/sandbox nor agy found in PATH.")
         raise FileNotFoundError("Neither ~/bin/sandbox nor agy executable found.")
-
-    # Guard against excessively long prompt arguments
-    effective_prompt = prompt
-    if len(effective_prompt) > MAX_PROMPT_LENGTH:
-        logger.warning(
-            "Prompt length ({}) exceeds limit; truncating context.",
-            len(effective_prompt),
-        )
-        effective_prompt = (
-            effective_prompt[:MAX_PROMPT_LENGTH]
-            + "\n\n[Context truncated due to length]"
-        )
-
-    cmd.append(effective_prompt)
 
     try:
         logger.info("Calling LLM synthesis for '{}'...", tool_name)

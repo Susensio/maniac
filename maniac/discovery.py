@@ -204,7 +204,7 @@ def _find_uv_tool_local_dir(resolved_path: Path) -> Path | None:
                 data = json.loads(direct_url.read_text(encoding="utf-8"))
                 raw_url = data.get("url", "")
                 if raw_url.startswith("file://"):
-                    p = Path(raw_url[7:])
+                    p = Path(raw_url.removeprefix("file://"))
                     if p.exists():
                         return p
     except (OSError, json.JSONDecodeError) as e:

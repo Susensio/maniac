@@ -23,7 +23,30 @@ IGNORE_DIRS = {
     "node_modules",
     "packages",
     "__pycache__",
+    "dist",
 }
+
+# Non-user documentation to skip
+IGNORE_FILE_PATTERNS = {
+    "contributing",
+    "changelog",
+    "code_of_conduct",
+    "code-of-conduct",
+    "governance",
+    "security",
+    "benchmarks",
+    "roadmap",
+    "license",
+    "licenses",
+    "releases",
+    "pull_request_template",
+    "issue_template",
+    "dependabot",
+    "renovate",
+}
+
+# Max total characters of documentation to keep synthesis fast and high-signal
+MAX_TOTAL_DOC_CHARS = 180_000
 
 
 @dataclass
@@ -36,18 +59,15 @@ def fetch_and_extract_docs(
     source: RepoSource,
     cache_dir: str | Path = "data/repos",
 ) -> list[DocFile]:
-    """Fetch repository (if remote and not cached) and extract all documentation files."""
+    """Fetch repository (if remote and not cached) and extract prioritized documentation files."""
     cache_dir_path = Path(cache_dir)
     cache_dir_path.mkdir(parents=True, exist_ok=True)
 
-    repo_dir_name = source.name
-    dest_dir = cache_dir_path / repo_dir_name
+    dest_dir = cache_dir_path / source.name
 
-    # 1. Obtain repo on disk
     if source.is_local and source.local_path:
         target_path = source.local_path
     else:
-        # If directory exists but missing .git, clean it up
         if dest_dir.exists() and not (dest_dir / ".git").exists():
             shutil.rmtree(dest_dir, ignore_errors=True)
 
@@ -71,22 +91,23 @@ def fetch_and_extract_docs(
                 return []
         target_path = dest_dir
 
-    # 2. Extract documentation files
     return extract_docs_from_dir(target_path)
 
 
 def extract_docs_from_dir(directory: Path) -> list[DocFile]:
-    """Extract documentation files from a local repository directory."""
+    """Extract documentation files from a local repository directory, sorted by relevance."""
     if not directory.exists():
         return []
 
-    doc_files: list[DocFile] = []
+    raw_candidates: list[tuple[int, Path]] = []
     seen_rel_paths: set[str] = set()
 
-    # Collect root doc candidates
+    # 1. Collect root doc candidates
     for item in sorted(directory.iterdir()):
         if item.is_file():
             name_lower = item.name.lower()
+            if _is_ignored_file(name_lower):
+                continue
             if name_lower.startswith("readme") or name_lower in {
                 "usage.md",
                 "architecture.md",
@@ -94,40 +115,81 @@ def extract_docs_from_dir(directory: Path) -> list[DocFile]:
                 "design.md",
                 "shellcheck.1.md",
             }:
-                _read_and_append(item, directory, doc_files, seen_rel_paths)
+                prio = 0 if name_lower.startswith("readme") else 1
+                raw_candidates.append((prio, item))
+                seen_rel_paths.add(str(item.relative_to(directory)))
 
-    # Walk doc subdirectories
+    # 2. Walk doc subdirectories
     for root, dirs, files in os.walk(directory):
-        # Prune ignored directories
         dirs[:] = [d for d in dirs if not d.startswith(".") and d not in IGNORE_DIRS]
         rel_dir = os.path.relpath(root, directory)
         first_seg = rel_dir.split(os.sep)[0].lower()
         if first_seg in DOC_DIRS:
             for f in sorted(files):
                 ext = os.path.splitext(f)[1].lower()
-                if ext in DOC_EXTENSIONS and not f.startswith("."):
+                name_stem = os.path.splitext(f)[0].lower()
+                if (
+                    ext in DOC_EXTENSIONS
+                    and not f.startswith(".")
+                    and not _is_ignored_file(name_stem)
+                ):
                     file_path = Path(root) / f
-                    _read_and_append(file_path, directory, doc_files, seen_rel_paths)
+                    rel = str(file_path.relative_to(directory))
+                    if rel not in seen_rel_paths:
+                        prio = _compute_doc_priority(rel)
+                        raw_candidates.append((prio, file_path))
+                        seen_rel_paths.add(rel)
+
+    # Sort by priority (lowest number = highest priority)
+    raw_candidates.sort(key=lambda x: (x[0], x[1].name))
+
+    doc_files: list[DocFile] = []
+    total_chars = 0
+
+    for _, file_path in raw_candidates:
+        if total_chars >= MAX_TOTAL_DOC_CHARS:
+            break
+        rel = str(file_path.relative_to(directory))
+        try:
+            content = file_path.read_text(encoding="utf-8", errors="replace").strip()
+            if content:
+                # Truncate single huge files if needed
+                if len(content) > 50_000:
+                    content = content[:50_000] + "\n\n[... truncated ...]"
+                doc_files.append(DocFile(rel_path=rel, content=content))
+                total_chars += len(content)
+        except (OSError, UnicodeDecodeError) as e:
+            logger.debug("Error reading doc file {}: {}", file_path, e)
 
     return doc_files
 
 
-def _read_and_append(
-    file_path: Path,
-    base_dir: Path,
-    doc_files: list[DocFile],
-    seen: set[str],
-) -> None:
-    rel = str(file_path.relative_to(base_dir))
-    if rel in seen:
-        return
-    try:
-        content = file_path.read_text(encoding="utf-8", errors="replace").strip()
-        if content:
-            doc_files.append(DocFile(rel_path=rel, content=content))
-            seen.add(rel)
-    except (OSError, UnicodeDecodeError) as e:
-        logger.debug("Error reading doc file {}: {}", file_path, e)
+def _is_ignored_file(name: str) -> bool:
+    for pat in IGNORE_FILE_PATTERNS:
+        if pat in name:
+            return True
+    return False
+
+
+def _compute_doc_priority(rel_path: str) -> int:
+    path_lower = rel_path.lower()
+    if (
+        "cli" in path_lower
+        or "reference" in path_lower
+        or "manual" in path_lower
+        or "usage" in path_lower
+    ):
+        return 1
+    if (
+        "guide" in path_lower
+        or "concept" in path_lower
+        or "getting-started" in path_lower
+        or "book/src" in path_lower
+    ):
+        return 2
+    if "config" in path_lower or "setting" in path_lower or "rules" in path_lower:
+        return 3
+    return 4
 
 
 def format_docs_section(doc_files: list[DocFile]) -> str:
