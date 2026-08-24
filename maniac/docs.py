@@ -1,4 +1,5 @@
 import os
+import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -46,6 +47,10 @@ def fetch_and_extract_docs(
     if source.is_local and source.local_path:
         target_path = source.local_path
     else:
+        # If directory exists but missing .git, clean it up
+        if dest_dir.exists() and not (dest_dir / ".git").exists():
+            shutil.rmtree(dest_dir, ignore_errors=True)
+
         if not dest_dir.exists():
             clone_url = source.clone_url
             if not clone_url:
@@ -62,6 +67,7 @@ def fetch_and_extract_docs(
             )
             if res.returncode != 0:
                 logger.error("Failed cloning {}: {}", clone_url, res.stderr.strip())
+                shutil.rmtree(dest_dir, ignore_errors=True)
                 return []
         target_path = dest_dir
 

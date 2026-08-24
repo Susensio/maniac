@@ -5,6 +5,9 @@ from pathlib import Path
 
 from loguru import logger
 
+# Guard limit to avoid hitting OS ARG_MAX limits
+MAX_PROMPT_LENGTH = 1_500_000
+
 
 def run_llm_synthesis(
     prompt: str,
@@ -20,10 +23,29 @@ def run_llm_synthesis(
     logger.debug("Created temporary workspace for LLM at {}", tmp_dir)
 
     sandbox_bin = Path.home() / "bin" / "sandbox"
+    agy_bin = shutil.which("agy")
+
     if sandbox_bin.exists():
-        cmd = [str(sandbox_bin), "agy", "-p", prompt]
+        cmd = [str(sandbox_bin), "agy", "-p"]
+    elif agy_bin:
+        cmd = [agy_bin, "-p"]
     else:
-        cmd = ["agy", "-p", prompt]
+        logger.error("Neither ~/bin/sandbox nor agy found in PATH.")
+        raise FileNotFoundError("Neither ~/bin/sandbox nor agy executable found.")
+
+    # Guard against excessively long prompt arguments
+    effective_prompt = prompt
+    if len(effective_prompt) > MAX_PROMPT_LENGTH:
+        logger.warning(
+            "Prompt length ({}) exceeds limit; truncating context.",
+            len(effective_prompt),
+        )
+        effective_prompt = (
+            effective_prompt[:MAX_PROMPT_LENGTH]
+            + "\n\n[Context truncated due to length]"
+        )
+
+    cmd.append(effective_prompt)
 
     try:
         logger.info("Calling LLM synthesis for '{}'...", tool_name)

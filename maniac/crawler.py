@@ -10,7 +10,14 @@ def get_help(cmd: list[str]) -> str:
     full_cmd = [*cmd, "--help"]
     cmd_str = " ".join(full_cmd)
     logger.debug("Executing: {}", cmd_str)
-    env = os.environ | {"PAGER": "cat", "NO_COLOR": "1", "TERM": "dumb"}
+    env = os.environ | {
+        "PAGER": "cat",
+        "BAT_PAGER": "",
+        "GIT_PAGER": "",
+        "SYSTEMD_PAGER": "cat",
+        "NO_COLOR": "1",
+        "TERM": "dumb",
+    }
     try:
         res = subprocess.run(
             full_cmd,
@@ -36,7 +43,7 @@ def get_help(cmd: list[str]) -> str:
 def find_subcommands(
     cmd: str | list[str],
     results: dict[str, str] | None = None,
-    visited_outputs: set[str] | None = None,
+    visited_outputs: set[int] | None = None,
 ) -> dict[str, str]:
     if isinstance(cmd, str):
         cmd = cmd.split()
@@ -50,11 +57,12 @@ def find_subcommands(
     help_text = get_help(cmd)
     results[key] = help_text
 
-    # Stop recursion if command errored or output was already seen in tree/ancestors
-    if help_text.startswith("Error:") or help_text in visited_outputs:
+    # Stop recursion if command errored or output hash was already seen
+    text_hash = hash(help_text)
+    if help_text.startswith("Error:") or text_hash in visited_outputs:
         return results
 
-    visited_outputs.add(help_text)
+    visited_outputs.add(text_hash)
 
     for sub in extract_subcommands(help_text, cmd_name=cmd[-1]):
         find_subcommands([*cmd, sub], results, visited_outputs=visited_outputs)

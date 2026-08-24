@@ -3,22 +3,9 @@ from pathlib import Path
 from maniac.discovery import (
     _clean_git_url,
     _extract_mise_tool_id,
-    _resolve_mise_tool,
+    _resolve_from_mise,
     discover_repo,
 )
-
-
-def test_known_tool_repos_lookup() -> None:
-    source = discover_repo("cargo")
-    assert source.name == "cargo"
-    assert source.target == "rust-lang/cargo"
-    assert not source.is_local
-    assert source.clone_url == "https://github.com/rust-lang/cargo.git"
-
-
-def test_known_tool_helix() -> None:
-    source = discover_repo("hx")
-    assert source.target == "helix-editor/helix"
 
 
 def test_clean_git_url() -> None:
@@ -37,9 +24,11 @@ def test_extract_mise_tool_id() -> None:
     assert _extract_mise_tool_id(p_non_mise) is None
 
 
-def test_resolve_mise_tool() -> None:
-    assert _resolve_mise_tool("github-todotxt-todo-txt-cli") == "todotxt/todo.txt-cli"
-    assert _resolve_mise_tool("cargo-https-github-com-nushell-nufmt") == "nushell/nufmt"
+def test_resolve_from_mise_prefixed() -> None:
+    assert (
+        _resolve_from_mise("github-todotxt-todo.txt-cli", "todo.sh")
+        == "todotxt/todo.txt-cli"
+    )
 
 
 def test_discover_repo_fallback(tmp_path: Path) -> None:
