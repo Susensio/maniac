@@ -2,6 +2,7 @@ import subprocess
 from typing import Any
 
 import pytest
+
 from maniac.crawler import find_subcommands, get_help
 
 

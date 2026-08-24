@@ -2,13 +2,14 @@ import os
 import subprocess
 
 from loguru import logger
+
 from maniac.extractor import extract_subcommands
 
 
 def get_help(cmd: list[str]) -> str:
     full_cmd = [*cmd, "--help"]
     cmd_str = " ".join(full_cmd)
-    logger.info("Executing: {}", cmd_str)
+    logger.debug("Executing: {}", cmd_str)
     env = os.environ | {"PAGER": "cat", "NO_COLOR": "1", "TERM": "dumb"}
     try:
         res = subprocess.run(
@@ -19,15 +20,16 @@ def get_help(cmd: list[str]) -> str:
             timeout=5,
             errors="replace",
             env=env,
+            check=False,
         )
         if res.returncode != 0:
-            logger.warning("Command '{}' exited with code {}", cmd_str, res.returncode)
+            logger.debug("Command '{}' exited with code {}", cmd_str, res.returncode)
         return (res.stdout or "").strip()
     except subprocess.TimeoutExpired:
-        logger.error("Timed out running '{}'", cmd_str)
+        logger.warning("Timed out running '{}'", cmd_str)
         return "Error: Command timed out."
     except (FileNotFoundError, OSError) as e:
-        logger.error("Failed to run '{}': {}", cmd_str, e)
+        logger.warning("Failed to run '{}': {}", cmd_str, e)
         return f"Error: {e}"
 
 
@@ -58,3 +60,11 @@ def find_subcommands(
         find_subcommands([*cmd, sub], results, visited_outputs=visited_outputs)
 
     return results
+
+
+def format_help_block(tree: dict[str, str]) -> str:
+    """Format extracted help tree into a clean text block for prompt injection."""
+    blocks: list[str] = []
+    for cmd_header, help_content in tree.items():
+        blocks.append(f"{cmd_header}\n{help_content}\n")
+    return "\n".join(blocks).strip()
