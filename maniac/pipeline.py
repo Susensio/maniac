@@ -1,28 +1,14 @@
-from dataclasses import dataclass
 from pathlib import Path
 
 from loguru import logger
 
 from maniac.compiler import compile_to_man, install_manpage
 from maniac.crawler import find_subcommands, format_help_block
-from maniac.discovery import RepoSource, discover_repo
+from maniac.discovery import discover_repo
 from maniac.docs import fetch_and_extract_docs, format_docs_section
 from maniac.llm import run_llm_synthesis
+from maniac.models import PipelineResult
 from maniac.prompts import build_synthesis_prompt, load_system_prompt
-
-
-@dataclass
-class PipelineResult:
-    tool_name: str
-    repo_source: RepoSource
-    command_count: int
-    doc_file_count: int
-    context_path: Path | None
-    prompt_path: Path | None
-    markdown_path: Path
-    roff_path: Path | None
-    installed_path: Path | None
-    markdown_content: str
 
 
 def run_pipeline(
@@ -55,7 +41,11 @@ def run_pipeline(
     docs_block = format_docs_section(doc_files)
 
     # Save intermediate extracted context
-    context_content = f"# {tool_name} Extracted Context\n\n## CLI Help\n```text\n{help_block}\n```\n\n## Repository Documentation\n{docs_block}\n"
+    context_content = (
+        f"# {tool_name} Extracted Context\n\n"
+        f"## CLI Help\n```text\n{help_block}\n```\n\n"
+        f"## Repository Documentation\n{docs_block}\n"
+    )
     context_file = inter_dir / f"{tool_name}_context.md"
     context_file.write_text(context_content, encoding="utf-8")
     logger.info("Saved intermediate context to {}", context_file)

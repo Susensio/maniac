@@ -1,12 +1,11 @@
 import os
 import shutil
 import subprocess
-from dataclasses import dataclass
 from pathlib import Path
 
 from loguru import logger
 
-from maniac.discovery import RepoSource
+from maniac.models import DocFile, RepoSource
 
 DOC_EXTENSIONS = {".md", ".markdown", ".rst", ".1", ".txt"}
 DOC_DIRS = {"doc", "docs", "manual", "book", "man", "manpage", "site"}
@@ -47,12 +46,6 @@ IGNORE_FILE_PATTERNS = {
 
 # Max total characters of documentation to keep synthesis fast and high-signal
 MAX_TOTAL_DOC_CHARS = 75_000
-
-
-@dataclass
-class DocFile:
-    rel_path: str
-    content: str
 
 
 def fetch_and_extract_docs(
@@ -153,7 +146,6 @@ def extract_docs_from_dir(directory: Path) -> list[DocFile]:
         try:
             content = file_path.read_text(encoding="utf-8", errors="replace").strip()
             if content:
-                # Truncate single huge files if needed
                 if len(content) > 50_000:
                     content = content[:50_000] + "\n\n[... truncated ...]"
                 doc_files.append(DocFile(rel_path=rel, content=content))

@@ -4,8 +4,7 @@ import pytest
 from typer.testing import CliRunner
 
 from maniac.cli import app
-from maniac.discovery import RepoSource
-from maniac.docs import DocFile
+from maniac.models import DocFile, RepoSource
 
 runner = CliRunner()
 

@@ -2,26 +2,11 @@ import json
 import re
 import subprocess
 import tomllib
-from dataclasses import dataclass
 from pathlib import Path
 
 from loguru import logger
 
-
-@dataclass
-class RepoSource:
-    name: str
-    target: str  # "owner/repo" or "LOCAL:/path" or "https://..."
-    is_local: bool
-    local_path: Path | None = None
-
-    @property
-    def clone_url(self) -> str | None:
-        if self.is_local:
-            return None
-        if self.target.startswith(("http://", "https://")):
-            return self.target
-        return f"https://github.com/{self.target}.git"
+from maniac.models import RepoSource
 
 
 def discover_repo(binary_name: str, bin_dir: str | Path | None = None) -> RepoSource:
@@ -29,58 +14,73 @@ def discover_repo(binary_name: str, bin_dir: str | Path | None = None) -> RepoSo
     target_bin_dir = Path(bin_dir) if bin_dir else Path.home() / ".local" / "bin"
     bin_path = target_bin_dir / binary_name
 
-    # 1. If symlink, inspect target path
+    # 1. Resolve through symlink inspection if applicable
     if bin_path.is_symlink():
-        resolved_path = bin_path.resolve()
+        source = _resolve_symlink_target(binary_name, bin_path)
+        if source:
+            return source
 
-        # Check local lib directory (e.g. ~/.local/lib/<tool>)
-        if "/.local/lib/" in str(resolved_path):
-            tool_dir = resolved_path
-            while (
-                tool_dir.parent != Path.home() / ".local" / "lib"
-                and tool_dir != tool_dir.parent
-            ):
-                tool_dir = tool_dir.parent
-            if (tool_dir / ".git").exists():
-                git_remote = _get_git_remote(tool_dir)
-                if git_remote:
-                    clean_repo = _clean_git_url(git_remote)
-                    return RepoSource(
-                        name=binary_name, target=clean_repo, is_local=False
-                    )
-            return RepoSource(
-                name=binary_name,
-                target=f"LOCAL:{tool_dir}",
-                is_local=True,
-                local_path=tool_dir,
-            )
-
-        # Check uv tools (e.g. ~/.local/share/uv/tools/<tool>)
-        if "/.local/share/uv/tools/" in str(resolved_path):
-            local_proj = _find_uv_tool_local_dir(resolved_path)
-            if local_proj:
-                return RepoSource(
-                    name=binary_name,
-                    target=f"LOCAL:{local_proj}",
-                    is_local=True,
-                    local_path=local_proj,
-                )
-
-        # Check mise install paths
-        if "/.local/share/mise/installs/" in str(resolved_path):
-            tool_id = _extract_mise_tool_id(resolved_path)
-            if tool_id:
-                repo = _resolve_from_mise(tool_id, binary_name)
-                if repo:
-                    return RepoSource(name=binary_name, target=repo, is_local=False)
-
-    # 2. Try querying mise directly for the binary
+    # 2. Query mise configuration and live registry
     repo_from_mise = _resolve_from_mise(binary_name, binary_name)
     if repo_from_mise:
         return RepoSource(name=binary_name, target=repo_from_mise, is_local=False)
 
     # 3. Fallback default
     return RepoSource(name=binary_name, target=binary_name, is_local=False)
+
+
+def _resolve_symlink_target(binary_name: str, bin_path: Path) -> RepoSource | None:
+    """Inspect resolved path of symlinked binary for mise, local lib, or uv installs."""
+    resolved_path = bin_path.resolve()
+    resolved_str = str(resolved_path)
+
+    # Local lib directory (e.g. ~/.local/lib/<tool>)
+    if "/.local/lib/" in resolved_str:
+        return _resolve_local_lib(binary_name, resolved_path)
+
+    # uv tools (e.g. ~/.local/share/uv/tools/<tool>)
+    if "/.local/share/uv/tools/" in resolved_str:
+        local_proj = _find_uv_tool_local_dir(resolved_path)
+        if local_proj:
+            return RepoSource(
+                name=binary_name,
+                target=f"LOCAL:{local_proj}",
+                is_local=True,
+                local_path=local_proj,
+            )
+
+    # mise installs (e.g. ~/.local/share/mise/installs/<tool>/...)
+    if "/.local/share/mise/installs/" in resolved_str:
+        tool_id = _extract_mise_tool_id(resolved_path)
+        if tool_id:
+            repo = _resolve_from_mise(tool_id, binary_name)
+            if repo:
+                return RepoSource(name=binary_name, target=repo, is_local=False)
+
+    return None
+
+
+def _resolve_local_lib(binary_name: str, resolved_path: Path) -> RepoSource:
+    """Resolve repository source from a ~/.local/lib installation."""
+    tool_dir = resolved_path
+    while (
+        tool_dir.parent != Path.home() / ".local" / "lib"
+        and tool_dir != tool_dir.parent
+    ):
+        tool_dir = tool_dir.parent
+
+    if (tool_dir / ".git").exists():
+        git_remote = _get_git_remote(tool_dir)
+        if git_remote:
+            clean_repo = _clean_git_url(git_remote)
+            return RepoSource(name=binary_name, target=clean_repo, is_local=False)
+
+    return RepoSource(
+        name=binary_name,
+        target=f"LOCAL:{tool_dir}",
+        is_local=True,
+        local_path=tool_dir,
+    )
 
 
 def _resolve_from_mise(tool_id: str, binary_name: str) -> str | None:

@@ -74,26 +74,30 @@ def generate(
     dry_run: Annotated[bool, typer.Option(help="Skip LLM synthesis.")] = False,
 ) -> None:
     """Run end-to-end pipeline: scrape help, fetch docs, synthesize via LLM, and compile."""
-    with console.status(f"[bold green]Generating manpage for {tool}..."):
-        result = run_pipeline(
-            tool_name=tool,
-            cache_dir=cache_dir,
-            output_dir=output_dir,
-            prompt_file=prompt_file,
-            install=install,
-            dry_run=dry_run,
-        )
+    try:
+        with console.status(f"[bold green]Generating manpage for {tool}..."):
+            result = run_pipeline(
+                tool_name=tool,
+                cache_dir=cache_dir,
+                output_dir=output_dir,
+                prompt_file=prompt_file,
+                install=install,
+                dry_run=dry_run,
+            )
 
-    console.print(
-        f"[bold green]✓ Successfully generated manpage for {tool}![/bold green]"
-    )
-    console.print(f" • Commands scraped: {result.command_count}")
-    console.print(f" • Doc files used:   {result.doc_file_count}")
-    console.print(f" • Markdown file:    {result.markdown_path}")
-    if result.roff_path:
-        console.print(f" • Compiled roff:    {result.roff_path}")
-    if result.installed_path:
-        console.print(f" • Installed at:     {result.installed_path}")
+        console.print(
+            f"[bold green]✓ Successfully generated manpage for {tool}![/bold green]"
+        )
+        console.print(f" • Commands scraped: {result.command_count}")
+        console.print(f" • Doc files used:   {result.doc_file_count}")
+        console.print(f" • Markdown file:    {result.markdown_path}")
+        if result.roff_path:
+            console.print(f" • Compiled roff:    {result.roff_path}")
+        if result.installed_path:
+            console.print(f" • Installed at:     {result.installed_path}")
+    except (OSError, RuntimeError) as e:
+        console.print(f"[bold red]Generation failed for {tool}: {e}[/bold red]")
+        raise typer.Exit(1) from e
 
 
 @app.command()
@@ -123,7 +127,7 @@ def batch(
                 install=install,
                 dry_run=False,
             )
-        except (OSError, RuntimeError) as e:
+        except (OSError, RuntimeError, typer.Exit) as e:
             console.print(f"[bold red]Failed {tool}: {e}[/bold red]")
 
 

@@ -2,8 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from maniac.discovery import RepoSource
-from maniac.docs import DocFile
+from maniac.models import DocFile, RepoSource
 from maniac.pipeline import run_pipeline
 
 
