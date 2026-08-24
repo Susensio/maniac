@@ -5,49 +5,52 @@ from pathlib import Path
 
 from loguru import logger
 
+# Linux kernel MAX_ARG_STRLEN is 131,072 bytes; keep safety margin
+MAX_ARG_LIMIT = 115_000
+
 
 def run_llm_synthesis(
     prompt: str,
     tool_name: str,
     work_base_dir: str | Path = "data/tmp",
-    timeout: int = 300,
+    timeout: int = 180,
 ) -> str:
-    """Execute LLM generation via ~/bin/sandbox agy in an isolated directory using a prompt file."""
+    """Execute direct LLM generation via ~/bin/sandbox agy -p."""
     base_dir = Path(work_base_dir).resolve()
     base_dir.mkdir(parents=True, exist_ok=True)
 
     tmp_dir = Path(tempfile.mkdtemp(prefix=f"maniac_{tool_name}_", dir=str(base_dir)))
     logger.debug("Created temporary workspace for LLM at {}", tmp_dir)
 
-    # Write prompt to workspace file to prevent exceeding OS argument length limits
-    prompt_file = tmp_dir / "prompt.md"
-    prompt_file.write_text(prompt, encoding="utf-8")
-
     sandbox_bin = Path.home() / "bin" / "sandbox"
     agy_bin = shutil.which("agy")
 
-    driver_instruction = (
-        f"Read the prompt and context in prompt.md in the current directory, "
-        f"follow all formatting rules and guidelines strictly, "
-        f"and output ONLY the raw synthesized Markdown manpage for '{tool_name}'."
+    executable = (
+        [str(sandbox_bin), "agy"]
+        if sandbox_bin.exists()
+        else ([agy_bin] if agy_bin else None)
     )
-
-    if sandbox_bin.exists():
-        cmd = [
-            str(sandbox_bin),
-            "agy",
-            "--dangerously-skip-permissions",
-            "-p",
-            driver_instruction,
-        ]
-    elif agy_bin:
-        cmd = [agy_bin, "--dangerously-skip-permissions", "-p", driver_instruction]
-    else:
+    if not executable:
         logger.error("Neither ~/bin/sandbox nor agy found in PATH.")
         raise FileNotFoundError("Neither ~/bin/sandbox nor agy executable found.")
 
+    # Guard prompt string to fit cleanly within OS argument bounds
+    effective_prompt = prompt
+    if len(effective_prompt.encode("utf-8")) > MAX_ARG_LIMIT:
+        logger.warning(
+            "Prompt exceeds argument limit ({} bytes); trimming context for single-turn synthesis.",
+            len(effective_prompt.encode("utf-8")),
+        )
+        # Keep head (system prompt + CLI help) and trim doc tail
+        effective_prompt = (
+            effective_prompt[: MAX_ARG_LIMIT - 1000]
+            + "\n\n=== [Context trimmed for synthesis] ==="
+        )
+
+    cmd = [*executable, "-p", effective_prompt]
+
     try:
-        logger.info("Calling LLM synthesis for '{}'...", tool_name)
+        logger.info("Calling direct LLM synthesis for '{}'...", tool_name)
         res = subprocess.run(
             cmd,
             cwd=str(tmp_dir),
@@ -75,12 +78,7 @@ def clean_manpage_markdown(text: str, tool_name: str) -> str:
     # Unwrap triple backticks if output was wrapped
     if cleaned.startswith("```"):
         lines = cleaned.splitlines()
-        # Drop first line if it starts with ```
-        if lines and lines[0].startswith("```"):
-            lines = lines[1:]
-        # Drop last line if it is ```
-        if lines and lines[-1].strip() == "```":
-            lines = lines[:-1]
+        lines = [line for line in lines if not line.strip().startswith("```")]
         cleaned = "\n".join(lines).strip()
 
     # Ensure % TOOL(1) header exists on the very first line

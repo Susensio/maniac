@@ -46,7 +46,7 @@ IGNORE_FILE_PATTERNS = {
 }
 
 # Max total characters of documentation to keep synthesis fast and high-signal
-MAX_TOTAL_DOC_CHARS = 180_000
+MAX_TOTAL_DOC_CHARS = 75_000
 
 
 @dataclass

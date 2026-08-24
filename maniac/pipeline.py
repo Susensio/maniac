@@ -17,6 +17,8 @@ class PipelineResult:
     repo_source: RepoSource
     command_count: int
     doc_file_count: int
+    context_path: Path | None
+    prompt_path: Path | None
     markdown_path: Path
     roff_path: Path | None
     installed_path: Path | None
@@ -27,6 +29,7 @@ def run_pipeline(
     tool_name: str,
     cache_dir: str | Path = "data/repos",
     output_dir: str | Path = "data/manpages",
+    intermediate_dir: str | Path = "data/intermediate",
     prompt_file: str | Path | None = None,
     install: bool = False,
     dry_run: bool = False,
@@ -34,6 +37,9 @@ def run_pipeline(
     """Run the complete pipeline to extract docs, synthesize, and compile a manpage."""
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+
+    inter_dir = Path(intermediate_dir)
+    inter_dir.mkdir(parents=True, exist_ok=True)
 
     # 1. Scrape CLI help
     logger.info("Extracting CLI help and subcommands for '{}'...", tool_name)
@@ -48,6 +54,12 @@ def run_pipeline(
     doc_files = fetch_and_extract_docs(source, cache_dir=cache_dir)
     docs_block = format_docs_section(doc_files)
 
+    # Save intermediate extracted context
+    context_content = f"# {tool_name} Extracted Context\n\n## CLI Help\n```text\n{help_block}\n```\n\n## Repository Documentation\n{docs_block}\n"
+    context_file = inter_dir / f"{tool_name}_context.md"
+    context_file.write_text(context_content, encoding="utf-8")
+    logger.info("Saved intermediate context to {}", context_file)
+
     # 3. Build prompt
     system_prompt = load_system_prompt(prompt_file)
     full_prompt = build_synthesis_prompt(
@@ -56,6 +68,11 @@ def run_pipeline(
         doc_text=docs_block,
         system_prompt=system_prompt,
     )
+
+    # Save intermediate full prompt
+    prompt_save_file = inter_dir / f"{tool_name}_prompt.md"
+    prompt_save_file.write_text(full_prompt, encoding="utf-8")
+    logger.info("Saved intermediate prompt to {}", prompt_save_file)
 
     if dry_run:
         logger.info("Dry run: skipping LLM synthesis.")
@@ -69,6 +86,8 @@ def run_pipeline(
             repo_source=source,
             command_count=len(tree),
             doc_file_count=len(doc_files),
+            context_path=context_file,
+            prompt_path=prompt_save_file,
             markdown_path=md_file,
             roff_path=None,
             installed_path=None,
@@ -98,6 +117,8 @@ def run_pipeline(
         repo_source=source,
         command_count=len(tree),
         doc_file_count=len(doc_files),
+        context_path=context_file,
+        prompt_path=prompt_save_file,
         markdown_path=md_file,
         roff_path=actual_roff_path,
         installed_path=installed_path,
