@@ -1,6 +1,6 @@
 # MANIAC
 
-> **MAN**page **A**rtificial **I**ntelligent **C**reator  
+> **MAN**page **I**ntelligent **A**rtificial **C**reator  
 > *Instant, authoritative Unix manual pages for any CLI tool on your system.*
 
 ---
@@ -147,7 +147,7 @@ Install `maniac` as a standalone global tool in your `$PATH`:
 uv tool install .
 
 # Run maniac from anywhere
-maniac generate ripgrep --install
+maniac generate rg --install
 ```
 
 ---
