@@ -68,6 +68,10 @@ def generate(
     prompt_file: Annotated[
         Path | None, typer.Option(help="Path to custom system prompt file.")
     ] = None,
+    model: Annotated[
+        str | None,
+        typer.Option(help="LLM model name (e.g. 'Gemini 3.7 Flash (High)')."),
+    ] = None,
     install: Annotated[
         bool, typer.Option(help="Install compiled manpage to ~/.local/share/man/man1.")
     ] = False,
@@ -81,6 +85,7 @@ def generate(
                 cache_dir=cache_dir,
                 output_dir=output_dir,
                 prompt_file=prompt_file,
+                model=model,
                 install=install,
                 dry_run=dry_run,
             )
@@ -111,6 +116,10 @@ def batch(
     cache_dir: Annotated[
         str, typer.Option(help="Cache directory for repositories.")
     ] = "data/repos",
+    model: Annotated[
+        str | None,
+        typer.Option(help="LLM model name (e.g. 'Gemini 3.7 Flash (High)')."),
+    ] = None,
     install: Annotated[
         bool, typer.Option(help="Install compiled manpages to user manpath.")
     ] = False,
@@ -124,6 +133,7 @@ def batch(
                 output_dir=output_dir,
                 cache_dir=cache_dir,
                 prompt_file=None,
+                model=model,
                 install=install,
                 dry_run=False,
             )

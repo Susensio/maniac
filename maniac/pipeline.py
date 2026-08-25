@@ -17,6 +17,7 @@ def run_pipeline(
     output_dir: str | Path = "data/manpages",
     intermediate_dir: str | Path = "data/intermediate",
     prompt_file: str | Path | None = None,
+    model: str | None = None,
     install: bool = False,
     dry_run: bool = False,
 ) -> PipelineResult:
@@ -85,7 +86,7 @@ def run_pipeline(
         )
 
     # 4. Run LLM synthesis
-    markdown_content = run_llm_synthesis(full_prompt, tool_name=tool_name)
+    markdown_content = run_llm_synthesis(full_prompt, tool_name=tool_name, model=model)
 
     # 5. Save Markdown manpage
     md_file = out_dir / f"{tool_name}.1.md"

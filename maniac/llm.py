@@ -1,3 +1,4 @@
+import os
 import shutil
 import subprocess
 import tempfile
@@ -6,12 +7,14 @@ from pathlib import Path
 from loguru import logger
 
 # Linux kernel MAX_ARG_STRLEN is 131,072 bytes; keep safety margin
-MAX_ARG_LIMIT = 115_000
+MAX_ARG_LIMIT = int(os.environ.get("MANIAC_MAX_ARG_LIMIT", "115000"))
+DEFAULT_MODEL = os.environ.get("MANIAC_MODEL", "Gemini 3.7 Flash (High)")
 
 
 def run_llm_synthesis(
     prompt: str,
     tool_name: str,
+    model: str | None = None,
     work_base_dir: str | Path = "data/tmp",
     timeout: int = 180,
 ) -> str:
@@ -34,6 +37,8 @@ def run_llm_synthesis(
         logger.error("Neither ~/bin/sandbox nor agy found in PATH.")
         raise FileNotFoundError("Neither ~/bin/sandbox nor agy executable found.")
 
+    selected_model = model or DEFAULT_MODEL
+
     # Guard prompt string to fit cleanly within OS argument bounds
     effective_prompt = prompt
     if len(effective_prompt.encode("utf-8")) > MAX_ARG_LIMIT:
@@ -41,16 +46,19 @@ def run_llm_synthesis(
             "Prompt exceeds argument limit ({} bytes); trimming context for single-turn synthesis.",
             len(effective_prompt.encode("utf-8")),
         )
-        # Keep head (system prompt + CLI help) and trim doc tail
         effective_prompt = (
             effective_prompt[: MAX_ARG_LIMIT - 1000]
             + "\n\n=== [Context trimmed for synthesis] ==="
         )
 
-    cmd = [*executable, "-p", effective_prompt]
+    cmd = [*executable, "--model", selected_model, "-p", effective_prompt]
 
     try:
-        logger.info("Calling direct LLM synthesis for '{}'...", tool_name)
+        logger.info(
+            "Calling LLM synthesis for '{}' using model '{}'...",
+            tool_name,
+            selected_model,
+        )
         res = subprocess.run(
             cmd,
             cwd=str(tmp_dir),
