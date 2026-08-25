@@ -39,13 +39,16 @@ IGNORE_FILE_PATTERNS = {
     "license",
     "licenses",
     "releases",
+    "release-notes",
     "pull_request_template",
     "issue_template",
     "dependabot",
     "renovate",
+    "building-from-source",
+    "package-managers",
 }
 
-MAX_TOTAL_DOC_CHARS = 75_000
+MAX_TOTAL_DOC_CHARS = 100_000
 
 
 def fetch_and_extract_docs(
@@ -162,21 +165,39 @@ def _is_ignored_file(name: str) -> bool:
 
 def _compute_doc_priority(rel_path: str) -> int:
     path_lower = rel_path.lower()
-    if (
-        "cli" in path_lower
-        or "reference" in path_lower
-        or "manual" in path_lower
-        or "usage" in path_lower
+    if any(
+        k in path_lower
+        for k in (
+            "keymap",
+            "keys",
+            "shortcut",
+            "key-binding",
+            "cli",
+            "reference",
+            "manual",
+            "usage",
+            "commands",
+        )
     ):
         return 1
-    if (
-        "guide" in path_lower
-        or "concept" in path_lower
-        or "getting-started" in path_lower
-        or "book/src" in path_lower
+    if any(
+        k in path_lower
+        for k in (
+            "guide",
+            "concept",
+            "getting-started",
+            "editor",
+            "configuration",
+            "config",
+            "setting",
+            "rule",
+        )
     ):
         return 2
-    if "config" in path_lower or "setting" in path_lower or "rules" in path_lower:
+    if any(
+        k in path_lower
+        for k in ("mode", "surround", "textobject", "register", "jumplist")
+    ):
         return 3
     return 4
 

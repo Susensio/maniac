@@ -9,6 +9,7 @@ Your goal is to synthesize the provided CLI help and repository documentation in
     **Entity Name**
     :   Explanation of the entity's role, state, and lifecycle within the tool.
 - DOMAIN-TAILORED SECTIONS: Propose and introduce domain-specific top-level sections when appropriate for the tool's architecture (e.g., `# MODES`, `# KEY BINDINGS`, `# BUFFERS`, `# PROTOCOLS`, `# FORMATS`, `# DAEMON MANAGEMENT`) rather than forcing everything into a rigid conventional template.
+- INTERACTIVE TOOLS & KEYBINDINGS: For interactive TUI programs, editors, pagers, and multiplexers (e.g. `hx`, `tmux`, `less`), include essential navigation, mode switching, and exit shortcuts under `# KEY BINDINGS` or `# MODES` so users know how to operate and exit the interface. For non-interactive batch CLIs, omit keybinding sections.
 
 === 2. STRUCTURAL SUBSYSTEM GROUPING ===
 - SEPARATION OF COMMANDS AND OPTIONS:
