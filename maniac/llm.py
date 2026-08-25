@@ -8,7 +8,20 @@ from loguru import logger
 
 # Linux kernel MAX_ARG_STRLEN is 131,072 bytes; keep safety margin
 MAX_ARG_LIMIT = int(os.environ.get("MANIAC_MAX_ARG_LIMIT", "115000"))
-DEFAULT_MODEL = os.environ.get("MANIAC_MODEL", "Gemini 3.7 Flash (High)")
+
+# Friendly model aliases mapping to agy runtime models
+MODEL_ALIASES = {
+    "flash": "Gemini 3.7 Flash (High)",
+    "flash-high": "Gemini 3.7 Flash (High)",
+    "flash-medium": "Gemini 3.7 Flash (Medium)",
+    "flash-low": "Gemini 3.7 Flash (Low)",
+    "pro": "Gemini 3.1 Pro (High)",
+    "pro-low": "Gemini 3.1 Pro (Low)",
+    "sonnet": "Claude Sonnet 4.6 (Thinking)",
+    "opus": "Claude Opus 4.6 (Thinking)",
+}
+
+DEFAULT_MODEL = os.environ.get("MANIAC_MODEL", "flash")
 
 
 def run_llm_synthesis(
@@ -37,7 +50,8 @@ def run_llm_synthesis(
         logger.error("Neither ~/bin/sandbox nor agy found in PATH.")
         raise FileNotFoundError("Neither ~/bin/sandbox nor agy executable found.")
 
-    selected_model = model or DEFAULT_MODEL
+    raw_model = (model or DEFAULT_MODEL).strip()
+    selected_model = MODEL_ALIASES.get(raw_model.lower(), raw_model)
 
     # Guard prompt string to fit cleanly within OS argument bounds
     effective_prompt = prompt
@@ -55,9 +69,10 @@ def run_llm_synthesis(
 
     try:
         logger.info(
-            "Calling LLM synthesis for '{}' using model '{}'...",
+            "Calling LLM synthesis for '{}' using model '{}' (alias: '{}')...",
             tool_name,
             selected_model,
+            raw_model,
         )
         res = subprocess.run(
             cmd,
