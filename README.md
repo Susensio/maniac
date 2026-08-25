@@ -1,162 +1,178 @@
-# maniac
+# MANIAC
 
-An automated pipeline that scrapes recursive CLI `--help` trees, dynamically discovers upstream repository documentation via `mise` / `uv` / Git, synthesizes conceptually grouped Unix manual pages using an LLM, compiles them into standard `roff` manpages via Pandoc, and provides an LLM-as-a-Judge quality evaluation loop.
-
----
-
-## Features
-
-- **Recursive Subcommand Crawler**: Automatically explores `--help` trees for multi-level CLIs (e.g. `uv pip compile`), stripping pagers and ANSI color codes while preventing infinite recursion loops.
-- **Dynamic Repository Discovery**: Infers upstream source repositories dynamically from local `mise` configurations, `mise registry`, `uv tool` metadata, and Git remotes without hardcoded tables.
-- **Prioritized Documentation Extraction**: Extracts and ranks key user documentation (`README.md`, `reference/cli.md`, `docs/concepts/*.md`, `manual/`) while skipping internal noise (contributing guides, changelogs, benchmarks).
-- **Elite Unix Manual Synthesis**: Generates manpages modeled after `tmux(1)` and `git(1)` (foundational domain concepts upfront, categorized subsystem headers, Pandoc definition lists, exit statuses, and realistic workflow examples).
-- **Pandoc Compilation & Installation**: Compiles Markdown manpages to `.1` roff format and installs them to `~/.local/share/man/man1/`.
-- **LLM-as-a-Judge Quality Evaluator**: Automated 0-100 rubric grader evaluating domain ontology, flag formatting, subsystem grouping, reference completeness, and workflow examples.
-- **Intermediate Artifact Preservation**: Automatically saves intermediate extracted contexts and raw prompts to `data/intermediate/` for inspection and debugging.
+> **MAN**page **A**rtificial **I**ntelligent **C**reator  
+> *Instant, authoritative Unix manual pages for any CLI tool on your system.*
 
 ---
 
-## Requirements
+## Why MANIAC?
 
-- Python 3.12+
-- [uv](https://github.com/astral-sh/uv) (recommended Python package manager)
-- [pandoc](https://pandoc.org/) (for compiling Markdown to roff manpages)
-- [agy](https://github.com/google-antigravity/antigravity-cli) / `~/bin/sandbox` (for LLM synthesis)
+Modern command-line tools written in Rust, Go, Python, and Zig are faster and more capable than ever. You install dozens of them with `mise`, `uv`, `cargo`, or `brew`. 
 
----
-
-## Running with `uv`
-
-### 1. Run Directly with `uv run`
-
-Execute `maniac` commands directly without manually activating virtual environments:
+Then you type:
 
 ```bash
-# Generate a complete manpage (Markdown + compiled roff)
-uv run maniac generate howdoi
-uv run maniac generate uv
-uv run maniac generate hx
+$ man uv
+No manual entry for uv
 
-# Generate and install directly to ~/.local/share/man/man1/
+$ man hx
+No manual entry for hx
+
+$ man howdoi
+No manual entry for howdoi
+```
+
+Most modern utilities ship without standard Unix manual pages. Instead, you're forced to switch contexts: opening web browsers, scrolling through sprawling online docs, or pipe-grepping `--help` strings across nested subcommands.
+
+**MANIAC solves this completely.** It inspects any binary on your system, recursively crawls its entire subcommand tree, discovers its upstream documentation, and uses an LLM to synthesize a gold-standard Unix manual page (`.1` roff) formatted with Pandoc and installed straight into your local `man` path.
+
+---
+
+## The Synthesis Pipeline
+
+```
+  ┌──────────────────┐       ┌────────────────────────┐
+  │ Recursive Help   │       │ Upstream Documentation │
+  │ Tree Scraper     │       │ Discovery (mise / git) │
+  └─────────┬────────┘       └───────────┬────────────┘
+            │                            │
+            └─────────────┬──────────────┘
+                          ▼
+             ┌──────────────────────────┐
+             │ Prioritized Context Pool │
+             └────────────┬─────────────┘
+                          ▼
+             ┌──────────────────────────┐
+             │ AI Manual Crafting Engine│
+             │ (Domain Ontology, Flags, │
+             │  Keybinds, Subsystems)   │
+             └────────────┬─────────────┘
+                          ▼
+             ┌──────────────────────────┐
+             │ Pandoc roff Compiler     │
+             │ & Quality Judge (0-100)  │
+             └────────────┬─────────────┘
+                          ▼
+             ~/.local/share/man/man1/<tool>.1
+```
+
+1. **Recursive Subcommand Crawler**: Traverses multi-level CLI trees (`uv pip compile`, `git remote add`) with cycle protection, pager suppression, and ANSI stripping.
+2. **Dynamic Repository Discovery**: Resolves upstream GitHub sources and local clones dynamically via `mise` configuration, `uv tool` metadata, and symlink inspection—without hardcoded lists.
+3. **Prioritized Doc Extraction**: Extracts key reference material, core concepts, and keybindings while ignoring build scripts, CI configs, and changelogs.
+4. **Unix Manual Synthesis**: Structures descriptions around foundational domain entities (sessions, workspaces, buffers, modes), separates global options from subcommands, styles arguments rigorously, and adds annotated workflow examples.
+5. **Compilation & Installation**: Compiles to standard `roff` via Pandoc and installs to `~/.local/share/man/man1/`.
+6. **Automated Quality Evaluation**: Built-in LLM-as-a-Judge pipeline scoring generated manuals against a strict 100-point Unix documentation rubric.
+
+---
+
+## Quickstart
+
+Run MANIAC directly with [`uv`](https://github.com/astral-sh/uv) without manual virtualenv management.
+
+### 1. Generate & Install a Manpage
+
+Generate a complete manpage and install it to your user manual directory:
+
+```bash
+# Generate and view compiled manpage
 uv run maniac generate hx --install
+uv run maniac generate uv --install
+uv run maniac generate howdoi --install
 
-# Dry-run generation (extracts CLI help & docs, skips LLM call)
-uv run maniac generate git --dry-run
+# Now use standard man immediately
+man hx
+man uv
+man howdoi
 ```
 
-### 2. Quality Evaluation with LLM-as-a-Judge
+### 2. Discover Binaries Missing Manpages
 
-Evaluate the quality of a generated manpage against its reference context using the automated rubric:
-
-```bash
-uv run maniac eval howdoi
-uv run maniac eval uv --min-score 80
-```
-
-### 3. Inspect Executables Missing Manpages
-
-Scan `~/.local/bin` to find binaries that currently lack manual entries:
+Scan your local binary directory (`~/.local/bin`) to find everything you have installed that lacks a manual entry:
 
 ```bash
 uv run maniac list-missing
 ```
 
-### 4. Crawl CLI Subcommands & Help
+### 3. Batch Generation
 
-Recursively crawl `--help` output for any CLI command:
+Generate and install manual pages for your entire toolkit in one command:
 
 ```bash
-uv run maniac crawl git
-uv run maniac crawl uv pip
+uv run maniac batch hx uv howdoi glow ruff bat --install
 ```
 
-### 5. Fetch & Inspect Extracted Documentation
+### 4. Evaluate Manual Quality
 
-Discover the upstream repository and inspect the extracted documentation files:
+Run the automated LLM-as-a-Judge evaluation against the extracted documentation context:
 
 ```bash
-uv run maniac docs uv
+# Grade the generated manual (0-100 score with category breakdown)
+uv run maniac eval howdoi
+uv run maniac eval uv --min-score 80
+```
+
+```text
+        Quality Evaluation: howdoi (98/100)
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━┳━━━━━┓
+┃ Rubric Category                   ┃  Score ┃ Max ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━╇━━━━━┩
+│ Domain Ontology & Architecture    │     20 │  20 │
+│ Flag & Command Formatting         │     20 │  20 │
+│ Subsystem Grouping                │     20 │  20 │
+│ Environment / Files / Exit Status │     19 │  20 │
+│ Workflow Examples                 │     19 │  20 │
+├───────────────────────────────────┼────────┼─────┤
+│ Total Score                       │     98 │ 100 │
+│ Status                            │ PASSED │     │
+└───────────────────────────────────┴────────┴─────┘
+```
+
+### 5. Inspect Subcommands or Upstream Docs
+
+Debug and inspect extracted CLI help trees and upstream doc files independently:
+
+```bash
+# Inspect the scraped help tree for deep subcommands
+uv run maniac crawl uv pip
+
+# Discover the upstream repository and inspect extracted reference files
 uv run maniac docs hx
 ```
 
-### 6. Batch Generation
+### 6. Install Globally via `uv tool`
 
-Generate manpages for multiple tools sequentially:
-
-```bash
-uv run maniac batch howdoi uv hx --install
-```
-
-### 7. Install Globally via `uv tool`
-
-Install `maniac` into your local `PATH`:
+Install `maniac` as a standalone global tool in your `$PATH`:
 
 ```bash
-# Install tool from current directory
 uv tool install .
 
-# Now run maniac directly anywhere
-maniac list-missing
-maniac generate howdoi --install
-maniac eval howdoi
+# Run maniac from anywhere
+maniac generate ripgrep --install
 ```
 
 ---
 
-## Project Structure
+## Requirements
 
-```text
-maniac/
-├── maniac/
-│   ├── __init__.py             # Minimal version package marker
-│   ├── __main__.py             # Python CLI execution entrypoint
-│   ├── cli.py                  # Typer CLI application entry point
-│   ├── config.py               # Central configuration, paths, model aliases & limits
-│   ├── exceptions.py           # Exception hierarchy (CrawlerError, DiscoveryError, etc.)
-│   ├── models.py               # Shared data transfer objects
-│   ├── sources/                # Source discovery & help/doc extraction
-│   │   ├── __init__.py
-│   │   ├── crawler.py          # CLI help tree & subcommand crawler
-│   │   ├── discovery.py        # Mise / git / uv repository discovery
-│   │   ├── docs.py             # Git repository doc extractor & ranker
-│   │   └── extractor.py        # Subcommand regex parser
-│   ├── generation/             # Prompt engineering, LLM synthesis & compilation
-│   │   ├── __init__.py
-│   │   ├── compiler.py         # Pandoc roff compiler & installer
-│   │   ├── llm.py              # Sandbox LLM execution engine
-│   │   └── prompts.py          # System prompt & context template builder
-│   ├── evaluation/             # Deterministic checks & LLM-as-a-Judge quality pipeline
-│   │   ├── __init__.py
-│   │   └── judge.py            # DeterministicCheck & LLMJudge evaluator
-│   ├── orchestration/          # End-to-end pipeline coordination
-│   │   ├── __init__.py
-│   │   └── pipeline.py         # Orchestration pipeline
-│   └── templates/              # External prompt template files
-│       ├── system_prompt.md    # Base synthesis prompt template (tmux/git anchored)
-│       └── eval_prompt.md      # Evaluation rubric prompt template
-├── data/
-│   ├── intermediate/           # Extracted context and prompts per tool
-│   ├── manpages/               # Generated .1.md and compiled .1 manpages
-│   └── repos/                  # Cached shallow repository clones
-├── tests/                      # Pytest test suite (48 unit & integration tests)
-├── Justfile                    # Developer workflows (test, lint, format, check)
-└── pyproject.toml              # Project configuration and metadata
-```
+- **Python**: 3.12+
+- **[uv](https://github.com/astral-sh/uv)**: Fast Python package and tool runner
+- **[pandoc](https://pandoc.org/)**: Document converter for Markdown &rarr; roff compilation
+- **[agy](https://github.com/google-antigravity/antigravity-cli)**: Local LLM execution sandbox
 
 ---
 
 ## Development
 
-Use `just` to run developer checks:
+Run tests, formatting, and linting with [`just`](https://github.com/casey/just):
 
 ```bash
-# Run all verification checks (linter, formatting, tests)
+# Run all verification checks (linter, formatting, test suite)
 just check
 
-# Run unit and integration tests
+# Run pytest unit and integration tests
 just test
 
-# Format code and fix linter issues
+# Fix linting and format codebase
 just format
 just lint-fix
 ```
