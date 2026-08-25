@@ -1,12 +1,15 @@
+"""CLI help crawling and subcommand discovery."""
+
 import os
 import subprocess
 
 from loguru import logger
 
-from maniac.extractor import extract_subcommands
+from maniac.exceptions import CrawlerError
+from maniac.sources.extractor import extract_subcommands
 
 
-def get_help(cmd: list[str]) -> str:
+def get_help(cmd: list[str], timeout: int = 5) -> str:
     full_cmd = [*cmd, "--help"]
     cmd_str = " ".join(full_cmd)
     logger.debug("Executing: {}", cmd_str)
@@ -24,7 +27,7 @@ def get_help(cmd: list[str]) -> str:
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
-            timeout=5,
+            timeout=timeout,
             errors="replace",
             env=env,
             check=False,
@@ -32,12 +35,12 @@ def get_help(cmd: list[str]) -> str:
         if res.returncode != 0:
             logger.debug("Command '{}' exited with code {}", cmd_str, res.returncode)
         return (res.stdout or "").strip()
-    except subprocess.TimeoutExpired:
+    except subprocess.TimeoutExpired as e:
         logger.warning("Timed out running '{}'", cmd_str)
-        return "Error: Command timed out."
+        raise CrawlerError(f"Command timed out: '{cmd_str}'") from e
     except (FileNotFoundError, OSError) as e:
         logger.warning("Failed to run '{}': {}", cmd_str, e)
-        return f"Error: {e}"
+        raise CrawlerError(f"Failed to run '{cmd_str}': {e}") from e
 
 
 def find_subcommands(
@@ -54,7 +57,13 @@ def find_subcommands(
     if key in results:
         return results
 
-    help_text = get_help(cmd)
+    try:
+        help_text = get_help(cmd)
+    except CrawlerError:
+        if not results:
+            raise
+        return results
+
     results[key] = help_text
 
     # Stop recursion if command errored or output was already seen

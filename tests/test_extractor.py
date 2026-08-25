@@ -1,4 +1,4 @@
-from maniac.extractor import extract_subcommands
+from maniac.sources.extractor import extract_subcommands
 
 
 def test_extract_from_commands_section() -> None:

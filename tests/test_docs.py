@@ -1,11 +1,11 @@
 from pathlib import Path
 
-from maniac.docs import (
+from maniac.models import DocFile, RepoSource
+from maniac.sources.docs import (
     extract_docs_from_dir,
     fetch_and_extract_docs,
     format_docs_section,
 )
-from maniac.models import DocFile, RepoSource
 
 
 def test_extract_docs_from_dir(tmp_path: Path) -> None:
@@ -37,7 +37,10 @@ def test_extract_docs_from_dir(tmp_path: Path) -> None:
 def test_fetch_and_extract_docs_local(tmp_path: Path) -> None:
     (tmp_path / "README.md").write_text("# Local Project", encoding="utf-8")
     source = RepoSource(
-        name="localtool", target=f"LOCAL:{tmp_path}", is_local=True, local_path=tmp_path
+        name="localtool",
+        target=f"LOCAL:{tmp_path}",
+        is_local=True,
+        local_path=tmp_path,
     )
 
     doc_files = fetch_and_extract_docs(source)

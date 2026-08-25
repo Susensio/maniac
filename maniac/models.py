@@ -1,4 +1,6 @@
-from dataclasses import dataclass
+"""Data transfer objects for maniac."""
+
+from dataclasses import dataclass, field
 from pathlib import Path
 
 
@@ -36,3 +38,12 @@ class PipelineResult:
     roff_path: Path | None
     installed_path: Path | None
     markdown_content: str
+
+
+@dataclass
+class EvaluationResult:
+    score: int
+    passed: bool
+    rubric_breakdown: dict[str, int]
+    defects: list[str] = field(default_factory=list)
+    summary: str = ""

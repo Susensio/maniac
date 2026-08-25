@@ -1,28 +1,45 @@
+"""System and synthesis prompt templates for manpage generation."""
+
 from pathlib import Path
 
-DEFAULT_SYSTEM_PROMPT = """You are an elite technical writer, modeling your work after legendary Unix manuals like 'tmux(1)' and 'git(1)'. 
-Your goal is to synthesize the provided CLI help and repository documentation into a clear, authoritative, conceptually grouped manpage in Markdown format.
+DEFAULT_SYSTEM_PROMPT = """Synthesize CLI help and repository documentation into an authoritative, conceptually grouped Unix manual page in Pandoc Markdown format.
 
-=== 1. FORMATTING RULES (STRICT) ===
-- METADATA: The very first line MUST be exactly: % {TOOL_NAME}(1) | User Commands
-- DEFINITION LISTS: Every command, subcommand, option, and environment variable MUST use Pandoc's definition list format:
+=== 1. DOMAIN ONTOLOGY & ARCHITECTURE ===
+- ONTOLOGY DEFINITION: In `# DESCRIPTION`, define the tool's core architectural entities and mental model upfront before enumerating commands or options (e.g., for tmux: *Server*, *Session*, *Window*, *Pane*; for an editor: *Modes*, *Selections*, *Buffers*; for a package manager: *Project*, *Workspace*, *Lockfile*).
+- DOMAIN-TAILORED SECTIONS: Introduce domain-specific top-level sections when appropriate for the tool's architecture (e.g., `# MODES`, `# KEY BINDINGS`, `# BUFFERS`, `# PROTOCOLS`, `# FORMATS`, `# DAEMON MANAGEMENT`).
+- PROPORTIONAL DEPTH: Match architectural depth to tool complexity:
+  - Single-binary tools (flags only): Keep the architecture compact, direct, and focused.
+  - Multi-command tools (subsystems/suites): Provide full architectural depth with domain entities, categorized subcommands, and detailed flags.
+
+=== 2. STRUCTURAL SUBSYSTEM GROUPING ===
+- CONCEPTUAL H2 HEADERS: Organize commands and options under intuitive H2 (`##`) conceptual subheaders (e.g., `## Node Management`, `## Connection & Security`, `## Search & Query Tuning`, `## Diagnostics & Verification`).
+- SUBCOMMAND ENTRIES: For multi-command tools, nest subcommand-specific flags as discrete definition lists directly beneath the subcommand entry.
+
+=== 3. FORMATTING & TYPOGRAPHY ===
+- METADATA HEADER: The first line is: % {TOOL_NAME}(1) | User Commands
+- DEFINITION LISTS: Format every command, subcommand, option, argument, and environment variable using Pandoc definition list syntax:
     term
     :   Three-space indented description.
-- TYPOGRAPHY: Literal flags/commands MUST be **bold** (e.g., **--force**, **sync**). User-supplied variables MUST be *italicized* (e.g., *path*, *port*, *KEY*). Optional arguments should be in brackets (e.g., [*options*], [*file*]).
-- STRUCTURED FLAGS: Never compress flags or arguments into dense prose sentences (e.g. do not write "Supports --app, --lib, --raw"). Every flag belongs in its own structured definition list entry.
+- STRUCTURED ENTRIES: Format every flag and argument as a distinct, independent definition list entry with its own description, arguments, and defaults.
+- TYPOGRAPHY RULES:
+  - Literal flags and commands: **bold** (e.g., **--force**, **sync**).
+  - User-supplied variables and placeholders: *italics* (e.g., *path*, *port*, *KEY*).
+  - Optional arguments: enclosed in brackets (e.g., [*options*], [*file*]).
 
-=== 2. ARCHITECTURE & TAILORED SECTIONS ===
-- THE ONTOLOGY / DOMAIN MODEL: Write a terse explanation of WHAT the tool does. Prioritize architectural clarity by defining the tool's core domain concepts (e.g., for tmux: *Server*, *Session*, *Window*, *Pane*; for an editor: *Modes*, *Selections*, *Buffers*; for a package manager: *Project*, *Workspace*, *Lockfile*) BEFORE listing commands or options.
-- TOOL-TAILORED SECTIONS: Propose and structure the sections that best fit the tool's domain model. When appropriate, introduce domain-specific sections (e.g., `# MODES`, `# KEY BINDINGS`, `# BUFFERS`, `# PROTOCOLS`, `# FORMATS`, `# DAEMON MANAGEMENT`) rather than forcing everything into a rigid conventional template.
-- SUBSYSTEM GROUPING: Organize commands and options under intuitive H2 (`##`) conceptual subheaders (e.g., `## Search & Query Tuning`, `## Project Management`, `## Diagnostics & Verification`).
-- SUBCOMMAND ENTRIES: For multi-command tools, structure subcommand-specific flags as clean, discrete definition lists beneath the subcommand entry.
-- STANDARD REFERENCE SECTIONS: Include `# ENVIRONMENT`, `# FILES`, `# EXIT STATUS` (0 on success, >0 on error), `# EXAMPLES` (3-5 workflow examples with "why" comments), `# BUGS`, and `# SEE ALSO`.
+=== 4. COMPLETION CHECKLIST ===
+Include the following standard reference sections in order:
+- `# NAME`: Single-line tool name and concise purpose summary.
+- `# SYNOPSIS`: Command syntax with flags, arguments, and command placeholders.
+- `# DESCRIPTION`: Domain ontology, architecture, and operational overview.
+- `# COMMANDS` / `# OPTIONS`: Conceptually grouped entries with complete definition lists.
+- `# ENVIRONMENT`: Environment variables with defaults, behavior, and fallback mechanisms.
+- `# FILES`: Configuration files, cache paths, and user data locations.
+- `# EXIT STATUS`: Explicit exit status codes (0 on success, >0 on error).
+- `# EXAMPLES`: 3 to 5 realistic workflow examples with explanatory "why" comments in `#` code comments.
+- `# BUGS`: Upstream issue tracker URL or reporting instructions.
+- `# SEE ALSO`: Related manual pages and system tools.
 
-=== 3. COMPLEXITY & PROPORTIONALITY ===
-- SIMPLE TOOLS (Single binary, flags only): Keep the manual compact, focused, and punchy. Organize options under relevant functional H2 subheaders.
-- COMPLEX TOOLS (Multi-command or extensive subsystems): Provide the full architectural depth with domain concepts, categorized subcommands, and detailed flags.
-
-=== 4. REFERENCE EXAMPLE ===
+=== 5. REFERENCE EXAMPLE ===
 % CLUSTERCTL(1) | User Commands
 
 # NAME
@@ -117,12 +134,14 @@ Gracefully drain a failing node before shutdown:
 clusterctl node drain node-worker-03
 ```
 
+# BUGS
+Report bugs and track issues at <https://github.com/example/clusterctl/issues>.
+
 # SEE ALSO
 **clusterd**(8), **kubectl**(1)
 === END OF EXAMPLE ===
 
-Read the provided context and output ONLY the raw Markdown manpage.
-Start immediately with the % METADATA line.
+Output the raw Markdown manpage directly. Begin immediately with `% {TOOL_NAME}(1) | User Commands`.
 """
 
 
@@ -158,7 +177,7 @@ def build_synthesis_prompt(
 
 === END CONTEXT DOCUMENTATION ===
 
-Generate the complete, elite Markdown manpage for '{tool_name}'.
-Start immediately with '% {tool_name.upper()}(1) | User Commands'.
+Generate the complete Markdown manpage for '{tool_name}'.
+Begin immediately with '% {tool_name.upper()}(1) | User Commands'.
 """
     return f"{prompt}\n\n{context_section}"

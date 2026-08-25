@@ -1,3 +1,5 @@
+"""Repository fetching and documentation extraction."""
+
 import os
 import shutil
 import subprocess
@@ -25,7 +27,6 @@ IGNORE_DIRS = {
     "dist",
 }
 
-# Non-user documentation to skip
 IGNORE_FILE_PATTERNS = {
     "contributing",
     "changelog",
@@ -44,7 +45,6 @@ IGNORE_FILE_PATTERNS = {
     "renovate",
 }
 
-# Max total characters of documentation to keep synthesis fast and high-signal
 MAX_TOTAL_DOC_CHARS = 75_000
 
 
@@ -95,7 +95,6 @@ def extract_docs_from_dir(directory: Path) -> list[DocFile]:
     raw_candidates: list[tuple[int, Path]] = []
     seen_rel_paths: set[str] = set()
 
-    # 1. Collect root doc candidates
     for item in sorted(directory.iterdir()):
         if item.is_file():
             name_lower = item.name.lower()
@@ -112,7 +111,6 @@ def extract_docs_from_dir(directory: Path) -> list[DocFile]:
                 raw_candidates.append((prio, item))
                 seen_rel_paths.add(str(item.relative_to(directory)))
 
-    # 2. Walk doc subdirectories
     for root, dirs, files in os.walk(directory):
         dirs[:] = [d for d in dirs if not d.startswith(".") and d not in IGNORE_DIRS]
         rel_dir = os.path.relpath(root, directory)
@@ -133,7 +131,6 @@ def extract_docs_from_dir(directory: Path) -> list[DocFile]:
                         raw_candidates.append((prio, file_path))
                         seen_rel_paths.add(rel)
 
-    # Sort by priority (lowest number = highest priority)
     raw_candidates.sort(key=lambda x: (x[0], x[1].name))
 
     doc_files: list[DocFile] = []

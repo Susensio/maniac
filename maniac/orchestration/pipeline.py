@@ -1,14 +1,17 @@
+"""End-to-end pipeline orchestrator."""
+
 from pathlib import Path
 
 from loguru import logger
 
-from maniac.compiler import compile_to_man, install_manpage
-from maniac.crawler import find_subcommands, format_help_block
-from maniac.discovery import discover_repo
-from maniac.docs import fetch_and_extract_docs, format_docs_section
-from maniac.llm import run_llm_synthesis
+from maniac.config import Config
+from maniac.generation.compiler import compile_to_man, install_manpage
+from maniac.generation.llm import run_llm_synthesis
+from maniac.generation.prompts import build_synthesis_prompt, load_system_prompt
 from maniac.models import PipelineResult
-from maniac.prompts import build_synthesis_prompt, load_system_prompt
+from maniac.sources.crawler import find_subcommands, format_help_block
+from maniac.sources.discovery import discover_repo
+from maniac.sources.docs import fetch_and_extract_docs, format_docs_section
 
 
 def run_pipeline(
@@ -20,12 +23,14 @@ def run_pipeline(
     model: str | None = None,
     install: bool = False,
     dry_run: bool = False,
+    config: Config | None = None,
 ) -> PipelineResult:
     """Run the complete pipeline to extract docs, synthesize, and compile a manpage."""
-    out_dir = Path(output_dir)
+    cfg = config or Config()
+    out_dir = Path(output_dir) if output_dir else cfg.output_dir
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    inter_dir = Path(intermediate_dir)
+    inter_dir = Path(intermediate_dir) if intermediate_dir else cfg.intermediate_dir
     inter_dir.mkdir(parents=True, exist_ok=True)
 
     # 1. Scrape CLI help
@@ -86,7 +91,9 @@ def run_pipeline(
         )
 
     # 4. Run LLM synthesis
-    markdown_content = run_llm_synthesis(full_prompt, tool_name=tool_name, model=model)
+    markdown_content = run_llm_synthesis(
+        full_prompt, tool_name=tool_name, model=model, config=cfg
+    )
 
     # 5. Save Markdown manpage
     md_file = out_dir / f"{tool_name}.1.md"

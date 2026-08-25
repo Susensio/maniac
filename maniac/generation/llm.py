@@ -1,4 +1,5 @@
-import os
+"""Direct LLM synthesis execution using the local sandbox environment."""
+
 import shutil
 import subprocess
 import tempfile
@@ -6,22 +7,10 @@ from pathlib import Path
 
 from loguru import logger
 
-# Linux kernel MAX_ARG_STRLEN is 131,072 bytes; keep safety margin
-MAX_ARG_LIMIT = int(os.environ.get("MANIAC_MAX_ARG_LIMIT", "115000"))
+from maniac.config import DEFAULT_MODEL_ALIASES, Config
+from maniac.exceptions import GenerationError
 
-# Friendly model aliases mapping to agy runtime models
-MODEL_ALIASES = {
-    "flash": "Gemini 3.7 Flash (High)",
-    "flash-high": "Gemini 3.7 Flash (High)",
-    "flash-medium": "Gemini 3.7 Flash (Medium)",
-    "flash-low": "Gemini 3.7 Flash (Low)",
-    "pro": "Gemini 3.1 Pro (High)",
-    "pro-low": "Gemini 3.1 Pro (Low)",
-    "sonnet": "Claude Sonnet 4.6 (Thinking)",
-    "opus": "Claude Opus 4.6 (Thinking)",
-}
-
-DEFAULT_MODEL = os.environ.get("MANIAC_MODEL", "flash")
+MODEL_ALIASES = DEFAULT_MODEL_ALIASES
 
 
 def run_llm_synthesis(
@@ -30,8 +19,11 @@ def run_llm_synthesis(
     model: str | None = None,
     work_base_dir: str | Path = "data/tmp",
     timeout: int = 180,
+    clean_header: bool = True,
+    config: Config | None = None,
 ) -> str:
     """Execute direct LLM generation via ~/bin/sandbox agy -p."""
+    cfg = config or Config()
     base_dir = Path(work_base_dir).resolve()
     base_dir.mkdir(parents=True, exist_ok=True)
 
@@ -50,18 +42,16 @@ def run_llm_synthesis(
         logger.error("Neither ~/bin/sandbox nor agy found in PATH.")
         raise FileNotFoundError("Neither ~/bin/sandbox nor agy executable found.")
 
-    raw_model = (model or DEFAULT_MODEL).strip()
-    selected_model = MODEL_ALIASES.get(raw_model.lower(), raw_model)
+    selected_model = cfg.resolve_model(model)
 
-    # Guard prompt string to fit cleanly within OS argument bounds
     effective_prompt = prompt
-    if len(effective_prompt.encode("utf-8")) > MAX_ARG_LIMIT:
+    if len(effective_prompt.encode("utf-8")) > cfg.max_arg_limit:
         logger.warning(
             "Prompt exceeds argument limit ({} bytes); trimming context for single-turn synthesis.",
             len(effective_prompt.encode("utf-8")),
         )
         effective_prompt = (
-            effective_prompt[: MAX_ARG_LIMIT - 1000]
+            effective_prompt[: cfg.max_arg_limit - 1000]
             + "\n\n=== [Context trimmed for synthesis] ==="
         )
 
@@ -69,10 +59,9 @@ def run_llm_synthesis(
 
     try:
         logger.info(
-            "Calling LLM synthesis for '{}' using model '{}' (alias: '{}')...",
+            "Calling LLM synthesis for '{}' using model '{}'...",
             tool_name,
             selected_model,
-            raw_model,
         )
         res = subprocess.run(
             cmd,
@@ -86,10 +75,15 @@ def run_llm_synthesis(
             logger.error(
                 "LLM synthesis failed with code {}: {}", res.returncode, res.stderr
             )
-            raise RuntimeError(f"LLM command failed: {res.stderr.strip()}")
+            raise GenerationError(f"LLM command failed: {res.stderr.strip()}")
 
         raw_output = res.stdout.strip()
-        return clean_manpage_markdown(raw_output, tool_name)
+        if clean_header:
+            return clean_manpage_markdown(raw_output, tool_name)
+        return raw_output
+    except subprocess.TimeoutExpired as e:
+        logger.error("LLM synthesis timed out for '{}'", tool_name)
+        raise GenerationError(f"LLM synthesis timed out for '{tool_name}'") from e
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
@@ -98,13 +92,11 @@ def clean_manpage_markdown(text: str, tool_name: str) -> str:
     """Unwrap code fences if present and ensure valid manpage metadata header."""
     cleaned = text.strip()
 
-    # Unwrap triple backticks if output was wrapped
     if cleaned.startswith("```"):
         lines = cleaned.splitlines()
         lines = [line for line in lines if not line.strip().startswith("```")]
         cleaned = "\n".join(lines).strip()
 
-    # Ensure % TOOL(1) header exists on the very first line
     expected_header = f"% {tool_name.upper()}(1) | User Commands"
     if not cleaned.startswith("% "):
         cleaned = f"{expected_header}\n\n{cleaned}"

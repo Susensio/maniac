@@ -3,7 +3,8 @@ from typing import Any
 
 import pytest
 
-from maniac.crawler import find_subcommands, get_help
+from maniac.exceptions import CrawlerError
+from maniac.sources.crawler import find_subcommands, get_help
 
 
 def test_get_help_success(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -25,8 +26,8 @@ def test_get_help_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
         raise subprocess.TimeoutExpired(cmd=["git", "--help"], timeout=5)
 
     monkeypatch.setattr(subprocess, "run", fake_run)
-    out = get_help(["git"])
-    assert out == "Error: Command timed out."
+    with pytest.raises(CrawlerError):
+        get_help(["git"])
 
 
 def test_get_help_not_found(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -34,8 +35,8 @@ def test_get_help_not_found(monkeypatch: pytest.MonkeyPatch) -> None:
         raise FileNotFoundError(2, "No such file or directory")
 
     monkeypatch.setattr(subprocess, "run", fake_run)
-    out = get_help(["nonexistent_binary"])
-    assert out.startswith("Error:")
+    with pytest.raises(CrawlerError):
+        get_help(["nonexistent_binary"])
 
 
 def test_find_subcommands_recursive(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -50,7 +51,7 @@ def test_find_subcommands_recursive(monkeypatch: pytest.MonkeyPatch) -> None:
             return "No subcommands"
         return "No subcommands"
 
-    monkeypatch.setattr("maniac.crawler.get_help", fake_get_help)
+    monkeypatch.setattr("maniac.sources.crawler.get_help", fake_get_help)
     tree = find_subcommands("tool")
 
     assert "> tool --help" in tree

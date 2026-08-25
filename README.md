@@ -1,6 +1,6 @@
 # maniac
 
-An automated pipeline that scrapes recursive CLI `--help` trees, dynamically discovers upstream repository documentation via `mise` / `uv` / Git, synthesizes conceptually grouped Unix manual pages using an LLM, and compiles them into standard `roff` manpages via Pandoc.
+An automated pipeline that scrapes recursive CLI `--help` trees, dynamically discovers upstream repository documentation via `mise` / `uv` / Git, synthesizes conceptually grouped Unix manual pages using an LLM, compiles them into standard `roff` manpages via Pandoc, and provides an LLM-as-a-Judge quality evaluation loop.
 
 ---
 
@@ -11,6 +11,7 @@ An automated pipeline that scrapes recursive CLI `--help` trees, dynamically dis
 - **Prioritized Documentation Extraction**: Extracts and ranks key user documentation (`README.md`, `reference/cli.md`, `docs/concepts/*.md`, `manual/`) while skipping internal noise (contributing guides, changelogs, benchmarks).
 - **Elite Unix Manual Synthesis**: Generates manpages following the structural standards of `tmux(1)` and `git(1)` (foundational domain concepts upfront, categorized subsystem headers, Pandoc definition lists, exit statuses, and realistic workflow examples).
 - **Pandoc Compilation & Installation**: Compiles Markdown manpages to `.1` roff format and installs them to `~/.local/share/man/man1/`.
+- **LLM-as-a-Judge Quality Evaluator**: Automated 0-100 rubric grader evaluating domain ontology, flag formatting, subsystem grouping, reference completeness, and workflow examples.
 - **Intermediate Artifact Preservation**: Automatically saves intermediate extracted contexts and raw prompts to `data/intermediate/` for inspection and debugging.
 
 ---
@@ -43,7 +44,16 @@ uv run maniac generate hx --install
 uv run maniac generate git --dry-run
 ```
 
-### 2. Inspect Executables Missing Manpages
+### 2. Quality Evaluation with LLM-as-a-Judge
+
+Evaluate the quality of a generated manpage against its reference context using the automated rubric:
+
+```bash
+uv run maniac eval howdoi
+uv run maniac eval uv --min-score 80
+```
+
+### 3. Inspect Executables Missing Manpages
 
 Scan `~/.local/bin` to find binaries that currently lack manual entries:
 
@@ -51,7 +61,7 @@ Scan `~/.local/bin` to find binaries that currently lack manual entries:
 uv run maniac list-missing
 ```
 
-### 3. Crawl CLI Subcommands & Help
+### 4. Crawl CLI Subcommands & Help
 
 Recursively crawl `--help` output for any CLI command:
 
@@ -60,7 +70,7 @@ uv run maniac crawl git
 uv run maniac crawl uv pip
 ```
 
-### 4. Fetch & Inspect Extracted Documentation
+### 5. Fetch & Inspect Extracted Documentation
 
 Discover the upstream repository and inspect the extracted documentation files:
 
@@ -69,7 +79,7 @@ uv run maniac docs uv
 uv run maniac docs hx
 ```
 
-### 5. Batch Generation
+### 6. Batch Generation
 
 Generate manpages for multiple tools sequentially:
 
@@ -77,7 +87,7 @@ Generate manpages for multiple tools sequentially:
 uv run maniac batch howdoi uv hx --install
 ```
 
-### 6. Install Globally via `uv tool`
+### 7. Install Globally via `uv tool`
 
 Install `maniac` into your local `PATH`:
 
@@ -88,6 +98,7 @@ uv tool install .
 # Now run maniac directly anywhere
 maniac list-missing
 maniac generate howdoi --install
+maniac eval howdoi
 ```
 
 ---
@@ -97,22 +108,29 @@ maniac generate howdoi --install
 ```text
 maniac/
 ├── maniac/
-│   ├── cli.py          # Typer CLI application entry point
-│   ├── crawler.py      # Recursive CLI subcommand & help scraper
-│   ├── discovery.py    # Dynamic tool & repository discovery (mise, git, uv)
-│   ├── docs.py         # Prioritized repository doc extractor & ranker
-│   ├── extractor.py    # Subcommand regex parser
-│   ├── prompts.py      # Unix manual system prompt & context injector
-│   ├── llm.py          # LLM synthesizer runner
-│   ├── compiler.py     # Pandoc roff compiler & manpage installer
-│   └── pipeline.py     # End-to-end orchestration pipeline
+│   ├── cli.py                  # Typer CLI application entry point
+│   ├── config.py               # Central configuration, paths, model aliases & limits
+│   ├── eval.py                 # LLM-as-a-Judge & deterministic quality evaluation
+│   ├── exceptions.py           # Exception hierarchy (CrawlerError, DiscoveryError, etc.)
+│   ├── models.py               # Shared data transfer objects
+│   ├── sources/                # Source discovery & help/doc extraction
+│   │   ├── crawler.py          # Subcommand tree crawler
+│   │   ├── discovery.py        # Mise / git / uv repository discovery
+│   │   ├── docs.py             # Git repository doc extractor & ranker
+│   │   └── extractor.py        # Subcommand regex parser
+│   ├── generation/             # Prompt engineering, LLM synthesis & compilation
+│   │   ├── compiler.py         # Pandoc roff compiler & installer
+│   │   ├── llm.py              # Sandbox LLM execution engine
+│   │   └── prompts.py          # System prompt & context template builder
+│   └── orchestration/          # End-to-end pipeline coordination
+│       └── pipeline.py         # Orchestration pipeline
 ├── data/
-│   ├── intermediate/   # Extracted context and prompts per tool
-│   ├── manpages/       # Generated .1.md and compiled .1 manpages
-│   └── repos/          # Cached shallow repository clones
-├── tests/              # Pytest test suite (unit and integration tests)
-├── Justfile            # Developer workflows (test, lint, format, check)
-└── pyproject.toml      # Project configuration and metadata
+│   ├── intermediate/           # Extracted context and prompts per tool
+│   ├── manpages/               # Generated .1.md and compiled .1 manpages
+│   └── repos/                  # Cached shallow repository clones
+├── tests/                      # Pytest test suite (48 unit & integration tests)
+├── Justfile                    # Developer workflows (test, lint, format, check)
+└── pyproject.toml              # Project configuration and metadata
 ```
 
 ---

@@ -1,3 +1,5 @@
+"""Manpage roff compilation and system installation via pandoc."""
+
 import shutil
 import subprocess
 from pathlib import Path

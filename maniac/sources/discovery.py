@@ -1,3 +1,5 @@
+"""Dynamic repository discovery via symlinks and mise metadata."""
+
 import json
 import re
 import subprocess
@@ -85,13 +87,11 @@ def _resolve_local_lib(binary_name: str, resolved_path: Path) -> RepoSource:
 
 def _resolve_from_mise(tool_id: str, binary_name: str) -> str | None:
     """Infer repository dynamically from mise configuration files and mise registry."""
-    # Step A: Parse user's mise config files (~/.config/mise/config.toml, etc.)
     mise_cfg_dir = Path.home() / ".config" / "mise"
     if mise_cfg_dir.exists():
         for cfg_path in mise_cfg_dir.glob("**/*.toml"):
             try:
                 data = tomllib.loads(cfg_path.read_text(encoding="utf-8"))
-                # Check tool_alias (e.g. antigravity = "github:google-antigravity/antigravity-cli")
                 aliases = data.get("tool_alias", {})
                 for alias_name, alias_target in aliases.items():
                     if alias_name in (tool_id, binary_name):
@@ -99,7 +99,6 @@ def _resolve_from_mise(tool_id: str, binary_name: str) -> str | None:
                             return alias_target.split(":", 1)[1]
                         return alias_target
 
-                # Check [tools] table keys
                 tools = data.get("tools", {})
                 for raw_tool_key, val in tools.items():
                     if raw_tool_key.startswith("github:"):
@@ -121,7 +120,6 @@ def _resolve_from_mise(tool_id: str, binary_name: str) -> str | None:
             except (OSError, tomllib.TOMLDecodeError) as e:
                 logger.debug("Error parsing mise config {}: {}", cfg_path, e)
 
-    # Step B: Parse sanitized tool prefixes
     if tool_id.startswith("github-"):
         parts = tool_id[7:].split("-", 1)
         if len(parts) == 2:
@@ -138,7 +136,6 @@ def _resolve_from_mise(tool_id: str, binary_name: str) -> str | None:
         if len(parts) == 2:
             return f"{parts[0]}/{parts[1]}"
 
-    # Step C: Query mise registry dynamically
     return _query_mise_registry(tool_id) or _query_mise_registry(binary_name)
 
 
