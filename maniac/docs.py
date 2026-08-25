@@ -7,7 +7,7 @@ from pathlib import Path
 
 from loguru import logger
 
-from maniac.models import DocFile, RepoSource
+from .models import DocFile, RepoSource
 
 DOC_EXTENSIONS = {".md", ".markdown", ".rst", ".1", ".txt"}
 DOC_DIRS = {"doc", "docs", "manual", "book", "man", "manpage", "site"}

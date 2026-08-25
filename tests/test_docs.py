@@ -1,11 +1,11 @@
 from pathlib import Path
 
-from maniac.models import DocFile, RepoSource
-from maniac.sources.docs import (
+from maniac.docs import (
     extract_docs_from_dir,
     fetch_and_extract_docs,
     format_docs_section,
 )
+from maniac.models import DocFile, RepoSource
 
 
 def test_extract_docs_from_dir(tmp_path: Path) -> None:

@@ -4,14 +4,14 @@ from pathlib import Path
 
 from loguru import logger
 
-from maniac.config import Config
-from maniac.generation.compiler import compile_to_man, install_manpage
-from maniac.generation.llm import run_llm_synthesis
-from maniac.generation.prompts import build_synthesis_prompt, load_system_prompt
-from maniac.models import PipelineResult
-from maniac.sources.crawler import find_subcommands, format_help_block
-from maniac.sources.discovery import discover_repo
-from maniac.sources.docs import fetch_and_extract_docs, format_docs_section
+from .compiler import compile_to_man, install_manpage
+from .config import Config
+from .crawler import find_subcommands, format_help_block
+from .discovery import discover_repo
+from .docs import fetch_and_extract_docs, format_docs_section
+from .llm import run_llm_synthesis
+from .models import PipelineResult
+from .prompts import build_synthesis_prompt, load_system_prompt
 
 
 def run_pipeline(

@@ -5,8 +5,8 @@ import subprocess
 
 from loguru import logger
 
-from maniac.exceptions import CrawlerError
-from maniac.sources.extractor import extract_subcommands
+from .exceptions import CrawlerError
+from .extractor import extract_subcommands
 
 
 def get_help(cmd: list[str], timeout: int = 5) -> str:

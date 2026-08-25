@@ -5,7 +5,7 @@ from typing import Any
 
 import pytest
 
-from maniac.generation.compiler import compile_to_man, install_manpage
+from maniac.compiler import compile_to_man, install_manpage
 
 
 def test_compile_to_man_no_pandoc(

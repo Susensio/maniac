@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from maniac.generation.prompts import (
+from maniac.prompts import (
     build_synthesis_prompt,
     load_system_prompt,
 )

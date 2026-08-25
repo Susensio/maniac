@@ -46,15 +46,15 @@ def test_cli_docs(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_cli_generate_dry_run(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setattr(
-        "maniac.orchestration.pipeline.find_subcommands",
+        "maniac.pipeline.find_subcommands",
         lambda cmd: {"> tool --help": "Usage: tool"},
     )
     monkeypatch.setattr(
-        "maniac.orchestration.pipeline.discover_repo",
+        "maniac.pipeline.discover_repo",
         lambda name: RepoSource(name=name, target="org/tool", is_local=False),
     )
     monkeypatch.setattr(
-        "maniac.orchestration.pipeline.fetch_and_extract_docs",
+        "maniac.pipeline.fetch_and_extract_docs",
         lambda source, cache_dir: [DocFile(rel_path="README.md", content="# Tool")],
     )
 

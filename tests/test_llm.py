@@ -3,7 +3,7 @@ from typing import Any
 
 import pytest
 
-from maniac.generation.llm import (
+from maniac.llm import (
     MODEL_ALIASES,
     clean_manpage_markdown,
     run_llm_synthesis,

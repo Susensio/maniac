@@ -9,13 +9,13 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from maniac.config import Config
-from maniac.eval import evaluate_manpage
-from maniac.exceptions import ManiacError
-from maniac.orchestration.pipeline import run_pipeline
-from maniac.sources.crawler import find_subcommands
-from maniac.sources.discovery import discover_repo
-from maniac.sources.docs import fetch_and_extract_docs
+from .config import Config
+from .crawler import find_subcommands
+from .discovery import discover_repo
+from .docs import fetch_and_extract_docs
+from .eval import evaluate_manpage
+from .exceptions import ManiacError
+from .pipeline import run_pipeline
 
 app = typer.Typer(
     add_completion=False,

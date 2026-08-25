@@ -9,7 +9,7 @@ An automated pipeline that scrapes recursive CLI `--help` trees, dynamically dis
 - **Recursive Subcommand Crawler**: Automatically explores `--help` trees for multi-level CLIs (e.g. `uv pip compile`), stripping pagers and ANSI color codes while preventing infinite recursion loops.
 - **Dynamic Repository Discovery**: Infers upstream source repositories dynamically from local `mise` configurations, `mise registry`, `uv tool` metadata, and Git remotes without hardcoded tables.
 - **Prioritized Documentation Extraction**: Extracts and ranks key user documentation (`README.md`, `reference/cli.md`, `docs/concepts/*.md`, `manual/`) while skipping internal noise (contributing guides, changelogs, benchmarks).
-- **Elite Unix Manual Synthesis**: Generates manpages following the structural standards of `tmux(1)` and `git(1)` (foundational domain concepts upfront, categorized subsystem headers, Pandoc definition lists, exit statuses, and realistic workflow examples).
+- **Elite Unix Manual Synthesis**: Generates manpages modeled after `tmux(1)` and `git(1)` (foundational domain concepts upfront, categorized subsystem headers, Pandoc definition lists, exit statuses, and realistic workflow examples).
 - **Pandoc Compilation & Installation**: Compiles Markdown manpages to `.1` roff format and installs them to `~/.local/share/man/man1/`.
 - **LLM-as-a-Judge Quality Evaluator**: Automated 0-100 rubric grader evaluating domain ontology, flag formatting, subsystem grouping, reference completeness, and workflow examples.
 - **Intermediate Artifact Preservation**: Automatically saves intermediate extracted contexts and raw prompts to `data/intermediate/` for inspection and debugging.
@@ -113,17 +113,17 @@ maniac/
 │   ├── eval.py                 # LLM-as-a-Judge & deterministic quality evaluation
 │   ├── exceptions.py           # Exception hierarchy (CrawlerError, DiscoveryError, etc.)
 │   ├── models.py               # Shared data transfer objects
-│   ├── sources/                # Source discovery & help/doc extraction
-│   │   ├── crawler.py          # Subcommand tree crawler
-│   │   ├── discovery.py        # Mise / git / uv repository discovery
-│   │   ├── docs.py             # Git repository doc extractor & ranker
-│   │   └── extractor.py        # Subcommand regex parser
-│   ├── generation/             # Prompt engineering, LLM synthesis & compilation
-│   │   ├── compiler.py         # Pandoc roff compiler & installer
-│   │   ├── llm.py              # Sandbox LLM execution engine
-│   │   └── prompts.py          # System prompt & context template builder
-│   └── orchestration/          # End-to-end pipeline coordination
-│       └── pipeline.py         # Orchestration pipeline
+│   ├── crawler.py              # CLI help tree & subcommand crawler
+│   ├── discovery.py            # Mise / git / uv repository discovery
+│   ├── docs.py                 # Git repository doc extractor & ranker
+│   ├── extractor.py            # Subcommand regex parser
+│   ├── compiler.py             # Pandoc roff compiler & installer
+│   ├── llm.py                  # Sandbox LLM execution engine
+│   ├── prompts.py              # System prompt & context template builder
+│   ├── pipeline.py             # Orchestration pipeline
+│   └── templates/              # External prompt template files
+│       ├── system_prompt.md    # Base synthesis prompt template
+│       └── eval_prompt.md      # Evaluation rubric prompt template
 ├── data/
 │   ├── intermediate/           # Extracted context and prompts per tool
 │   ├── manpages/               # Generated .1.md and compiled .1 manpages

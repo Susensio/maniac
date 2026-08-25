@@ -7,8 +7,8 @@ from pathlib import Path
 
 from loguru import logger
 
-from maniac.config import DEFAULT_MODEL_ALIASES, Config
-from maniac.exceptions import GenerationError
+from .config import DEFAULT_MODEL_ALIASES, Config
+from .exceptions import GenerationError
 
 MODEL_ALIASES = DEFAULT_MODEL_ALIASES
 
