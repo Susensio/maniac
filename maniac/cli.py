@@ -10,12 +10,10 @@ from rich.console import Console
 from rich.table import Table
 
 from .config import Config
-from .crawler import find_subcommands
-from .discovery import discover_repo
-from .docs import fetch_and_extract_docs
-from .eval import evaluate_manpage
+from .evaluation import evaluate_manpage
 from .exceptions import ManiacError
-from .pipeline import run_pipeline
+from .orchestration import run_pipeline
+from .sources import discover_repo, fetch_and_extract_docs, find_subcommands
 
 app = typer.Typer(
     add_completion=False,

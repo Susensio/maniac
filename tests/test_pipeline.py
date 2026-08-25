@@ -3,20 +3,20 @@ from pathlib import Path
 import pytest
 
 from maniac.models import DocFile, RepoSource
-from maniac.pipeline import run_pipeline
+from maniac.orchestration.pipeline import run_pipeline
 
 
 def test_run_pipeline_dry_run(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setattr(
-        "maniac.pipeline.find_subcommands",
+        "maniac.orchestration.pipeline.find_subcommands",
         lambda cmd: {"> testtool --help": "Usage: testtool"},
     )
     monkeypatch.setattr(
-        "maniac.pipeline.discover_repo",
+        "maniac.orchestration.pipeline.discover_repo",
         lambda name: RepoSource(name=name, target="org/testtool", is_local=False),
     )
     monkeypatch.setattr(
-        "maniac.pipeline.fetch_and_extract_docs",
+        "maniac.orchestration.pipeline.fetch_and_extract_docs",
         lambda source, cache_dir: [
             DocFile(rel_path="README.md", content="# Test Tool")
         ],

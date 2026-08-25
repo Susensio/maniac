@@ -5,7 +5,7 @@ import subprocess
 
 from loguru import logger
 
-from .exceptions import CrawlerError
+from ..exceptions import CrawlerError
 from .extractor import extract_subcommands
 
 

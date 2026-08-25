@@ -8,7 +8,7 @@ from pathlib import Path
 
 from loguru import logger
 
-from .models import RepoSource
+from ..models import RepoSource
 
 
 def discover_repo(binary_name: str, bin_dir: str | Path | None = None) -> RepoSource:

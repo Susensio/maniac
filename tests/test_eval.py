@@ -8,7 +8,7 @@ import pytest
 from typer.testing import CliRunner
 
 from maniac.cli import app
-from maniac.eval import (
+from maniac.evaluation import (
     DeterministicCheck,
     LLMJudge,
     evaluate_manpage,
@@ -231,7 +231,7 @@ def test_llm_judge_evaluate_mock(monkeypatch: pytest.MonkeyPatch) -> None:
             }
         )
 
-    monkeypatch.setattr("maniac.eval.run_llm_synthesis", fake_synthesis)
+    monkeypatch.setattr("maniac.evaluation.judge.run_llm_synthesis", fake_synthesis)
 
     judge = LLMJudge(pass_threshold=70)
     result = judge.evaluate("tool", VALID_MANPAGE, "context text")
@@ -258,7 +258,7 @@ def test_llm_judge_score_below_threshold(monkeypatch: pytest.MonkeyPatch) -> Non
             }
         )
 
-    monkeypatch.setattr("maniac.eval.run_llm_synthesis", fake_synthesis)
+    monkeypatch.setattr("maniac.evaluation.judge.run_llm_synthesis", fake_synthesis)
 
     judge = LLMJudge(pass_threshold=70)
     result = judge.evaluate("tool", VALID_MANPAGE, "context text")
@@ -276,7 +276,7 @@ def test_evaluate_manpage_integration(monkeypatch: pytest.MonkeyPatch) -> None:
         ),
     )
     monkeypatch.setattr(
-        "maniac.eval.run_llm_synthesis",
+        "maniac.evaluation.judge.run_llm_synthesis",
         lambda *a, **kw: json.dumps(
             {
                 "score": 92,
@@ -304,7 +304,7 @@ def test_evaluate_manpage_deterministic_failure(
 ) -> None:
     monkeypatch.setattr(shutil, "which", lambda name: None)
     monkeypatch.setattr(
-        "maniac.eval.run_llm_synthesis",
+        "maniac.evaluation.judge.run_llm_synthesis",
         lambda *a, **kw: json.dumps(
             {
                 "score": 90,

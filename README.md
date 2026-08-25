@@ -108,21 +108,31 @@ maniac eval howdoi
 ```text
 maniac/
 ├── maniac/
+│   ├── __init__.py             # Minimal version package marker
+│   ├── __main__.py             # Python CLI execution entrypoint
 │   ├── cli.py                  # Typer CLI application entry point
 │   ├── config.py               # Central configuration, paths, model aliases & limits
-│   ├── eval.py                 # LLM-as-a-Judge & deterministic quality evaluation
 │   ├── exceptions.py           # Exception hierarchy (CrawlerError, DiscoveryError, etc.)
 │   ├── models.py               # Shared data transfer objects
-│   ├── crawler.py              # CLI help tree & subcommand crawler
-│   ├── discovery.py            # Mise / git / uv repository discovery
-│   ├── docs.py                 # Git repository doc extractor & ranker
-│   ├── extractor.py            # Subcommand regex parser
-│   ├── compiler.py             # Pandoc roff compiler & installer
-│   ├── llm.py                  # Sandbox LLM execution engine
-│   ├── prompts.py              # System prompt & context template builder
-│   ├── pipeline.py             # Orchestration pipeline
+│   ├── sources/                # Source discovery & help/doc extraction
+│   │   ├── __init__.py
+│   │   ├── crawler.py          # CLI help tree & subcommand crawler
+│   │   ├── discovery.py        # Mise / git / uv repository discovery
+│   │   ├── docs.py             # Git repository doc extractor & ranker
+│   │   └── extractor.py        # Subcommand regex parser
+│   ├── generation/             # Prompt engineering, LLM synthesis & compilation
+│   │   ├── __init__.py
+│   │   ├── compiler.py         # Pandoc roff compiler & installer
+│   │   ├── llm.py              # Sandbox LLM execution engine
+│   │   └── prompts.py          # System prompt & context template builder
+│   ├── evaluation/             # Deterministic checks & LLM-as-a-Judge quality pipeline
+│   │   ├── __init__.py
+│   │   └── judge.py            # DeterministicCheck & LLMJudge evaluator
+│   ├── orchestration/          # End-to-end pipeline coordination
+│   │   ├── __init__.py
+│   │   └── pipeline.py         # Orchestration pipeline
 │   └── templates/              # External prompt template files
-│       ├── system_prompt.md    # Base synthesis prompt template
+│       ├── system_prompt.md    # Base synthesis prompt template (tmux/git anchored)
 │       └── eval_prompt.md      # Evaluation rubric prompt template
 ├── data/
 │   ├── intermediate/           # Extracted context and prompts per tool

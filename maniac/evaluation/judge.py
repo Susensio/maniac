@@ -10,8 +10,8 @@ from typing import ClassVar
 
 from loguru import logger
 
-from .llm import run_llm_synthesis
-from .models import EvaluationResult
+from ..generation.llm import run_llm_synthesis
+from ..models import EvaluationResult
 
 
 def get_default_eval_prompt() -> str:
@@ -23,9 +23,12 @@ def get_default_eval_prompt() -> str:
             .read_text(encoding="utf-8")
         )
     except (OSError, TypeError, ModuleNotFoundError):
-        fallback_path = Path(__file__).parent / "templates" / "eval_prompt.md"
-        if fallback_path.exists():
-            return fallback_path.read_text(encoding="utf-8")
+        for candidate in (
+            Path(__file__).parent.parent / "templates" / "eval_prompt.md",
+            Path(__file__).parent / "templates" / "eval_prompt.md",
+        ):
+            if candidate.exists():
+                return candidate.read_text(encoding="utf-8")
         return "Evaluate manpage quality.\n"
 
 

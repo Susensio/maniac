@@ -13,9 +13,12 @@ def get_default_system_prompt() -> str:
             .read_text(encoding="utf-8")
         )
     except (OSError, TypeError, ModuleNotFoundError):
-        fallback_path = Path(__file__).parent / "templates" / "system_prompt.md"
-        if fallback_path.exists():
-            return fallback_path.read_text(encoding="utf-8")
+        for candidate in (
+            Path(__file__).parent.parent / "templates" / "system_prompt.md",
+            Path(__file__).parent / "templates" / "system_prompt.md",
+        ):
+            if candidate.exists():
+                return candidate.read_text(encoding="utf-8")
         return "% {TOOL_NAME}(1) | User Commands\n"
 
 

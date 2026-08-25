@@ -4,14 +4,14 @@ from pathlib import Path
 
 from loguru import logger
 
-from .compiler import compile_to_man, install_manpage
-from .config import Config
-from .crawler import find_subcommands, format_help_block
-from .discovery import discover_repo
-from .docs import fetch_and_extract_docs, format_docs_section
-from .llm import run_llm_synthesis
-from .models import PipelineResult
-from .prompts import build_synthesis_prompt, load_system_prompt
+from ..config import Config
+from ..generation.compiler import compile_to_man, install_manpage
+from ..generation.llm import run_llm_synthesis
+from ..generation.prompts import build_synthesis_prompt, load_system_prompt
+from ..models import PipelineResult
+from ..sources.crawler import find_subcommands, format_help_block
+from ..sources.discovery import discover_repo
+from ..sources.docs import fetch_and_extract_docs, format_docs_section
 
 
 def run_pipeline(

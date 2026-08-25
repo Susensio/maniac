@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from maniac.discovery import (
+from maniac.sources.discovery import (
     _clean_git_url,
     _extract_mise_tool_id,
     _resolve_from_mise,
