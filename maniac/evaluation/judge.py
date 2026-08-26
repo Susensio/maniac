@@ -283,8 +283,14 @@ def run_deterministic_checks(
 
 def render_manpage_to_terminal(
     markdown_text: str, timeout: int | None = None
-) -> str | None:
-    """Render markdown manpage to terminal formatted text (as seen in man)."""
+) -> tuple[str, str] | None:
+    """Render markdown manpage to terminal formatted text.
+
+    Returns (text, renderer) where renderer is "man" when groff actually
+    produced the terminal rendering, or "pandoc-plain" when groff was
+    unavailable and the text is pandoc's plain-text approximation instead
+    -- not what `man` renders.
+    """
     pandoc_bin = shutil.which("pandoc")
     groff_bin = shutil.which("groff")
 
@@ -318,7 +324,7 @@ def render_manpage_to_terminal(
                 check=False,
             )
             if groff_res.returncode == 0 and groff_res.stdout.strip():
-                return groff_res.stdout
+                return groff_res.stdout, "man"
 
         plain_res = subprocess.run(
             [pandoc_bin, "-s", "-f", "markdown-smart", "-t", "plain"],
@@ -329,7 +335,7 @@ def render_manpage_to_terminal(
             check=False,
         )
         if plain_res.returncode == 0 and plain_res.stdout.strip():
-            return plain_res.stdout
+            return plain_res.stdout, "pandoc-plain"
     except (OSError, subprocess.SubprocessError) as e:
         logger.debug("Failed to render manpage to terminal text", error=str(e))
 
@@ -351,7 +357,7 @@ def build_evaluation_prompt(
         if cov is not None
         else (compute_coverage(manpage_text, context_text) if context_text else None)
     )
-    rendered_text = render_manpage_to_terminal(manpage_text)
+    rendered = render_manpage_to_terminal(manpage_text)
 
     if coverage:
         coverage_summary = (
@@ -365,10 +371,16 @@ def build_evaluation_prompt(
     else:
         coverage_summary = "=== AUTOMATED COVERAGE ANALYSIS ===\nNo reference context provided.\n=== END COVERAGE ANALYSIS ==="
 
-    if rendered_text:
+    if rendered:
+        text, renderer = rendered
+        label = (
+            f"WHAT THE USER SEES IN `man {tool_name}`"
+            if renderer == "man"
+            else "PANDOC PLAIN-TEXT FALLBACK -- groff unavailable, NOT what `man` renders"
+        )
         rendered_section = (
-            f"=== RENDERED TERMINAL MANUAL PAGE (WHAT THE USER SEES IN `man {tool_name}`) ===\n"
-            f"{rendered_text}\n"
+            f"=== RENDERED TERMINAL MANUAL PAGE ({label}) ===\n"
+            f"{text}\n"
             f"=== END RENDERED MANUAL PAGE ==="
         )
     else:
