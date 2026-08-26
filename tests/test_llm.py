@@ -1,10 +1,11 @@
 import subprocess
+from pathlib import Path
 from typing import Any
 
 import pytest
 
+from maniac.config import Config
 from maniac.generation.llm import (
-    MODEL_ALIASES,
     clean_manpage_markdown,
     run_llm_synthesis,
 )
@@ -32,13 +33,14 @@ def test_clean_manpage_markdown_missing_header() -> None:
 
 
 def test_model_aliases() -> None:
-    assert MODEL_ALIASES["flash"] == "Gemini 3.7 Flash (High)"
-    assert MODEL_ALIASES["pro"] == "Gemini 3.1 Pro (High)"
-    assert MODEL_ALIASES["sonnet"] == "Claude Sonnet 4.6 (Thinking)"
+    cfg = Config()
+    assert cfg.resolve_model("flash") == "Gemini 3.7 Flash (High)"
+    assert cfg.resolve_model("pro") == "Gemini 3.1 Pro (High)"
+    assert cfg.resolve_model("sonnet") == "Claude Sonnet 4.6 (Thinking)"
 
 
 def test_run_llm_synthesis_mock(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: pytest.TempPathFactory
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     def fake_run(*args: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
         assert "--model" in args[0]
@@ -50,6 +52,14 @@ def test_run_llm_synthesis_mock(
             stderr="",
         )
 
+    import shutil
+
+    # Only "agy" resolves; every other binary (notably "sandbox") is
+    # reported absent so the sandbox-vs-agy branch taken doesn't depend on
+    # what happens to be on the host running the test.
+    monkeypatch.setattr(
+        shutil, "which", lambda cmd: "/usr/bin/agy" if cmd == "agy" else None
+    )
     monkeypatch.setattr(subprocess, "run", fake_run)
     result = run_llm_synthesis(
         "prompt text", "tool", model="flash", work_base_dir=tmp_path

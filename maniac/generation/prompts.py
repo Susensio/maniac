@@ -4,22 +4,24 @@ import importlib.resources
 from pathlib import Path
 
 
-def get_default_system_prompt() -> str:
-    """Load default system prompt template from bundled markdown file."""
+def load_template(name: str, fallback: str = "") -> str:
+    """Load template from bundled package resources or local fallback paths."""
     try:
         return (
             importlib.resources.files("maniac.templates")
-            .joinpath("system_prompt.md")
+            .joinpath(name)
             .read_text(encoding="utf-8")
         )
     except (OSError, TypeError, ModuleNotFoundError):
-        for candidate in (
-            Path(__file__).parent.parent / "templates" / "system_prompt.md",
-            Path(__file__).parent / "templates" / "system_prompt.md",
-        ):
-            if candidate.exists():
-                return candidate.read_text(encoding="utf-8")
-        return "% {TOOL_NAME}(1) | User Commands\n"
+        candidate = Path(__file__).parent.parent / "templates" / name
+        if candidate.exists():
+            return candidate.read_text(encoding="utf-8")
+        return fallback
+
+
+def get_default_system_prompt() -> str:
+    """Load default system prompt template."""
+    return load_template("system_prompt.md", "% {TOOL_NAME}(1) | User Commands\n")
 
 
 def load_system_prompt(prompt_path: str | Path | None = None) -> str:
