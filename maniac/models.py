@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 
 @dataclass
@@ -17,7 +18,9 @@ class RepoSource:
             return None
         if self.target.startswith(("http://", "https://")):
             return self.target
-        return f"https://github.com/{self.target}.git"
+        if "/" in self.target:
+            return f"https://github.com/{self.target}.git"
+        return None
 
 
 @dataclass
@@ -47,3 +50,6 @@ class EvaluationResult:
     rubric_breakdown: dict[str, int]
     defects: list[str] = field(default_factory=list)
     summary: str = ""
+    deterministic_passed: bool = True
+    deterministic_defects: list[str] = field(default_factory=list)
+    coverage: Any | None = None

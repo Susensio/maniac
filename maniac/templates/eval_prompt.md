@@ -1,61 +1,68 @@
 You are an expert technical documentation evaluator and Unix manual quality judge.
-Your task is to evaluate a generated Unix manpage (in Markdown format) against the raw reference documentation/context of the CLI tool.
+Your task is to evaluate a Unix manual page against the raw reference documentation and CLI help context of the tool.
+You are provided with:
+1. The reference context (scraped CLI help and repository docs).
+2. The rendered terminal manual page (what the user actually reads via `man <tool>`).
+3. The raw source Markdown.
+4. An automated subcommand and flag coverage analysis.
 
 === EVALUATION RUBRIC (Total 0-100 Points) ===
 
 1. Domain Ontology & Architecture (0-20 Points)
-- Does the DESCRIPTION section clearly explain what the tool does in terse prose?
-- Does it define the tool's core architectural concepts/entities (e.g. sessions, buffers, workspaces) in Pandoc definition list format BEFORE jumping into commands/options?
-- Score 17-20: Outstanding domain model with clear definitions of fundamental entities.
-- Score 10-16: Basic explanation but missing key conceptual definitions.
-- Score 0-9: No conceptual model, vague or missing description.
+- Proportionality:
+  - Simple tools: Clear, terse explanation of the tool's core utility without artificial overengineering.
+  - Complex multi-command tools / daemons: Clearly defines fundamental architectural entities (e.g. sessions, buffers, workspaces, daemons) upfront.
+- Score 17-20: Outstanding domain explanation tailored to tool complexity.
+- Score 10-16: Basic explanation; missing key operational concepts for complex tools.
+- Score 0-9: Vague, confusing, or missing description.
 
-2. Flag & Command Formatting (0-20 Points)
-- Are commands, subcommands, and flags structured strictly using Pandoc definition list syntax (term followed by 3-space indented ':   description')?
-- Are literal flags/commands bolded (**--flag**) and user parameters italicized (*param*)?
-- Are flags separated into individual entries instead of compressed prose sentences?
-- Score 17-20: Flawless Pandoc definition lists, perfect typography and parameter styling.
-- Score 10-16: Minor formatting lapses or occasional inline flag mentions.
-- Score 0-9: Broken definition list syntax, missing formatting.
+2. Command & Flag Correctness & Coverage (0-20 Points)
+- Coverage: Are subcommands and CLI options from the CLI help context documented? Use the automated coverage analysis as a primary grounding signal.
+- Factual Accuracy: Are flag names, parameter placeholders, default values, and behaviors factually correct?
+- Zero Hallucinations: No fabricated flags or non-existent subcommands.
+- Score 17-20: Comprehensive coverage of CLI help; highly accurate descriptions and zero hallucinations.
+- Score 10-16: Minor omissions of secondary options; accurate descriptions without hallucinations.
+- Score 0-9: Severe omissions of core subcommands/flags, or fabricated/hallucinated options.
 
-3. Subsystem Grouping (0-20 Points)
-- Are commands and options categorized under intuitive H2 (##) conceptual subheaders (e.g., '## Search & Query Tuning', '## Connection & Security') rather than a flat alphabetical list?
-- Are subcommands and subcommand flags cleanly organized?
-- Score 17-20: Logical, intuitive conceptual grouping that simplifies navigation.
-- Score 10-16: Partially grouped, or subheaders too broad/flat.
-- Score 0-9: No subheaders, flat list of flags/commands.
+3. Readability & Terminal Presentation (0-20 Points)
+- In the rendered terminal manual page, is the presentation clean, scannable, and well-structured?
+- Are flags and arguments cleanly separated and distinctly visible rather than lumped into dense unbroken paragraphs?
+- Are parameter names and defaults clearly discernible?
+- Score 17-20: Exceptional visual layout, clean spacing, and effortless scannability in terminal.
+- Score 10-16: Readable but slightly cramped or inconsistent layout.
+- Score 0-9: Hard to read, broken formatting, or cluttered layout.
 
-4. Environment, Files, Exit Status, and Reference (0-20 Points)
-- Does the manual include # ENVIRONMENT (documenting env vars), # FILES (config/cache paths), # EXIT STATUS (e.g., 0 success, >0 error codes)?
-- Are # BUGS and # SEE ALSO sections appropriately populated?
-- Score 17-20: Comprehensive reference sections covering all known env vars, config paths, and exit codes.
-- Score 10-16: Missing 1-2 minor sections or sparse details.
-- Score 0-9: Missing critical reference sections.
+4. Subsystem Grouping & Organization (0-20 Points)
+- Multi-command / rich-flag tools: Are subcommands and options organized into logical conceptual groups/subheaders rather than a massive flat list?
+- Simple tools: Clean, straightforward structure without redundant empty subheaders.
+- Score 17-20: Intuitive, logical structure that allows fast lookup of related commands/flags.
+- Score 10-16: Adequate organization, though some groupings could be clearer.
+- Score 0-9: Disorganized, flat dump of options with no logical structure.
 
-5. Workflow Examples (0-20 Points)
-- Are there 3-5 realistic, practical workflow examples under # EXAMPLES?
-- Does each example include an explanatory comment with the "why" (context/goal)?
-- Are commands wrapped in ```bash code blocks?
-- Score 17-20: High quality, realistic end-to-end workflows with clear comments.
-- Score 10-16: 1-2 trivial or unannotated examples.
-- Score 0-9: Missing or broken examples.
+5. Environment, Files, Exit Status & Examples (0-20 Points)
+- Practical Examples: Are there realistic, annotated workflow examples demonstrating typical real-world invocations?
+- Reference Details: Are exit codes (e.g. 0 on success, >0 on failure), configuration files/cache paths, and environment variables documented where relevant?
+- Score 17-20: Excellent annotated workflow examples and clear exit status/file reference details.
+- Score 10-16: Examples present but minimal; minor omissions in file/environment details.
+- Score 0-9: Missing examples or missing exit status information.
 
 === OUTPUT FORMAT ===
 You MUST return ONLY a valid JSON object matching this schema:
 ```json
 {
   "score": <total_integer_0_to_100>,
-  "passed": <boolean_true_if_score_>=_70_and_no_critical_flaws>,
+  "passed": <boolean_true_if_score_>=_{PASS_THRESHOLD}_and_no_critical_flaws>,
   "rubric_breakdown": {
     "domain_ontology": <integer_0_to_20>,
+    "correctness_coverage": <integer_0_to_20>,
     "formatting": <integer_0_to_20>,
     "subsystem_grouping": <integer_0_to_20>,
-    "environment_files_exit": <integer_0_to_20>,
-    "workflow_examples": <integer_0_to_20>
+    "environment_reference_examples": <integer_0_to_20>
   },
   "defects": [
-    "<specific defect or suggestion for improvement>"
+    "<specific defect, omission, or suggestion for improvement>"
   ],
   "summary": "<1-2 sentence concise qualitative summary>"
 }
 ```
+
