@@ -35,6 +35,7 @@ class Config:
     intermediate_dir: Path = field(
         default_factory=lambda: _XDG_STATE / "maniac" / "intermediate"
     )
+    bench_dir: Path = field(default_factory=lambda: _XDG_STATE / "maniac" / "bench")
     model_aliases: dict[str, str] = field(
         default_factory=lambda: dict(DEFAULT_MODEL_ALIASES)
     )
