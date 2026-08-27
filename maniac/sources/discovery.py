@@ -1,13 +1,14 @@
 """Dynamic repository discovery via symlinks and mise metadata."""
 
 import json
+import os
 import re
+import shutil
 import subprocess
 import tomllib
 from pathlib import Path
 
-from loguru import logger
-
+from ..logging import logger
 from ..models import RepoSource
 
 
@@ -15,6 +16,12 @@ def discover_repo(binary_name: str, bin_dir: str | Path | None = None) -> RepoSo
     """Discover upstream repository or local source for a binary dynamically via mise and system metadata."""
     target_bin_dir = Path(bin_dir) if bin_dir else Path.home() / ".local" / "bin"
     bin_path = target_bin_dir / binary_name
+
+    # If target binary doesn't exist in target_bin_dir, check system PATH
+    if not bin_path.exists():
+        which_path = shutil.which(binary_name)
+        if which_path:
+            bin_path = Path(which_path)
 
     # 1. Resolve through symlink inspection if applicable
     if bin_path.is_symlink():
@@ -64,12 +71,13 @@ def _resolve_symlink_target(binary_name: str, bin_path: Path) -> RepoSource | No
 
 def _resolve_local_lib(binary_name: str, resolved_path: Path) -> RepoSource:
     """Resolve repository source from a ~/.local/lib installation."""
+    base_lib = Path.home() / ".local" / "lib"
     tool_dir = resolved_path
-    while (
-        tool_dir.parent != Path.home() / ".local" / "lib"
-        and tool_dir != tool_dir.parent
-    ):
-        tool_dir = tool_dir.parent
+    if resolved_path.is_relative_to(base_lib):
+        while tool_dir.parent != base_lib and tool_dir != tool_dir.parent:
+            tool_dir = tool_dir.parent
+    else:
+        tool_dir = resolved_path.parent
 
     if (tool_dir / ".git").exists():
         git_remote = _get_git_remote(tool_dir)
@@ -85,51 +93,66 @@ def _resolve_local_lib(binary_name: str, resolved_path: Path) -> RepoSource:
     )
 
 
+def _check_mise_toml(cfg_path: Path, tool_id: str, binary_name: str) -> str | None:
+    """Inspect a mise TOML config file for tool aliases or tool repository definitions."""
+    try:
+        data = tomllib.loads(cfg_path.read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError) as e:
+        logger.debug("Error parsing mise config", path=str(cfg_path), error=str(e))
+        return None
+
+    aliases = data.get("tool_alias", {})
+    for alias_name, alias_target in aliases.items():
+        if alias_name in (tool_id, binary_name):
+            if alias_target.startswith("github:"):
+                return alias_target.split(":", 1)[1]
+            return alias_target
+
+    tools = data.get("tools", {})
+    for raw_tool_key, val in tools.items():
+        if raw_tool_key.startswith("github:"):
+            repo = raw_tool_key.split(":", 1)[1]
+            if (
+                tool_id in repo
+                or binary_name in repo
+                or _match_mise_filter_bins(val, binary_name)
+            ):
+                return repo
+        elif raw_tool_key.startswith("cargo:http"):
+            url = raw_tool_key.split(":", 1)[1]
+            if tool_id in url or binary_name in url:
+                return _clean_git_url(url)
+        elif raw_tool_key in (tool_id, binary_name):
+            reg = _query_mise_registry(raw_tool_key)
+            if reg:
+                return reg
+
+    return None
+
+
 def _resolve_from_mise(tool_id: str, binary_name: str) -> str | None:
     """Infer repository dynamically from mise configuration files and mise registry."""
-    mise_cfg_dir = Path.home() / ".config" / "mise"
+    xdg_config = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
+    mise_cfg_dir = xdg_config / "mise"
     if mise_cfg_dir.exists():
         for cfg_path in mise_cfg_dir.glob("**/*.toml"):
-            try:
-                data = tomllib.loads(cfg_path.read_text(encoding="utf-8"))
-                aliases = data.get("tool_alias", {})
-                for alias_name, alias_target in aliases.items():
-                    if alias_name in (tool_id, binary_name):
-                        if alias_target.startswith("github:"):
-                            return alias_target.split(":", 1)[1]
-                        return alias_target
-
-                tools = data.get("tools", {})
-                for raw_tool_key, val in tools.items():
-                    if raw_tool_key.startswith("github:"):
-                        repo = raw_tool_key.split(":", 1)[1]
-                        if (
-                            tool_id in repo
-                            or binary_name in repo
-                            or _match_mise_filter_bins(val, binary_name)
-                        ):
-                            return repo
-                    elif raw_tool_key.startswith("cargo:http"):
-                        url = raw_tool_key.split(":", 1)[1]
-                        if tool_id in url or binary_name in url:
-                            return _clean_git_url(url)
-                    elif raw_tool_key in (tool_id, binary_name):
-                        reg = _query_mise_registry(raw_tool_key)
-                        if reg:
-                            return reg
-            except (OSError, tomllib.TOMLDecodeError) as e:
-                logger.debug("Error parsing mise config {}: {}", cfg_path, e)
+            found = _check_mise_toml(cfg_path, tool_id, binary_name)
+            if found:
+                return found
 
     if tool_id.startswith("github-"):
         parts = tool_id[7:].split("-", 1)
         if len(parts) == 2:
             return f"{parts[0]}/{parts[1]}"
+
     if tool_id.startswith("pipx-"):
         pkg = tool_id[5:]
         return _query_mise_registry(pkg) or pkg
+
     if tool_id.startswith("npm-"):
         pkg = tool_id[4:]
         return _query_mise_registry(pkg) or pkg
+
     if tool_id.startswith("cargo-https-github-com-"):
         clean = tool_id.replace("cargo-https-github-com-", "")
         parts = clean.split("-", 1)
@@ -162,7 +185,7 @@ def _query_mise_registry(tool: str) -> str | None:
                 if token.startswith(("aqua:", "github:")):
                     return token.split(":", 1)[1]
     except (OSError, subprocess.SubprocessError) as e:
-        logger.debug("Error querying mise registry for {}: {}", tool, e)
+        logger.debug("Error querying mise registry", tool=tool, error=str(e))
     return None
 
 
@@ -178,7 +201,9 @@ def _get_git_remote(directory: Path) -> str | None:
         if res.returncode == 0 and res.stdout.strip():
             return res.stdout.strip()
     except (OSError, subprocess.SubprocessError) as e:
-        logger.debug("Failed getting git remote for {}: {}", directory, e)
+        logger.debug(
+            "Failed getting git remote", directory=str(directory), error=str(e)
+        )
     return None
 
 
@@ -193,7 +218,7 @@ def _clean_git_url(url: str) -> str:
 def _find_uv_tool_local_dir(resolved_path: Path) -> Path | None:
     try:
         dist_infos = list(
-            resolved_path.parents[2].glob("lib/**/site-packages/*.dist-info")
+            resolved_path.parents[1].glob("lib/**/site-packages/*.dist-info")
         )
         for d in dist_infos:
             direct_url = d / "direct_url.json"
@@ -204,8 +229,8 @@ def _find_uv_tool_local_dir(resolved_path: Path) -> Path | None:
                     p = Path(raw_url.removeprefix("file://"))
                     if p.exists():
                         return p
-    except (OSError, json.JSONDecodeError) as e:
-        logger.debug("Error inspecting uv tool path: {}", e)
+    except (OSError, IndexError, json.JSONDecodeError) as e:
+        logger.debug("Error inspecting uv tool path", error=str(e))
     return None
 
 

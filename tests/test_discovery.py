@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from maniac.sources.discovery import (
+    _check_mise_toml,
     _clean_git_url,
     _extract_mise_tool_id,
     _resolve_from_mise,
@@ -29,6 +30,50 @@ def test_resolve_from_mise_prefixed() -> None:
         _resolve_from_mise("github-todotxt-todo.txt-cli", "todo.sh")
         == "todotxt/todo.txt-cli"
     )
+    assert (
+        _resolve_from_mise("cargo-https-github-com-sharkdp-bat", "bat") == "sharkdp/bat"
+    )
+
+
+def test_check_mise_toml_tool_alias(tmp_path: Path) -> None:
+    cfg = tmp_path / "config.toml"
+    cfg.write_text(
+        """
+[tool_alias]
+gh-cli = "github:cli/cli"
+custom = "owner/custom"
+""",
+        encoding="utf-8",
+    )
+    assert _check_mise_toml(cfg, "gh-cli", "gh") == "cli/cli"
+    assert _check_mise_toml(cfg, "other", "custom") == "owner/custom"
+    assert _check_mise_toml(cfg, "unknown", "unknown") is None
+
+
+def test_check_mise_toml_tools_github_and_cargo(tmp_path: Path) -> None:
+    cfg = tmp_path / "config.toml"
+    cfg.write_text(
+        """
+[tools]
+"github:sharkdp/fd" = "latest"
+"cargo:https://github.com/BurntSushi/ripgrep" = "latest"
+"github:junegunn/fzf" = { filter_bins = ["fzf-tmux"] }
+""",
+        encoding="utf-8",
+    )
+    assert _check_mise_toml(cfg, "fd", "fd") == "sharkdp/fd"
+    assert _check_mise_toml(cfg, "ripgrep", "rg") == "BurntSushi/ripgrep"
+    assert _check_mise_toml(cfg, "unknown", "fzf-tmux") == "junegunn/fzf"
+    assert _check_mise_toml(cfg, "unknown", "unknown") is None
+
+
+def test_check_mise_toml_invalid(tmp_path: Path) -> None:
+    cfg = tmp_path / "invalid.toml"
+    cfg.write_text("invalid = [toml", encoding="utf-8")
+    assert _check_mise_toml(cfg, "foo", "foo") is None
+
+    missing = tmp_path / "nonexistent.toml"
+    assert _check_mise_toml(missing, "foo", "foo") is None
 
 
 def test_discover_repo_fallback(tmp_path: Path) -> None:
