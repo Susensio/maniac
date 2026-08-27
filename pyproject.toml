@@ -5,7 +5,10 @@ description = "Recursively scrape and extract CLI help manuals and subcommands"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "json-repair>=0.63.4",
     "loguru>=0.7.0",
+    "rich>=13.0.0",
+    "structlog>=24.0.0",
     "typer>=0.12.0",
 ]
 
@@ -25,6 +28,13 @@ dev = [
 [tool.ruff]
 line-length = 88
 target-version = "py312"
+
+# No `lint.select` on purpose: ruff's default (E4, E7, E9, F) deliberately
+# omits E501, because `ruff format` owns line length and `just check` already
+# runs `format-check`. Enabling E501 sets the linter against the formatter --
+# all 42 hits are long string literals the formatter cannot split, so they
+# would have to be hand-wrapped and would not stay wrapped.
+# https://docs.astral.sh/ruff/formatter/#conflicting-lint-rules
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
