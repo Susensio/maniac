@@ -39,9 +39,3 @@ target-version = "py312"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
-[tool.ty.environment]
-# tests/test_evaluate_all_matrix.py loads scripts/evaluate_all_matrix.py via a
-# sys.path insert (scripts/ isn't a package); ty can't follow that at
-# analysis time, so point its resolver at the same directory.
-extra-paths = ["scripts"]
-

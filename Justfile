@@ -29,3 +29,7 @@ fix:
 
 # Run all verification checks (linter, formatting, typing, tests)
 check: lint format-check typecheck test
+
+# Run the model x tool benchmark harness. Calls a real LLM -- costs money per run, not part of `check`.
+bench *args:
+    uv run python -m maniac.bench {{ args }}
