@@ -5,32 +5,37 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from loguru import logger
-
-from ..config import DEFAULT_MODEL_ALIASES, Config
+from ..config import Config
 from ..exceptions import GenerationError
-
-MODEL_ALIASES = DEFAULT_MODEL_ALIASES
+from ..logging import logger
 
 
 def run_llm_synthesis(
     prompt: str,
     tool_name: str,
     model: str | None = None,
-    work_base_dir: str | Path = "data/tmp",
-    timeout: int = 180,
+    work_base_dir: str | Path | None = None,
+    timeout: int | None = None,
     clean_header: bool = True,
     config: Config | None = None,
 ) -> str:
-    """Execute direct LLM generation via ~/bin/sandbox agy -p."""
+    """Execute direct LLM generation via sandbox/agy CLI."""
     cfg = config or Config()
-    base_dir = Path(work_base_dir).resolve()
+    effective_timeout = timeout if timeout is not None else cfg.timeout_llm
+    base_dir = (
+        Path(work_base_dir).resolve()
+        if work_base_dir is not None
+        else cfg.work_base_dir
+    )
     base_dir.mkdir(parents=True, exist_ok=True)
 
     tmp_dir = Path(tempfile.mkdtemp(prefix=f"maniac_{tool_name}_", dir=str(base_dir)))
-    logger.debug("Created temporary workspace for LLM at {}", tmp_dir)
+    logger.debug("Created temporary workspace for LLM", dir=str(tmp_dir))
 
-    sandbox_bin = Path.home() / "bin" / "sandbox"
+    which_sandbox = shutil.which("sandbox")
+    sandbox_bin = (
+        Path(which_sandbox) if which_sandbox else (Path.home() / "bin" / "sandbox")
+    )
     agy_bin = shutil.which("agy")
 
     executable = (
@@ -39,41 +44,43 @@ def run_llm_synthesis(
         else ([agy_bin] if agy_bin else None)
     )
     if not executable:
-        logger.error("Neither ~/bin/sandbox nor agy found in PATH.")
-        raise FileNotFoundError("Neither ~/bin/sandbox nor agy executable found.")
+        logger.error("Neither sandbox nor agy found in PATH or ~/bin.")
+        raise FileNotFoundError("Neither sandbox nor agy executable found.")
 
     selected_model = cfg.resolve_model(model)
 
     effective_prompt = prompt
-    if len(effective_prompt.encode("utf-8")) > cfg.max_arg_limit:
+    prompt_bytes = effective_prompt.encode("utf-8")
+    if len(prompt_bytes) > cfg.max_arg_limit:
         logger.warning(
-            "Prompt exceeds argument limit ({} bytes); trimming context for single-turn synthesis.",
-            len(effective_prompt.encode("utf-8")),
+            "Prompt exceeds argument limit; trimming context for single-turn synthesis",
+            prompt_bytes=len(prompt_bytes),
         )
-        effective_prompt = (
-            effective_prompt[: cfg.max_arg_limit - 1000]
-            + "\n\n=== [Context trimmed for synthesis] ==="
-        )
+        cut_limit = max(0, cfg.max_arg_limit - 1000)
+        trimmed_str = prompt_bytes[:cut_limit].decode("utf-8", errors="ignore")
+        effective_prompt = trimmed_str + "\n\n=== [Context trimmed for synthesis] ==="
 
     cmd = [*executable, "--model", selected_model, "-p", effective_prompt]
 
     try:
         logger.info(
-            "Calling LLM synthesis for '{}' using model '{}'...",
-            tool_name,
-            selected_model,
+            "Calling LLM synthesis",
+            tool=tool_name,
+            model=selected_model,
         )
         res = subprocess.run(
             cmd,
             cwd=str(tmp_dir),
             capture_output=True,
             text=True,
-            timeout=timeout,
+            timeout=effective_timeout,
             check=False,
         )
         if res.returncode != 0:
             logger.error(
-                "LLM synthesis failed with code {}: {}", res.returncode, res.stderr
+                "LLM synthesis failed",
+                returncode=res.returncode,
+                stderr=res.stderr.strip(),
             )
             raise GenerationError(f"LLM command failed: {res.stderr.strip()}")
 
@@ -82,7 +89,7 @@ def run_llm_synthesis(
             return clean_manpage_markdown(raw_output, tool_name)
         return raw_output
     except subprocess.TimeoutExpired as e:
-        logger.error("LLM synthesis timed out for '{}'", tool_name)
+        logger.error("LLM synthesis timed out", tool=tool_name)
         raise GenerationError(f"LLM synthesis timed out for '{tool_name}'") from e
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)

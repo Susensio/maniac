@@ -5,7 +5,11 @@ from typing import Any
 
 import pytest
 
-from maniac.generation.compiler import compile_to_man, install_manpage
+from maniac.generation.compiler import (
+    PROVENANCE_SIGNATURE,
+    build_provenance_header,
+    compile_to_man,
+)
 
 
 def test_compile_to_man_no_pandoc(
@@ -23,28 +27,49 @@ def test_compile_to_man_with_pandoc(
     monkeypatch.setattr(shutil, "which", lambda name: "/usr/bin/pandoc")
 
     def fake_run(*args: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
-        # simulate pandoc creating output file
-        out_file = Path(args[0][args[0].index("-o") + 1])
+        cmd_args = args[0]
+        assert "-f" in cmd_args
+        assert cmd_args[cmd_args.index("-f") + 1] == "markdown-smart"
+        out_file = Path(cmd_args[cmd_args.index("-o") + 1])
         out_file.write_text(".TH TOOL 1", encoding="utf-8")
         return subprocess.CompletedProcess(
-            args=args[0], returncode=0, stdout="", stderr=""
+            args=cmd_args, returncode=0, stdout="", stderr=""
         )
 
     monkeypatch.setattr(subprocess, "run", fake_run)
     out_file = tmp_path / "tool.1"
-    success = compile_to_man("% TOOL(1)\n# NAME\ntool", out_file)
+    success = compile_to_man(
+        "% TOOL(1)\n# NAME\ntool",
+        out_file,
+        tool_name="tool",
+        model="Gemini 3.7 Flash",
+    )
     assert success
     assert out_file.exists()
 
+    content = out_file.read_text(encoding="utf-8")
+    assert PROVENANCE_SIGNATURE in content
+    assert "Tool: tool" in content
+    assert "Model: Gemini 3.7 Flash" in content
 
-def test_install_manpage(tmp_path: Path) -> None:
-    src_file = tmp_path / "src" / "tool.1"
-    src_file.parent.mkdir(parents=True)
-    src_file.write_text(".TH TOOL 1", encoding="utf-8")
 
-    target_dir = tmp_path / "man1"
-    installed = install_manpage(src_file, target_dir=target_dir)
+def test_compile_to_man_preserves_double_hyphens(tmp_path: Path) -> None:
+    if not shutil.which("pandoc"):
+        pytest.skip("pandoc not available in environment")
 
-    assert installed == target_dir / "tool.1"
-    assert installed.exists()
-    assert installed.read_text(encoding="utf-8") == ".TH TOOL 1"
+    out_file = tmp_path / "tool.1"
+    md_text = "% TOOL(1) | User Commands\n\n# OPTIONS\n**--version**, **--update**\n:   Flag description.\n"
+    success = compile_to_man(md_text, out_file, tool_name="tool")
+    assert success
+    content = out_file.read_text(encoding="utf-8")
+    assert "\\-\\-version" in content
+    assert "\\-\\-update" in content
+    assert "\\(enversion" not in content
+    assert "\\(enupdate" not in content
+
+
+def test_build_provenance_header() -> None:
+    header = build_provenance_header(tool_name="mytool", model="Gemini 3.7 Flash")
+    assert PROVENANCE_SIGNATURE in header
+    assert "Tool: mytool" in header
+    assert "Model: Gemini 3.7 Flash" in header
