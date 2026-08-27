@@ -14,17 +14,18 @@ test *args:
 lint:
     uv run ruff check .
 
-# Fix lint issues
-lint-fix:
-    uv run ruff check --fix .
-
-# Format code
-format:
-    uv run ruff format .
-
 # Check code formatting
 format-check:
     uv run ruff format --check .
 
-# Run all verification checks (linter, formatting, tests)
-check: lint format-check test
+# Run the ty type checker
+typecheck:
+    uv run ty check .
+
+# Fix lint issues and format code
+fix:
+    uv run ruff check --fix .
+    uv run ruff format .
+
+# Run all verification checks (linter, formatting, typing, tests)
+check: lint format-check typecheck test
