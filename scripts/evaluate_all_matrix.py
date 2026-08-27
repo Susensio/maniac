@@ -66,7 +66,7 @@ def evaluate_matrix(config: Config | None = None) -> None:
         for r in existing_results
     }
 
-    final_results = []
+    final_results: list[dict[str, Any]] = []
 
     for model_key, model_name in MODELS:
         for tool in TOOLS:

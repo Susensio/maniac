@@ -94,6 +94,9 @@ def run_benchmark(config: Config | None = None) -> None:
                 continue
 
             md_content = pipeline_res.markdown_path.read_text(encoding="utf-8")
+            assert pipeline_res.context_path is not None, (
+                "run_pipeline succeeded (dry_run=False) but returned no context_path"
+            )
             context_content = pipeline_res.context_path.read_text(encoding="utf-8")
 
             # Measure Evaluation with Standard Judge (Gemini 3.7 Flash High)

@@ -37,5 +37,7 @@ def test_run_pipeline_dry_run(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -
 
     # M1: intermediate_dir was never passed, so this only stays out of the
     # real ~/.local/state/maniac/ if the default resolves under tmp_path.
+    assert result.context_path is not None
+    assert result.prompt_path is not None
     assert result.context_path.is_relative_to(tmp_path)
     assert result.prompt_path.is_relative_to(tmp_path)
