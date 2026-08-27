@@ -65,9 +65,48 @@ Most modern utilities ship without standard Unix manual pages. Instead, you're f
 
 ---
 
+## Prerequisites
+
+- **[Python](https://www.python.org/)**: 3.12+
+- **[uv](https://github.com/astral-sh/uv)**: Fast Python package and tool runner
+- **[pandoc](https://pandoc.org/)**: Document converter for Markdown &rarr; roff compilation
+- **[agy](https://github.com/google-antigravity/antigravity-cli)**: Local LLM execution sandbox
+- **[git](https://git-scm.com/)**: Repository cloning and remote URL inspection
+- **[mise](https://mise.jdx.dev/)** *(optional)*: Dynamic upstream repository discovery via mise registry and tool aliases
+
+---
+
+## Installation
+
+Install `maniac` as a standalone CLI tool in your `$PATH` using `uv`:
+
+```bash
+# Install directly from local repository
+uv tool install .
+
+# Or install in editable mode for local development
+uv tool install --editable .
+```
+
+### Shell Completions
+
+Install autocompletion for your active shell (Fish, Zsh, Bash):
+
+```bash
+maniac --install-completion
+```
+
+Or print the raw completion script to inspect or redirect to a custom path:
+
+```bash
+maniac --show-completion
+```
+
+---
+
 ## Quickstart
 
-Run MANIAC directly with [`uv`](https://github.com/astral-sh/uv) without manual virtualenv management.
+Run commands using the installed `maniac` binary (or via `uv run maniac`):
 
 ### 1. Generate & Install a Manpage
 
@@ -113,21 +152,36 @@ uv run maniac eval uv --min-score 80
 
 ```text
         Quality Evaluation: howdoi (98/100)
-┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━┳━━━━━┓
-┃ Rubric Category                   ┃  Score ┃ Max ┃
-┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━╇━━━━━┩
-│ Domain Ontology & Architecture    │     20 │  20 │
-│ Flag & Command Formatting         │     20 │  20 │
-│ Subsystem Grouping                │     20 │  20 │
-│ Environment / Files / Exit Status │     19 │  20 │
-│ Workflow Examples                 │     19 │  20 │
-├───────────────────────────────────┼────────┼─────┤
-│ Total Score                       │     98 │ 100 │
-│ Status                            │ PASSED │     │
-└───────────────────────────────────┴────────┴─────┘
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━┳━━━━━┓
+┃ Rubric Category                        ┃  Score ┃ Max ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━╇━━━━━┩
+│ Domain Ontology & Architecture         │     20 │  20 │
+│ Command & Flag Correctness & Coverage  │     20 │  20 │
+│ Flag & Command Formatting              │     19 │  20 │
+│ Subsystem Grouping                     │     20 │  20 │
+│ Environment, Reference & Examples      │     19 │  20 │
+├────────────────────────────────────────┼────────┼─────┤
+│ Total Score                            │     98 │ 100 │
+│ Status                                 │ PASSED │     │
+└────────────────────────────────────────┴────────┴─────┘
 ```
 
-### 5. Inspect Subcommands or Upstream Docs
+### 5. Manage Installed Manpages
+
+List all MANIAC-synthesized manpages or safely uninstall them:
+
+```bash
+# List all generated manpages with generation date, model, and backup status
+uv run maniac list
+
+# Uninstall an installed manpage (automatically restoring vendor backups if present)
+uv run maniac uninstall howdoi
+
+# Uninstall and purge generated Markdown source and intermediate context files
+uv run maniac uninstall howdoi --purge
+```
+
+### 6. Inspect Subcommands or Upstream Docs
 
 Debug and inspect extracted CLI help trees and upstream doc files independently:
 
@@ -138,26 +192,6 @@ uv run maniac crawl uv pip
 # Discover the upstream repository and inspect extracted reference files
 uv run maniac docs hx
 ```
-
-### 6. Install Globally via `uv tool`
-
-Install `maniac` as a standalone global tool in your `$PATH`:
-
-```bash
-uv tool install .
-
-# Run maniac from anywhere
-maniac generate rg --install
-```
-
----
-
-## Requirements
-
-- **Python**: 3.12+
-- **[uv](https://github.com/astral-sh/uv)**: Fast Python package and tool runner
-- **[pandoc](https://pandoc.org/)**: Document converter for Markdown &rarr; roff compilation
-- **[agy](https://github.com/google-antigravity/antigravity-cli)**: Local LLM execution sandbox
 
 ---
 
