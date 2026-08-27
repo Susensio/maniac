@@ -2,7 +2,6 @@ import json
 import re
 import shutil
 import subprocess
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -12,7 +11,7 @@ from ..config import Config
 from ..generation.llm import run_llm_synthesis
 from ..generation.prompts import load_template
 from ..logging import logger
-from ..models import EvaluationResult
+from ..models import CoverageStats, EvaluationResult
 from ..sources.crawler import extract_subcommands
 
 REQUIRED_SECTIONS: list[str | tuple[str, ...]] = [
@@ -46,18 +45,6 @@ SECTION_SYNONYMS: dict[str, set[str]] = {
     },
     "EXAMPLES": {"EXAMPLES", "EXAMPLE", "USAGE EXAMPLES", "WORKFLOW EXAMPLES"},
 }
-
-
-@dataclass(slots=True)
-class CoverageStats:
-    """Structured coverage statistics for CLI subcommands and flags."""
-
-    found_cmds: list[str]
-    missing_cmds: list[str]
-    cmd_pct: float
-    found_flags: list[str]
-    missing_flags: list[str]
-    flag_pct: float
 
 
 def get_default_eval_prompt() -> str:

@@ -1,8 +1,8 @@
 """Quality evaluation and LLM-as-a-Judge package."""
 
+from ..models import CoverageStats
 from .judge import (
     REQUIRED_SECTIONS,
-    CoverageStats,
     build_evaluation_prompt,
     check_metadata_header,
     check_pandoc_compilation,

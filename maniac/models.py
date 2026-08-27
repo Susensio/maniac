@@ -2,7 +2,6 @@
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
 
 
 @dataclass
@@ -29,6 +28,18 @@ class DocFile:
     content: str
 
 
+@dataclass(slots=True)
+class CoverageStats:
+    """Structured coverage statistics for CLI subcommands and flags."""
+
+    found_cmds: list[str]
+    missing_cmds: list[str]
+    cmd_pct: float
+    found_flags: list[str]
+    missing_flags: list[str]
+    flag_pct: float
+
+
 @dataclass
 class PipelineResult:
     tool_name: str
@@ -52,4 +63,4 @@ class EvaluationResult:
     summary: str = ""
     deterministic_passed: bool = True
     deterministic_defects: list[str] = field(default_factory=list)
-    coverage: Any | None = None
+    coverage: CoverageStats | None = None
