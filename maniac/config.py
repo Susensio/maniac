@@ -9,23 +9,31 @@ DEFAULT_MODEL_ALIASES: dict[str, str] = {
     "flash-high": "Gemini 3.7 Flash (High)",
     "flash-medium": "Gemini 3.7 Flash (Medium)",
     "flash-low": "Gemini 3.7 Flash (Low)",
+    "flash-3.5": "Gemini 3.5 Flash (Low)",
+    "flash-3.5-low": "Gemini 3.5 Flash (Low)",
     "pro": "Gemini 3.1 Pro (High)",
     "pro-low": "Gemini 3.1 Pro (Low)",
     "sonnet": "Claude Sonnet 4.6 (Thinking)",
     "opus": "Claude Opus 4.6 (Thinking)",
 }
 
+_XDG_CONFIG = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
+_XDG_CACHE = Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache")
+_XDG_DATA = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share")
+_XDG_STATE = Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local" / "state")
+
 
 @dataclass
 class Config:
     """Central configuration for paths, model aliases, and limits."""
 
-    cache_dir: Path = field(default_factory=lambda: Path("data/repos"))
-    output_dir: Path = field(default_factory=lambda: Path("data/manpages"))
-    intermediate_dir: Path = field(default_factory=lambda: Path("data/intermediate"))
-    work_base_dir: Path = field(default_factory=lambda: Path("data/tmp"))
-    man_dir: Path = field(
-        default_factory=lambda: Path("~/.local/share/man/man1").expanduser()
+    config_dir: Path = field(default_factory=lambda: _XDG_CONFIG / "maniac")
+    cache_dir: Path = field(default_factory=lambda: _XDG_CACHE / "maniac" / "repos")
+    work_base_dir: Path = field(default_factory=lambda: _XDG_CACHE / "maniac" / "tmp")
+    output_dir: Path = field(default_factory=lambda: _XDG_DATA / "maniac" / "manpages")
+    man_dir: Path = field(default_factory=lambda: _XDG_DATA / "man" / "man1")
+    intermediate_dir: Path = field(
+        default_factory=lambda: _XDG_STATE / "maniac" / "intermediate"
     )
     model_aliases: dict[str, str] = field(
         default_factory=lambda: dict(DEFAULT_MODEL_ALIASES)
