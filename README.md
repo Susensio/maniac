@@ -69,15 +69,16 @@ maniac --show-completion
 
 ## Quickstart
 
-### 1. Generate & Install a Manpage
+### 1. Generate & Install Manpages
 
-Generate a complete manpage and install it to your user manual directory:
+Generate complete manpages and install them to your user manual directory:
 
 ```bash
-# Generate and view compiled manpage
+# Generate for a single tool
 maniac generate hx --install
-maniac generate uv --install
-maniac generate howdoi --install
+
+# Generate for multiple tools at once
+maniac generate uv howdoi glow ruff bat --install
 
 # Now use standard man immediately
 man hx
@@ -93,12 +94,12 @@ Scan your local binary directory (`~/.local/bin`) to find everything you have in
 maniac list-missing
 ```
 
-### 3. Batch Generation
+### 3. Automatically Generate Missing Manpages
 
-Generate and install manual pages for your entire toolkit in one command:
+Find all installed executables that lack manpages and automatically synthesize and install them in one go:
 
 ```bash
-maniac batch hx uv howdoi glow ruff bat --install
+maniac generate-missing
 ```
 
 ### 4. Evaluate Manual Quality

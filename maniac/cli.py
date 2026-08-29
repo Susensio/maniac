@@ -149,7 +149,7 @@ def docs(
 
 @app.command()
 def generate(
-    tool: Annotated[str, typer.Argument(help="Tool name to generate a manpage for.")],
+    tools: Annotated[list[str], typer.Argument(help="List of tool names to generate manpages for.")],
     output_dir: Annotated[
         str, typer.Option(help="Directory to save generated manpage.")
     ] = str(default_cfg.output_dir),
@@ -179,79 +179,23 @@ def generate(
     """Run end-to-end pipeline: scrape help, fetch docs, synthesize via LLM, and compile."""
     from .orchestration.pipeline import run_pipeline
 
-    try:
-        with console.status(f"[bold green]Generating manpage for {tool}..."):
-            result = run_pipeline(
-                tool_name=tool,
-                cache_dir=cache_dir,
-                output_dir=output_dir,
-                prompt_file=prompt_file,
-                model=model,
-                install=install,
-                force=force,
-                dry_run=dry_run,
-            )
-
-        console.print(
-            f"[bold green]✓ Successfully generated manpage for {tool}![/bold green]"
-        )
-        console.print(f" • Commands scraped: {result.command_count}")
-        console.print(f" • Doc files used:   {result.doc_file_count}")
-        console.print(f" • Markdown file:    {result.markdown_path}")
-        if result.roff_path:
-            console.print(f" • Compiled roff:    {result.roff_path}")
-        if result.installed_path:
-            console.print(f" • Installed at:     {result.installed_path}")
-    except (OSError, RuntimeError, ManiacError) as e:
-        console.print(f"[bold red]Generation failed for {tool}: {e}[/bold red]")
-        raise typer.Exit(1) from e
-
-
-@app.command()
-def batch(
-    tools: Annotated[
-        list[str], typer.Argument(help="List of tool names to generate manpages for.")
-    ],
-    output_dir: Annotated[
-        str, typer.Option(help="Directory to save generated manpages.")
-    ] = str(default_cfg.output_dir),
-    cache_dir: Annotated[
-        str, typer.Option(help="Cache directory for repositories.")
-    ] = str(default_cfg.cache_dir),
-    model: Annotated[
-        str | None,
-        typer.Option(help="LLM model name (e.g. 'Gemini 3.7 Flash (High)')."),
-    ] = None,
-    install: Annotated[
-        bool, typer.Option(help="Install compiled manpages to user manpath.")
-    ] = False,
-    force: Annotated[
-        bool,
-        typer.Option(
-            "--force",
-            "-f",
-            help="Force overwrite of foreign manpages with automatic backup.",
-        ),
-    ] = False,
-) -> None:
-    """Generate manpages for multiple tools sequentially."""
-    from .orchestration.pipeline import run_pipeline
-
     failures = 0
     for tool in tools:
-        console.print(f"\n[bold blue]=== Processing {tool} ===[/bold blue]")
+        if len(tools) > 1:
+            console.print(f"\n[bold blue]=== Processing {tool} ===[/bold blue]")
         try:
             with console.status(f"[bold green]Generating manpage for {tool}..."):
                 result = run_pipeline(
                     tool_name=tool,
                     cache_dir=cache_dir,
                     output_dir=output_dir,
-                    prompt_file=None,
+                    prompt_file=prompt_file,
                     model=model,
                     install=install,
                     force=force,
-                    dry_run=False,
+                    dry_run=dry_run,
                 )
+
             console.print(
                 f"[bold green]✓ Successfully generated manpage for {tool}![/bold green]"
             )
@@ -263,7 +207,7 @@ def batch(
             if result.installed_path:
                 console.print(f" • Installed at:     {result.installed_path}")
         except (OSError, RuntimeError, ManiacError) as e:
-            console.print(f"[bold red]Failed {tool}: {e}[/bold red]")
+            console.print(f"[bold red]Generation failed for {tool}: {e}[/bold red]")
             failures += 1
 
     if failures:
@@ -353,6 +297,71 @@ def eval_cmd(
     except (OSError, RuntimeError, ManiacError) as e:
         console.print(f"[bold red]Evaluation error for {tool}: {e}[/bold red]")
         raise typer.Exit(1) from e
+
+
+@app.command("generate-missing")
+def generate_missing(
+    bin_dir: Annotated[Path | None, typer.Option(help="Directory to inspect.")] = None,
+    output_dir: Annotated[str, typer.Option(help="Directory to save generated manpage.")] = str(default_cfg.output_dir),
+    cache_dir: Annotated[str, typer.Option(help="Cache directory for repositories.")] = str(default_cfg.cache_dir),
+    model: Annotated[str | None, typer.Option(help="LLM model name.")] = None,
+    install: Annotated[bool, typer.Option(help="Install compiled manpage to ~/.local/share/man/man1.")] = True,
+    force: Annotated[bool, typer.Option("--force", "-f", help="Force overwrite of foreign manpages.")] = False,
+) -> None:
+    """Find all executables lacking manpages and generate them automatically."""
+    import shutil
+    import subprocess
+    from .orchestration.pipeline import run_pipeline
+
+    target_bin_dir = bin_dir or Path.home() / ".local" / "bin"
+    if not target_bin_dir.exists():
+        console.print(f"[red]Directory not found: {target_bin_dir}[/red]")
+        raise typer.Exit(1)
+
+    man_bin = shutil.which("man")
+    if not man_bin:
+        console.print("[bold red]Error: 'man' utility is not installed or not in PATH.[/bold red]")
+        raise typer.Exit(1)
+
+    items = [i for i in sorted(target_bin_dir.iterdir()) if i.is_file() or i.is_symlink()]
+    missing_tools = []
+    
+    with console.status(f"[bold cyan]Scanning {target_bin_dir} for missing manpages..."):
+        for item in items:
+            res = subprocess.run([man_bin, "-w", item.name], capture_output=True, text=True, check=False)
+            has_man = res.returncode == 0 and bool(res.stdout.strip())
+            if not has_man:
+                missing_tools.append(item.name)
+                
+    if not missing_tools:
+        console.print("[bold green]All binaries have manpages. Nothing to do![/bold green]")
+        return
+        
+    console.print(f"[bold yellow]Found {len(missing_tools)} binaries missing manpages.[/bold yellow]")
+    
+    failures = 0
+    for tool in missing_tools:
+        console.print(f"\n[bold blue]=== Generating for {tool} ===[/bold blue]")
+        try:
+            with console.status(f"[bold green]Generating manpage for {tool}..."):
+                result = run_pipeline(
+                    tool_name=tool,
+                    cache_dir=cache_dir,
+                    output_dir=output_dir,
+                    prompt_file=None,
+                    model=model,
+                    install=install,
+                    force=force,
+                    dry_run=False,
+                )
+            console.print(f"[bold green]✓ Successfully generated manpage for {tool}![/bold green]")
+        except (OSError, RuntimeError, ManiacError) as e:
+            console.print(f"[bold red]Failed {tool}: {e}[/bold red]")
+            failures += 1
+
+    if failures:
+        console.print(f"\n[bold red]{failures}/{len(missing_tools)} tool(s) failed to generate.[/bold red]")
+        raise typer.Exit(1)
 
 
 @app.command("list-missing")

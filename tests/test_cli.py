@@ -200,25 +200,25 @@ def test_cli_list_missing_no_man(
     assert "'man' utility is not installed" in res.output
 
 
-def test_cli_batch_all_fail_exits_nonzero(monkeypatch: pytest.MonkeyPatch) -> None:
-    """M10: `batch` must not silently exit 0 when every tool fails."""
+def test_cli_generate_multiple_all_fail_exits_nonzero(monkeypatch: pytest.MonkeyPatch) -> None:
+    """M10: `generate` must not silently exit 0 when every tool fails."""
     from maniac.exceptions import ManiacError
 
     def _raise(*args: object, **kwargs: object) -> None:
         raise ManiacError("boom")
 
     monkeypatch.setattr("maniac.orchestration.pipeline.run_pipeline", _raise)
-    res = runner.invoke(app, ["batch", "toolone", "tooltwo"])
+    res = runner.invoke(app, ["generate", "toolone", "tooltwo"])
     assert res.exit_code == 1
-    assert "Failed toolone: boom" in res.output
-    assert "Failed tooltwo: boom" in res.output
+    assert "Generation failed for toolone: boom" in res.output
+    assert "Generation failed for tooltwo: boom" in res.output
     assert "2/2 tool(s) failed" in res.output
 
 
-def test_cli_batch_partial_success_exits_nonzero(
+def test_cli_generate_multiple_partial_success_exits_nonzero(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """M10: one failure among several tools still fails the batch."""
+    """M10: one failure among several tools still fails the multi-generation."""
     from maniac.exceptions import ManiacError
     from maniac.models import PipelineResult
 
@@ -239,6 +239,29 @@ def test_cli_batch_partial_success_exits_nonzero(
         )
 
     monkeypatch.setattr("maniac.orchestration.pipeline.run_pipeline", _run_pipeline)
-    res = runner.invoke(app, ["batch", "goodtool", "badtool"])
+    res = runner.invoke(app, ["generate", "goodtool", "badtool"])
     assert res.exit_code == 1
     assert "1/2 tool(s) failed" in res.output
+
+
+def test_cli_generate_missing_all_have_man(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import shutil
+    import subprocess
+    
+    # Create fake bins
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "foo").touch()
+    
+    # Fake man saying it exists
+    monkeypatch.setattr(shutil, "which", lambda name: "/usr/bin/man")
+    monkeypatch.setattr(
+        subprocess, "run", 
+        lambda *args, **kwargs: subprocess.CompletedProcess(args, 0, stdout="man exists", stderr="")
+    )
+
+    res = runner.invoke(app, ["generate-missing", "--bin-dir", str(bin_dir)])
+    assert res.exit_code == 0
+    assert "All binaries have manpages" in res.output
