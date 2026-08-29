@@ -28,43 +28,6 @@ Most modern utilities ship without standard Unix manual pages. Instead, you're f
 
 ---
 
-## The Synthesis Pipeline
-
-```
-  ┌──────────────────┐       ┌────────────────────────┐
-  │ Recursive Help   │       │ Upstream Documentation │
-  │ Tree Scraper     │       │ Discovery (mise / git) │
-  └─────────┬────────┘       └───────────┬────────────┘
-            │                            │
-            └─────────────┬──────────────┘
-                          ▼
-             ┌──────────────────────────┐
-             │ Prioritized Context Pool │
-             └────────────┬─────────────┘
-                          ▼
-             ┌──────────────────────────┐
-             │ AI Manual Crafting Engine│
-             │ (Domain Ontology, Flags, │
-             │  Keybinds, Subsystems)   │
-             └────────────┬─────────────┘
-                          ▼
-             ┌──────────────────────────┐
-             │ Pandoc roff Compiler     │
-             │ & Quality Judge (0-100)  │
-             └────────────┬─────────────┘
-                          ▼
-             ~/.local/share/man/man1/<tool>.1
-```
-
-1. **Recursive Subcommand Crawler**: Traverses multi-level CLI trees (`uv pip compile`, `git remote add`) with cycle protection, pager suppression, and ANSI stripping.
-2. **Dynamic Repository Discovery**: Resolves upstream GitHub sources and local clones dynamically via `mise` configuration, `uv tool` metadata, and symlink inspection—without hardcoded lists.
-3. **Prioritized Doc Extraction**: Extracts key reference material, core concepts, and keybindings while ignoring build scripts, CI configs, and changelogs.
-4. **Unix Manual Synthesis**: Structures descriptions around foundational domain entities (sessions, workspaces, buffers, modes), separates global options from subcommands, styles arguments rigorously, and adds annotated workflow examples.
-5. **Compilation & Installation**: Compiles to standard `roff` via Pandoc and installs to `~/.local/share/man/man1/`.
-6. **Automated Quality Evaluation**: Built-in LLM-as-a-Judge pipeline scoring generated manuals against a strict 100-point Unix documentation rubric.
-
----
-
 ## Prerequisites
 
 - **[Python](https://www.python.org/)**: 3.12+
@@ -106,17 +69,15 @@ maniac --show-completion
 
 ## Quickstart
 
-Run commands using the installed `maniac` binary (or via `uv run maniac`):
-
 ### 1. Generate & Install a Manpage
 
 Generate a complete manpage and install it to your user manual directory:
 
 ```bash
 # Generate and view compiled manpage
-uv run maniac generate hx --install
-uv run maniac generate uv --install
-uv run maniac generate howdoi --install
+maniac generate hx --install
+maniac generate uv --install
+maniac generate howdoi --install
 
 # Now use standard man immediately
 man hx
@@ -129,7 +90,7 @@ man howdoi
 Scan your local binary directory (`~/.local/bin`) to find everything you have installed that lacks a manual entry:
 
 ```bash
-uv run maniac list-missing
+maniac list-missing
 ```
 
 ### 3. Batch Generation
@@ -137,7 +98,7 @@ uv run maniac list-missing
 Generate and install manual pages for your entire toolkit in one command:
 
 ```bash
-uv run maniac batch hx uv howdoi glow ruff bat --install
+maniac batch hx uv howdoi glow ruff bat --install
 ```
 
 ### 4. Evaluate Manual Quality
@@ -146,8 +107,8 @@ Run the automated LLM-as-a-Judge evaluation against the extracted documentation 
 
 ```bash
 # Grade the generated manual (0-100 score with category breakdown)
-uv run maniac eval howdoi
-uv run maniac eval uv --min-score 80
+maniac eval howdoi
+maniac eval uv --min-score 80
 ```
 
 ```text
@@ -172,13 +133,13 @@ List all MANIAC-synthesized manpages or safely uninstall them:
 
 ```bash
 # List all generated manpages with generation date, model, and backup status
-uv run maniac list
+maniac list
 
 # Uninstall an installed manpage (automatically restoring vendor backups if present)
-uv run maniac uninstall howdoi
+maniac uninstall howdoi
 
 # Uninstall and purge generated Markdown source and intermediate context files
-uv run maniac uninstall howdoi --purge
+maniac uninstall howdoi --purge
 ```
 
 ### 6. Inspect Subcommands or Upstream Docs
@@ -187,11 +148,48 @@ Debug and inspect extracted CLI help trees and upstream doc files independently:
 
 ```bash
 # Inspect the scraped help tree for deep subcommands
-uv run maniac crawl uv pip
+maniac crawl uv pip
 
 # Discover the upstream repository and inspect extracted reference files
-uv run maniac docs hx
+maniac docs hx
 ```
+
+---
+
+## The Synthesis Pipeline
+
+```
+  ┌──────────────────┐       ┌────────────────────────┐
+  │ Recursive Help   │       │ Upstream Documentation │
+  │ Tree Scraper     │       │ Discovery (mise / git) │
+  └─────────┬────────┘       └───────────┬────────────┘
+            │                            │
+            └─────────────┬──────────────┘
+                          ▼
+             ┌──────────────────────────┐
+             │ Prioritized Context Pool │
+             └────────────┬─────────────┘
+                          ▼
+             ┌──────────────────────────┐
+             │ AI Manual Crafting Engine│
+             │ (Domain Ontology, Flags, │
+             │  Keybinds, Subsystems)   │
+             └────────────┬─────────────┘
+                          ▼
+             ┌──────────────────────────┐
+             │ Pandoc roff Compiler     │
+             │ & Quality Judge (0-100)  │
+             └────────────┬─────────────┘
+                          ▼
+             ~/.local/share/man/man1/<tool>.1
+```
+
+1. **Recursive Subcommand Crawler**: Traverses multi-level CLI trees (`uv pip compile`, `git remote add`) with cycle protection, pager suppression, and ANSI stripping.
+2. **Dynamic Repository Discovery**: Resolves upstream GitHub sources and local clones dynamically via `mise` configuration, `uv tool` metadata, and symlink inspection—without hardcoded lists.
+3. **Prioritized Doc Extraction**: Extracts key reference material, core concepts, and keybindings while ignoring build scripts, CI configs, and changelogs.
+4. **Unix Manual Synthesis**: Structures descriptions around foundational domain entities (sessions, workspaces, buffers, modes), separates global options from subcommands, styles arguments rigorously, and adds annotated workflow examples.
+5. **Compilation & Installation**: Compiles to standard `roff` via Pandoc and installs to `~/.local/share/man/man1/`.
+6. **Automated Quality Evaluation**: Built-in LLM-as-a-Judge pipeline scoring generated manuals against a strict 100-point Unix documentation rubric.
 
 ---
 
