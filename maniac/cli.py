@@ -386,24 +386,28 @@ def list_missing(
         table.add_column("Symlink Target", style="magenta")
         table.add_column("Discovered Repo", style="green")
 
-        missing_count = 0
-        total_count = 0
+        from rich.progress import track
+        from .logging import logger
 
-        for item in sorted(target_bin_dir.iterdir()):
-            if item.is_file() or item.is_symlink():
-                total_count += 1
-                res = subprocess.run(
-                    [man_bin, "-w", item.name],
-                    capture_output=True,
-                    text=True,
-                    check=False,
-                )
-                has_man = res.returncode == 0 and bool(res.stdout.strip())
-                if not has_man:
-                    missing_count += 1
-                    link_target = os.readlink(item) if item.is_symlink() else "direct"
-                    source = discover_repo(item.name, bin_dir=target_bin_dir)
-                    table.add_row(item.name, link_target, source.target)
+        missing_count = 0
+        items = [i for i in sorted(target_bin_dir.iterdir()) if i.is_file() or i.is_symlink()]
+        total_count = len(items)
+
+        for item in track(items, description="Scanning executables..."):
+            logger.debug(f"Checking {item.name}")
+            res = subprocess.run(
+                [man_bin, "-w", item.name],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            has_man = res.returncode == 0 and bool(res.stdout.strip())
+            if not has_man:
+                logger.debug(f"No manpage found for {item.name}, discovering repo...")
+                missing_count += 1
+                link_target = os.readlink(item) if item.is_symlink() else "direct"
+                source = discover_repo(item.name, bin_dir=target_bin_dir)
+                table.add_row(item.name, link_target, source.target)
 
         console.print(table)
         console.print(
