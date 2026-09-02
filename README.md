@@ -33,7 +33,8 @@ Most modern utilities ship without standard Unix manual pages. Instead, you're f
 - **[Python](https://www.python.org/)**: 3.12+
 - **[uv](https://github.com/astral-sh/uv)**: Fast Python package and tool runner
 - **[pandoc](https://pandoc.org/)**: Document converter for Markdown &rarr; roff compilation
-- **[agy](https://github.com/google-antigravity/antigravity-cli)**: Local LLM execution sandbox
+- **LiteLLM-compatible API key**: A provider-native key, such as `GEMINI_API_KEY`, for the default API backend
+- **[agy](https://github.com/google-antigravity/antigravity-cli)** *(optional)*: Explicit fallback backend
 - **[git](https://git-scm.com/)**: Repository cloning and remote URL inspection
 - **[mise](https://mise.jdx.dev/)** *(optional)*: Dynamic upstream repository discovery via mise registry and tool aliases
 
@@ -65,6 +66,40 @@ Or print the raw completion script to inspect or redirect to a custom path:
 maniac --show-completion
 ```
 
+### LLM Backend
+
+MANIAC uses LiteLLM by default and accepts any provider-qualified LiteLLM model ID.
+It reads settings from `$XDG_CONFIG_HOME/maniac/config.yaml` (usually `~/.config/maniac/config.yaml`):
+
+```yaml
+model: gemini/gemini-3.5-flash
+backend: litellm
+reasoning_effort: low
+```
+
+Only `model` is required; `backend` and `reasoning_effort` are optional.
+It autoloads credentials from the neighbouring `.env` without replacing variables already set in your shell.
+For example, `~/.config/maniac/.env` can hold either Gemini or Anthropic credentials:
+
+```dotenv
+GEMINI_API_KEY='your-api-key'
+ANTHROPIC_API_KEY='your-api-key'
+```
+
+You can keep credentials for several providers in that one file and select one at a time with `model`.
+`MANIAC_LLM_API_KEY` remains available when you want to override LiteLLM's provider-native credential lookup.
+Environment variables, such as `MANIAC_MODEL`, override `config.yaml` settings.
+
+For Gemini models, `MANIAC_REASONING_EFFORT` defaults to `low` to conserve API quota.
+Other models omit it unless you set it explicitly.
+Set it to `high` only when your selected provider supports a higher-reasoning mode.
+
+The legacy `agy` integration remains available as an explicit fallback:
+
+```bash
+MANIAC_LLM_BACKEND=agy maniac generate <tool>
+```
+
 ---
 
 ## Quickstart
@@ -86,12 +121,20 @@ man uv
 man howdoi
 ```
 
-### 2. Discover Binaries Missing Manpages
+### 2. Discover Missing or Help-Derived Manpages
 
-Scan your local binary directory (`~/.local/bin`) to find everything you have installed that lacks a manual entry:
+Scan your local binary directory (`~/.local/bin`) to find everything you have installed that lacks a usable manual entry:
 
 ```bash
 maniac list-missing
+```
+
+Include system-wide help-derived pages that MANIAC can improve from an installed source or deeper subcommand help.
+This scans the active manpath, resolves each candidate's installed source when possible, and makes one short local help probe for source-unknown commands.
+It does not call an LLM:
+
+```bash
+maniac list-missing --include-candidates
 ```
 
 ### 3. Automatically Generate Missing Manpages
@@ -186,7 +229,7 @@ maniac docs hx
 ```
 
 1. **Recursive Subcommand Crawler**: Traverses multi-level CLI trees (`uv pip compile`, `git remote add`) with cycle protection, pager suppression, and ANSI stripping.
-2. **Dynamic Repository Discovery**: Resolves upstream GitHub sources and local clones dynamically via `mise` configuration, `uv tool` metadata, and symlink inspection—without hardcoded lists.
+2. **Dynamic Repository Discovery**: Resolves upstream GitHub sources and local clones dynamically via the cached [Mise registry](https://mise.jdx.dev/registry), optional local Mise configuration, `uv tool` metadata, and symlink inspection—without hardcoded lists or a Mise installation.
 3. **Prioritized Doc Extraction**: Extracts key reference material, core concepts, and keybindings while ignoring build scripts, CI configs, and changelogs.
 4. **Unix Manual Synthesis**: Structures descriptions around foundational domain entities (sessions, workspaces, buffers, modes), separates global options from subcommands, styles arguments rigorously, and adds annotated workflow examples.
 5. **Compilation & Installation**: Compiles to standard `roff` via Pandoc and installs to `~/.local/share/man/man1/`.
