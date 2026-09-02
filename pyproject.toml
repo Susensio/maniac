@@ -6,9 +6,13 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "json-repair>=0.63.4",
+    "litellm>=1.98.0",
+    "python-dotenv>=1.0.0",
+    "pyyaml>=6.0.0",
     "rich>=13.0.0",
     "structlog>=24.0.0",
     "typer>=0.12.0",
+    "zstandard>=0.23.0",
 ]
 
 [project.scripts]
@@ -38,4 +42,3 @@ target-version = "py312"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-
