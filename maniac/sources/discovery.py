@@ -1,19 +1,30 @@
-"""Dynamic repository discovery via symlinks and mise metadata."""
+"""Dynamic repository discovery via local metadata and Mise's registry."""
 
+import io
 import json
 import os
 import re
 import shutil
 import subprocess
+import tarfile
 import tomllib
+from functools import cache
 from pathlib import Path
+from time import time
+from urllib.error import URLError
+from urllib.request import Request, urlopen
+
+import zstandard
 
 from ..logging import logger
 from ..models import RepoSource
 
+MISE_REGISTRY_URL = "https://mise.jdx.dev/registry/latest.tar.zst"
+MISE_REGISTRY_TTL_SECONDS = 3_600
+
 
 def discover_repo(binary_name: str, bin_dir: str | Path | None = None) -> RepoSource:
-    """Discover upstream repository or local source for a binary dynamically via mise and system metadata."""
+    """Discover an upstream repository or local source for a binary dynamically."""
     target_bin_dir = Path(bin_dir) if bin_dir else Path.home() / ".local" / "bin"
     bin_path = target_bin_dir / binary_name
 
@@ -29,7 +40,7 @@ def discover_repo(binary_name: str, bin_dir: str | Path | None = None) -> RepoSo
         if source:
             return source
 
-    # 2. Query mise configuration and live registry
+    # 2. Query optional Mise configuration and the cached official registry
     repo_from_mise = _resolve_from_mise(binary_name, binary_name)
     if repo_from_mise:
         return RepoSource(name=binary_name, target=repo_from_mise, is_local=False)
@@ -38,7 +49,22 @@ def discover_repo(binary_name: str, bin_dir: str | Path | None = None) -> RepoSo
     return RepoSource(name=binary_name, target=binary_name, is_local=False)
 
 
-def _resolve_symlink_target(binary_name: str, bin_path: Path) -> RepoSource | None:
+def discover_candidate_source(binary_name: str) -> RepoSource | None:
+    """Return a source proven by an installed executable, if one is available."""
+    which_path = shutil.which(binary_name)
+    if which_path is None:
+        return None
+    bin_path = Path(which_path)
+    if not bin_path.is_symlink():
+        return None
+    return _resolve_symlink_target(
+        binary_name, bin_path, allow_binary_registry_match=False
+    )
+
+
+def _resolve_symlink_target(
+    binary_name: str, bin_path: Path, *, allow_binary_registry_match: bool = True
+) -> RepoSource | None:
     """Inspect resolved path of symlinked binary for mise, local lib, or uv installs."""
     resolved_path = bin_path.resolve()
     resolved_str = str(resolved_path)
@@ -62,7 +88,11 @@ def _resolve_symlink_target(binary_name: str, bin_path: Path) -> RepoSource | No
     if "/.local/share/mise/installs/" in resolved_str:
         tool_id = _extract_mise_tool_id(resolved_path)
         if tool_id:
-            repo = _resolve_from_mise(tool_id, binary_name)
+            repo = _resolve_from_mise(
+                tool_id,
+                binary_name,
+                allow_binary_registry_match=allow_binary_registry_match,
+            )
             if repo:
                 return RepoSource(name=binary_name, target=repo, is_local=False)
 
@@ -112,26 +142,23 @@ def _check_mise_toml(cfg_path: Path, tool_id: str, binary_name: str) -> str | No
     for raw_tool_key, val in tools.items():
         if raw_tool_key.startswith("github:"):
             repo = raw_tool_key.split(":", 1)[1]
-            if (
-                tool_id in repo
-                or binary_name in repo
-                or _match_mise_filter_bins(val, binary_name)
-            ):
+            if repo.rsplit("/", 1)[-1] in (
+                tool_id,
+                binary_name,
+            ) or _match_mise_filter_bins(val, binary_name):
                 return repo
         elif raw_tool_key.startswith("cargo:http"):
             url = raw_tool_key.split(":", 1)[1]
-            if tool_id in url or binary_name in url:
+            package = url.rstrip("/").rsplit("/", 1)[-1]
+            if package in (tool_id, binary_name):
                 return _clean_git_url(url)
-        elif raw_tool_key in (tool_id, binary_name):
-            reg = _query_mise_registry(raw_tool_key)
-            if reg:
-                return reg
-
     return None
 
 
-def _resolve_from_mise(tool_id: str, binary_name: str) -> str | None:
-    """Infer repository dynamically from mise configuration files and mise registry."""
+def _resolve_from_mise(
+    tool_id: str, binary_name: str, *, allow_binary_registry_match: bool = True
+) -> str | None:
+    """Infer a repository from Mise configuration files and registry data."""
     xdg_config = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
     mise_cfg_dir = xdg_config / "mise"
     if mise_cfg_dir.exists():
@@ -159,33 +186,140 @@ def _resolve_from_mise(tool_id: str, binary_name: str) -> str | None:
         if len(parts) == 2:
             return f"{parts[0]}/{parts[1]}"
 
-    return _query_mise_registry(tool_id) or _query_mise_registry(binary_name)
+    repo = _query_mise_registry(tool_id)
+    if repo or not allow_binary_registry_match:
+        return repo
+    return _query_mise_registry(binary_name)
 
 
 def _match_mise_filter_bins(tool_val: object, binary_name: str) -> bool:
     if isinstance(tool_val, dict):
         filter_bins = tool_val.get("filter_bins")
-        if filter_bins and binary_name in str(filter_bins):
-            return True
+        if isinstance(filter_bins, str):
+            return filter_bins == binary_name
+        if isinstance(filter_bins, list):
+            return binary_name in filter_bins
     return False
 
 
 def _query_mise_registry(tool: str) -> str | None:
+    """Look up a tool in the official Mise registry without invoking Mise."""
+    return _load_mise_registry().get(tool)
+
+
+@cache
+def _load_mise_registry() -> dict[str, str]:
+    """Load short names, aliases, and bins from Mise's cached registry archive."""
+    archive = _read_mise_registry_archive()
+    if archive is None:
+        return {}
+
     try:
-        res = subprocess.run(
-            ["mise", "registry", tool],
-            capture_output=True,
-            text=True,
-            timeout=3,
-            check=False,
-        )
-        if res.returncode == 0 and res.stdout.strip():
-            output = res.stdout.strip()
-            for token in output.split():
-                if token.startswith(("aqua:", "github:")):
-                    return token.split(":", 1)[1]
-    except (OSError, subprocess.SubprocessError) as e:
-        logger.debug("Error querying mise registry", tool=tool, error=str(e))
+        return _parse_mise_registry(archive)
+    except (
+        OSError,
+        tarfile.TarError,
+        tomllib.TOMLDecodeError,
+        UnicodeDecodeError,
+        zstandard.ZstdError,
+    ) as e:
+        logger.debug("Unable to parse Mise registry", error=str(e))
+        return {}
+
+
+def _read_mise_registry_archive() -> bytes | None:
+    """Read the fresh archive or download it once for the local cache."""
+    cache_path = _mise_registry_cache_path()
+    try:
+        if (
+            cache_path.is_file()
+            and time() - cache_path.stat().st_mtime < MISE_REGISTRY_TTL_SECONDS
+        ):
+            return cache_path.read_bytes()
+    except OSError as e:
+        logger.debug("Unable to read cached Mise registry", error=str(e))
+
+    try:
+        request = Request(MISE_REGISTRY_URL, headers={"User-Agent": "maniac/0.1"})
+        with urlopen(request, timeout=10) as response:
+            archive = response.read()
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        temporary_path = cache_path.with_suffix(".tmp")
+        temporary_path.write_bytes(archive)
+        temporary_path.replace(cache_path)
+        return archive
+    except (OSError, URLError) as e:
+        logger.debug("Unable to download Mise registry", error=str(e))
+        try:
+            return cache_path.read_bytes()
+        except OSError:
+            return None
+
+
+def _mise_registry_cache_path() -> Path:
+    """Return MANIAC's XDG cache location for Mise registry data."""
+    cache_home = Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache")
+    return cache_home / "maniac" / "mise-registry.tar.zst"
+
+
+def _parse_mise_registry(archive: bytes) -> dict[str, str]:
+    """Map Mise tool names, aliases, and bins to GitHub repository names."""
+    canonical_names: dict[str, str] = {}
+    alternate_names: dict[str, str] = {}
+    decompressor = zstandard.ZstdDecompressor()
+    with (
+        decompressor.stream_reader(io.BytesIO(archive)) as stream,
+        tarfile.open(fileobj=stream, mode="r|") as tar,
+    ):
+        for member in tar:
+            if (
+                not member.isfile()
+                or not member.name.startswith("registry/")
+                or not member.name.endswith(".toml")
+            ):
+                continue
+            contents = tar.extractfile(member)
+            if contents is None:
+                continue
+            entry = tomllib.loads(contents.read().decode("utf-8"))
+            repo = _mise_entry_repo(entry)
+            if repo is None:
+                continue
+            short_name = Path(member.name).stem
+            canonical_names[short_name] = repo
+            for name in _mise_entry_names(entry):
+                alternate_names.setdefault(name, repo)
+    registry = alternate_names
+    registry.update(canonical_names)
+    return registry
+
+
+def _mise_entry_names(entry: dict[str, object]) -> list[str]:
+    """Return a registry entry's aliases and binary names."""
+    names: list[str] = []
+    for key in ("aliases", "bins"):
+        value = entry.get(key)
+        if isinstance(value, str):
+            names.append(value)
+        elif isinstance(value, list):
+            names.extend(item for item in value if isinstance(item, str))
+    return names
+
+
+def _mise_entry_repo(entry: dict[str, object]) -> str | None:
+    """Return the first GitHub-backed registry backend."""
+    backends = entry.get("backends")
+    if not isinstance(backends, list):
+        return None
+    for backend in backends:
+        if not isinstance(backend, str):
+            continue
+        if backend.startswith("github:"):
+            return backend.split(":", 1)[1]
+        if backend.startswith("aqua:"):
+            package = backend.split(":", 1)[1].split("/")
+            if len(package) >= 2:
+                return "/".join(package[:2])
     return None
 
 

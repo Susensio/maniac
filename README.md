@@ -36,7 +36,6 @@ Most modern utilities ship without standard Unix manual pages. Instead, you're f
 - **LiteLLM-compatible API key**: A provider-native key, such as `GEMINI_API_KEY`, for the default API backend
 - **[agy](https://github.com/google-antigravity/antigravity-cli)** *(optional)*: Explicit fallback backend
 - **[git](https://git-scm.com/)**: Repository cloning and remote URL inspection
-- **[mise](https://mise.jdx.dev/)** *(optional)*: Dynamic upstream repository discovery via mise registry and tool aliases
 
 ---
 
