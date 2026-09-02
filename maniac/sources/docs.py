@@ -9,6 +9,7 @@ from pathlib import Path
 from ..config import Config
 from ..logging import logger
 from ..models import DocFile, RepoSource
+from .manpages import is_help2man_content
 
 DOC_EXTENSIONS = {".md", ".markdown", ".rst", ".1", ".txt"}
 DOC_DIRS = {
@@ -62,6 +63,7 @@ IGNORE_FILE_PATTERNS = {
 }
 
 MAX_TOTAL_DOC_CHARS = 75_000
+TRUNCATION_MARKER = "\n\n[... truncated ...]"
 
 
 def fetch_and_extract_docs(
@@ -87,31 +89,75 @@ def fetch_and_extract_docs(
             if not clone_url:
                 logger.debug("No clone URL for repository", source=source.name)
                 return []
-            logger.info("Cloning repository", url=clone_url, dest=str(dest_dir))
-            cmd = ["git", "clone", "--depth", "1", clone_url, str(dest_dir)]
-            try:
-                res = subprocess.run(
-                    cmd,
-                    capture_output=True,
-                    text=True,
-                    timeout=cfg.timeout_git,
-                    check=False,
-                )
-                if res.returncode != 0:
-                    logger.error(
-                        "Failed cloning repository",
-                        url=clone_url,
-                        error=res.stderr.strip(),
-                    )
-                    shutil.rmtree(dest_dir, ignore_errors=True)
-                    return []
-            except (OSError, subprocess.SubprocessError) as e:
-                logger.error("Error executing git clone", url=clone_url, error=str(e))
-                shutil.rmtree(dest_dir, ignore_errors=True)
+            if not _clone_repository(clone_url, dest_dir, cfg):
                 return []
         target_path = dest_dir
 
-    return extract_docs_from_dir(target_path, max_total_chars=max_total_chars)
+    doc_files = extract_docs_from_dir(target_path, max_total_chars=max_total_chars)
+    if source.is_local:
+        return doc_files
+
+    remaining_chars = max_total_chars - sum(len(doc.content) for doc in doc_files)
+    if remaining_chars <= 0:
+        return doc_files
+
+    return doc_files + _fetch_github_wiki_docs(
+        source, cache_dir_path, cfg, remaining_chars
+    )
+
+
+def _clone_repository(
+    clone_url: str, dest_dir: Path, cfg: Config, *, optional: bool = False
+) -> bool:
+    """Clone a shallow repository into dest_dir."""
+    logger.info("Cloning repository", url=clone_url, dest=str(dest_dir))
+    try:
+        res = subprocess.run(
+            ["git", "clone", "--depth", "1", clone_url, str(dest_dir)],
+            capture_output=True,
+            text=True,
+            timeout=cfg.timeout_git,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as e:
+        log = logger.debug if optional else logger.error
+        log("Error executing git clone", url=clone_url, error=str(e))
+        shutil.rmtree(dest_dir, ignore_errors=True)
+        return False
+
+    if res.returncode == 0:
+        return True
+
+    log = logger.debug if optional else logger.error
+    log("Failed cloning repository", url=clone_url, error=res.stderr.strip())
+    shutil.rmtree(dest_dir, ignore_errors=True)
+    return False
+
+
+def _fetch_github_wiki_docs(
+    source: RepoSource,
+    cache_dir: Path,
+    cfg: Config,
+    max_total_chars: int,
+) -> list[DocFile]:
+    """Fetch documentation from a GitHub wiki when one exists."""
+    clone_url = source.clone_url
+    if clone_url is None or not clone_url.startswith("https://github.com/"):
+        return []
+
+    wiki_dir = cache_dir / f"{source.name}.wiki"
+    if wiki_dir.exists() and not (wiki_dir / ".git").exists():
+        shutil.rmtree(wiki_dir, ignore_errors=True)
+
+    if not wiki_dir.exists():
+        wiki_url = f"{clone_url.removesuffix('.git')}.wiki.git"
+        if not _clone_repository(wiki_url, wiki_dir, cfg, optional=True):
+            return []
+
+    return [
+        DocFile(rel_path=f"wiki/{doc.rel_path}", content=doc.content)
+        for doc in extract_docs_from_dir(wiki_dir, max_total_chars=max_total_chars)
+    ]
 
 
 def extract_docs_from_dir(
@@ -160,14 +206,27 @@ def extract_docs_from_dir(
         try:
             content = file_path.read_text(encoding="utf-8", errors="replace").strip()
             if content:
+                if file_path.suffix == ".1" and is_help2man_content(content):
+                    logger.debug("Skipping help2man-generated manpage", path=rel)
+                    continue
                 if len(content) > 50_000:
-                    content = content[:50_000] + "\n\n[... truncated ...]"
+                    content = content[:50_000] + TRUNCATION_MARKER
+                content = _truncate_doc_content(content, max_total_chars - total_chars)
                 doc_files.append(DocFile(rel_path=rel, content=content))
                 total_chars += len(content)
         except OSError as e:
             logger.debug("Error reading doc file", path=str(file_path), error=str(e))
 
     return doc_files
+
+
+def _truncate_doc_content(content: str, max_chars: int) -> str:
+    """Truncate content without exceeding max_chars."""
+    if len(content) <= max_chars:
+        return content
+    if max_chars <= len(TRUNCATION_MARKER):
+        return content[:max_chars]
+    return content[: max_chars - len(TRUNCATION_MARKER)] + TRUNCATION_MARKER
 
 
 def _iter_doc_dir_files(directory: Path) -> Iterator[tuple[str, Path]]:
