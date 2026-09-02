@@ -6,7 +6,7 @@ from typing import Annotated, Any
 import typer
 
 from .config import Config
-from .exceptions import ManiacError
+from .exceptions import CrawlerError, ManiacError
 
 app = typer.Typer(
     help="Maniac: Scrape CLI help, extract repository docs, and synthesize elite Unix manpages.",
@@ -26,6 +26,27 @@ class _LazyConsole:
 
 console = _LazyConsole()
 default_cfg = Config()
+CANDIDATE_SUBCOMMAND_TIMEOUT_SECONDS = 1
+
+
+def _repo_cell(source: Any) -> Any:
+    """Render a discovered repository as a terminal link or an explicit fallback."""
+    from rich.style import Style
+    from rich.text import Text
+
+    if not source.is_local and source.target == source.name:
+        return Text("Unknown", style="dim")
+
+    clone_url = source.clone_url
+    if clone_url is None:
+        return Text(source.target, style="yellow")
+    return Text(
+        source.target,
+        style=Style(
+            color="green",
+            link=clone_url.removesuffix(".git"),
+        ),
+    )
 
 
 def _render_eval_table(target_console: Any, tool: str, result: Any) -> None:
@@ -149,7 +170,9 @@ def docs(
 
 @app.command()
 def generate(
-    tools: Annotated[list[str], typer.Argument(help="List of tool names to generate manpages for.")],
+    tools: Annotated[
+        list[str], typer.Argument(help="List of tool names to generate manpages for.")
+    ],
     output_dir: Annotated[
         str, typer.Option(help="Directory to save generated manpage.")
     ] = str(default_cfg.output_dir),
@@ -161,7 +184,7 @@ def generate(
     ] = None,
     model: Annotated[
         str | None,
-        typer.Option(help="LLM model name (e.g. 'Gemini 3.7 Flash (High)')."),
+        typer.Option(help="LLM model ID (e.g. 'gemini/gemini-3.5-flash')."),
     ] = None,
     install: Annotated[
         bool, typer.Option(help="Install compiled manpage to ~/.local/share/man/man1.")
@@ -174,7 +197,9 @@ def generate(
             help="Force overwrite of foreign manpages with automatic backup.",
         ),
     ] = False,
-    dry_run: Annotated[bool, typer.Option(help="Skip LLM synthesis.")] = False,
+    dry_run: Annotated[
+        bool, typer.Option("--dry-run", help="Skip LLM synthesis.")
+    ] = False,
 ) -> None:
     """Run end-to-end pipeline: scrape help, fetch docs, synthesize via LLM, and compile."""
     from .orchestration.pipeline import run_pipeline
@@ -234,7 +259,7 @@ def eval_cmd(
     ] = None,
     model: Annotated[
         str | None,
-        typer.Option(help="LLM model name (e.g. 'Gemini 3.7 Flash (High)')."),
+        typer.Option(help="LLM model ID (e.g. 'gemini/gemini-3.5-flash')."),
     ] = None,
     min_score: Annotated[
         int,
@@ -302,80 +327,26 @@ def eval_cmd(
 @app.command("generate-missing")
 def generate_missing(
     bin_dir: Annotated[Path | None, typer.Option(help="Directory to inspect.")] = None,
-    output_dir: Annotated[str, typer.Option(help="Directory to save generated manpage.")] = str(default_cfg.output_dir),
-    cache_dir: Annotated[str, typer.Option(help="Cache directory for repositories.")] = str(default_cfg.cache_dir),
+    output_dir: Annotated[
+        str, typer.Option(help="Directory to save generated manpage.")
+    ] = str(default_cfg.output_dir),
+    cache_dir: Annotated[
+        str, typer.Option(help="Cache directory for repositories.")
+    ] = str(default_cfg.cache_dir),
     model: Annotated[str | None, typer.Option(help="LLM model name.")] = None,
-    install: Annotated[bool, typer.Option(help="Install compiled manpage to ~/.local/share/man/man1.")] = True,
-    force: Annotated[bool, typer.Option("--force", "-f", help="Force overwrite of foreign manpages.")] = False,
+    install: Annotated[
+        bool, typer.Option(help="Install compiled manpage to ~/.local/share/man/man1.")
+    ] = True,
+    force: Annotated[
+        bool, typer.Option("--force", "-f", help="Force overwrite of foreign manpages.")
+    ] = False,
 ) -> None:
     """Find all executables lacking manpages and generate them automatically."""
-    import shutil
-    import subprocess
-    from .orchestration.pipeline import run_pipeline
-
-    target_bin_dir = bin_dir or Path.home() / ".local" / "bin"
-    if not target_bin_dir.exists():
-        console.print(f"[red]Directory not found: {target_bin_dir}[/red]")
-        raise typer.Exit(1)
-
-    man_bin = shutil.which("man")
-    if not man_bin:
-        console.print("[bold red]Error: 'man' utility is not installed or not in PATH.[/bold red]")
-        raise typer.Exit(1)
-
-    items = [i for i in sorted(target_bin_dir.iterdir()) if i.is_file() or i.is_symlink()]
-    missing_tools = []
-    
-    with console.status(f"[bold cyan]Scanning {target_bin_dir} for missing manpages..."):
-        for item in items:
-            res = subprocess.run([man_bin, "-w", item.name], capture_output=True, text=True, check=False)
-            has_man = res.returncode == 0 and bool(res.stdout.strip())
-            if not has_man:
-                missing_tools.append(item.name)
-                
-    if not missing_tools:
-        console.print("[bold green]All binaries have manpages. Nothing to do![/bold green]")
-        return
-        
-    console.print(f"[bold yellow]Found {len(missing_tools)} binaries missing manpages.[/bold yellow]")
-    
-    failures = 0
-    for tool in missing_tools:
-        console.print(f"\n[bold blue]=== Generating for {tool} ===[/bold blue]")
-        try:
-            with console.status(f"[bold green]Generating manpage for {tool}..."):
-                result = run_pipeline(
-                    tool_name=tool,
-                    cache_dir=cache_dir,
-                    output_dir=output_dir,
-                    prompt_file=None,
-                    model=model,
-                    install=install,
-                    force=force,
-                    dry_run=False,
-                )
-            console.print(f"[bold green]✓ Successfully generated manpage for {tool}![/bold green]")
-        except (OSError, RuntimeError, ManiacError) as e:
-            console.print(f"[bold red]Failed {tool}: {e}[/bold red]")
-            failures += 1
-
-    if failures:
-        console.print(f"\n[bold red]{failures}/{len(missing_tools)} tool(s) failed to generate.[/bold red]")
-        raise typer.Exit(1)
-
-
-@app.command("list-missing")
-def list_missing(
-    bin_dir: Annotated[Path | None, typer.Option(help="Directory to inspect.")] = None,
-) -> None:
-    """List executables in bin_dir that lack manpages."""
     import os
     import shutil
-    import subprocess
 
-    from rich.table import Table
-
-    from .sources.discovery import discover_repo
+    from .orchestration.pipeline import run_pipeline
+    from .sources.manpages import inspect_manpage
 
     target_bin_dir = bin_dir or Path.home() / ".local" / "bin"
     if not target_bin_dir.exists():
@@ -389,29 +360,252 @@ def list_missing(
         )
         raise typer.Exit(1)
 
+    items = [
+        item
+        for item in sorted(target_bin_dir.iterdir())
+        if item.is_file() and os.access(item, os.X_OK)
+    ]
+    missing_tools: list[tuple[str, bool]] = []
+
+    with console.status(
+        f"[bold cyan]Scanning {target_bin_dir} for missing manpages..."
+    ):
+        for item in items:
+            status = inspect_manpage(man_bin, item.name)
+            if not status.is_usable:
+                missing_tools.append((item.name, status.is_help2man))
+
+    if not missing_tools:
+        console.print(
+            "[bold green]All binaries have manpages. Nothing to do![/bold green]"
+        )
+        return
+
+    console.print(
+        f"[bold yellow]Found {len(missing_tools)} binaries missing manpages.[/bold yellow]"
+    )
+
+    failures = 0
+    for tool, replace_help2man in missing_tools:
+        console.print(f"\n[bold blue]=== Generating for {tool} ===[/bold blue]")
+        try:
+            with console.status(f"[bold green]Generating manpage for {tool}..."):
+                run_pipeline(
+                    tool_name=tool,
+                    bin_dir=target_bin_dir,
+                    cache_dir=cache_dir,
+                    output_dir=output_dir,
+                    prompt_file=None,
+                    model=model,
+                    install=install,
+                    force=force or replace_help2man,
+                    dry_run=False,
+                )
+            console.print(
+                f"[bold green]✓ Successfully generated manpage for {tool}![/bold green]"
+            )
+        except (OSError, RuntimeError, ManiacError) as e:
+            console.print(f"[bold red]Failed {tool}: {e}[/bold red]")
+            failures += 1
+
+    if failures:
+        console.print(
+            f"\n[bold red]{failures}/{len(missing_tools)} tool(s) failed to generate.[/bold red]"
+        )
+        raise typer.Exit(1)
+
+
+@app.command("list-missing")
+def list_missing(
+    bin_dir: Annotated[Path | None, typer.Option(help="Directory to inspect.")] = None,
+    include_candidates: Annotated[
+        bool,
+        typer.Option(
+            "--include-candidates",
+            help="Also scan the active manpath for manpages that MANIAC can improve.",
+        ),
+    ] = False,
+) -> None:
+    """List executables that lack manpages or can be improved."""
+    import os
+    import shutil
+
+    from rich.table import Table
+
+    from .sources.manpages import (
+        HelpDerivedManpage,
+        find_help_derived_manpages,
+        inspect_manpage,
+    )
+
+    target_bin_dir = bin_dir or Path.home() / ".local" / "bin"
+    if not target_bin_dir.exists():
+        console.print(f"[red]Directory not found: {target_bin_dir}[/red]")
+        raise typer.Exit(1)
+
+    man_bin = shutil.which("man")
+    if not man_bin:
+        console.print(
+            "[bold red]Error: 'man' utility is not installed or not in PATH.[/bold red]"
+        )
+        raise typer.Exit(1)
+
+    if include_candidates:
+        manpath_bin = shutil.which("manpath")
+        if not manpath_bin:
+            console.print(
+                "[bold red]Error: 'manpath' utility is not installed or not in PATH.[/bold red]"
+            )
+            raise typer.Exit(1)
+
+        try:
+            from rich.progress import Progress
+
+            from .models import RepoSource
+            from .sources.crawler import extract_subcommands, get_help
+            from .sources.discovery import discover_candidate_source, discover_repo
+
+            table = Table(title=f"Manpage Candidates for {target_bin_dir}")
+            table.add_column("Candidate", style="cyan")
+            table.add_column("Status", style="yellow")
+            table.add_column("Path", style="magenta", overflow="fold")
+            table.add_column("Discovered Source", style="green", overflow="fold")
+
+            items = [
+                i
+                for i in sorted(target_bin_dir.iterdir())
+                if i.is_file() and os.access(i, os.X_OK)
+            ]
+            missing_items: list[Path] = []
+            with Progress() as progress:
+                binaries_task = progress.add_task(
+                    "Scanning executables...", total=len(items)
+                )
+                for item in items:
+                    if not inspect_manpage(man_bin, item.name).exists:
+                        missing_items.append(item)
+                    progress.advance(binaries_task)
+
+                manpages_task = progress.add_task(
+                    "Scanning active manpath...", total=None
+                )
+                help_derived_pages = find_help_derived_manpages(
+                    manpath_bin,
+                    on_scan=lambda: progress.advance(manpages_task),
+                    on_start=lambda total: progress.update(manpages_task, total=total),
+                )
+                candidate_sources_task = progress.add_task(
+                    "Resolving candidate sources...", total=len(help_derived_pages)
+                )
+                source_backed_pages: list[tuple[HelpDerivedManpage, RepoSource]] = []
+                for page in help_derived_pages:
+                    source = discover_candidate_source(page.name)
+                    if source is not None:
+                        source_backed_pages.append((page, source))
+                    progress.advance(candidate_sources_task)
+                source_backed_names = {page.name for page, _ in source_backed_pages}
+                subcommand_pages: list[tuple[HelpDerivedManpage, int]] = []
+                unbacked_pages = [
+                    page
+                    for page in help_derived_pages
+                    if page.name not in source_backed_names
+                ]
+                subcommands_task = progress.add_task(
+                    "Checking candidate subcommands...", total=len(unbacked_pages)
+                )
+                for page in unbacked_pages:
+                    executable = shutil.which(page.name)
+                    if executable is None:
+                        progress.advance(subcommands_task)
+                        continue
+                    try:
+                        help_text = get_help(
+                            [executable],
+                            timeout=CANDIDATE_SUBCOMMAND_TIMEOUT_SECONDS,
+                        )
+                    except CrawlerError:
+                        progress.advance(subcommands_task)
+                        continue
+                    subcommands = extract_subcommands(help_text, cmd_name=page.name)
+                    if subcommands:
+                        subcommand_pages.append((page, len(subcommands)))
+                    progress.advance(subcommands_task)
+                repositories_task = progress.add_task(
+                    "Discovering repositories...",
+                    total=len(missing_items),
+                )
+                for item in missing_items:
+                    table.add_row(
+                        item.name,
+                        "Missing",
+                        str(item),
+                        _repo_cell(discover_repo(item.name, bin_dir=target_bin_dir)),
+                    )
+                    progress.advance(repositories_task)
+                for page, source in source_backed_pages:
+                    table.add_row(
+                        f"{page.name}({page.section})",
+                        "Help-derived",
+                        str(page.path),
+                        _repo_cell(source),
+                    )
+                for page, count in subcommand_pages:
+                    table.add_row(
+                        f"{page.name}({page.section})",
+                        f"Subcommands ({count})",
+                        str(page.path),
+                        _repo_cell(
+                            RepoSource(
+                                name=page.name,
+                                target=page.name,
+                                is_local=False,
+                            )
+                        ),
+                    )
+
+            console.print(table)
+            skipped_pages = (
+                len(help_derived_pages)
+                - len(source_backed_pages)
+                - len(subcommand_pages)
+            )
+            console.print(
+                f"\n[bold]{len(missing_items)}[/bold] missing and "
+                f"[bold]{len(source_backed_pages)}[/bold] source-backed help-derived "
+                f"manpage(s); [bold]{len(subcommand_pages)}[/bold] subcommand-backed "
+                f"help-derived manpage(s); [bold]{skipped_pages}[/bold] "
+                "skipped because their source is unknown."
+            )
+            return
+        except typer.Exit:
+            raise
+        except (OSError, RuntimeError, ManiacError) as e:
+            console.print(
+                f"[bold red]Error inspecting {target_bin_dir}: {e}[/bold red]"
+            )
+            raise typer.Exit(1) from e
+
     try:
+        from .sources.discovery import discover_repo
+
         table = Table(title=f"Executables in {target_bin_dir} Missing Manpages")
         table.add_column("Binary", style="cyan")
         table.add_column("Symlink Target", style="magenta")
         table.add_column("Discovered Repo", style="green")
 
         from rich.progress import track
+
         from .logging import logger
 
         missing_count = 0
-        items = [i for i in sorted(target_bin_dir.iterdir()) if i.is_file() or i.is_symlink()]
+        items = [
+            i for i in sorted(target_bin_dir.iterdir()) if i.is_file() or i.is_symlink()
+        ]
         total_count = len(items)
 
         for item in track(items, description="Scanning executables..."):
             logger.debug(f"Checking {item.name}")
-            res = subprocess.run(
-                [man_bin, "-w", item.name],
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-            has_man = res.returncode == 0 and bool(res.stdout.strip())
-            if not has_man:
+            if not inspect_manpage(man_bin, item.name).is_usable:
                 logger.debug(f"No manpage found for {item.name}, discovering repo...")
                 missing_count += 1
                 link_target = os.readlink(item) if item.is_symlink() else "direct"

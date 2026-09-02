@@ -3,6 +3,7 @@
 from pathlib import Path
 
 from ..config import Config
+from ..exceptions import GenerationError
 from ..generation.compiler import compile_to_man
 from ..generation.llm import run_llm_synthesis
 from ..generation.prompts import build_synthesis_prompt, load_system_prompt
@@ -25,6 +26,7 @@ def run_pipeline(
     force: bool = False,
     dry_run: bool = False,
     config: Config | None = None,
+    bin_dir: str | Path | None = None,
 ) -> PipelineResult:
     """Run the complete pipeline to extract docs, synthesize, and compile a manpage."""
     cfg = config or Config()
@@ -38,15 +40,26 @@ def run_pipeline(
     inter_dir.mkdir(parents=True, exist_ok=True)
 
     logger.info("Extracting CLI help and subcommands", tool=tool_name)
-    tree = find_subcommands([tool_name])
+    executable = Path(bin_dir) / tool_name if bin_dir is not None else tool_name
+    tree = find_subcommands([str(executable)])
     help_block = format_help_block(tree)
 
     logger.info("Discovering source and extracting documentation", tool=tool_name)
-    source = discover_repo(tool_name)
+    source = (
+        discover_repo(tool_name, bin_dir=bin_dir)
+        if bin_dir is not None
+        else discover_repo(tool_name)
+    )
     doc_files = fetch_and_extract_docs(
         source, cache_dir=c_dir, max_total_chars=cfg.max_total_doc_chars
     )
     docs_block = format_docs_section(doc_files)
+
+    if len(tree) == 1 and not doc_files:
+        raise GenerationError(
+            f"Not enough source material for '{tool_name}': only root --help is "
+            "available, with no subcommands or upstream documentation."
+        )
 
     # Save intermediate extracted context
     context_content = (
