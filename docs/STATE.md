@@ -17,18 +17,22 @@ Provider env-var names come from `litellm.validate_environment`, so no hand-main
 ## Manpage classification facts
 
 ADR-0012 replaced binary Help2man classification with a facts-only layer stored in `maniac/classification.py`.
-Per-page stored facts are `word_count`, `tp_count`, `sections`, `has_examples_section`, plus path, existence, whether MANIAC authored it, and reachable sources for the tool.
+Per-page stored facts are `word_count`, `tp_count`, `sections`, `has_examples_section`, `dialect`, plus path, existence, whether MANIAC authored it, and reachable sources for the tool.
 There is deliberately no verdict, state vocabulary, or combined score — the verdict layer is deferred to real output per ADR-0012.
 Generator origin covers help2man, Pod::Man, Pandoc, txt2man, DocBook XSL, po4a and cobra, identified by marker in the first 8 KiB of the roff source; generator origin is internal and not user-facing.
+
+`dialect` is `man`, `mdoc`, or `unknown`, detected by comparing counts of dialect-distinctive macros (`.Dd`/`.Dt`/`.Sh`/`.Bl`/`.It`/`.Nm`/`.Fl`/`.Op`/`.Ar`/`.Cm` for mdoc, `.TH`/`.SH`/`.TP`/`.IP`/`.PP`/`.B`/`.BR`/`.BI` for man(7)) at line starts in the same page prefix already read; whichever set dominates wins, a tie or neither present is `unknown`.
+`tp_count` and `sections` are computed against the detected dialect: `.TP`/`.SH` for man(7), `.It`/`.Sh` for mdoc, so both facts mean the same thing across dialects. `word_count` was already dialect-agnostic (it counts every non-comment line regardless of macro) and needed no change.
 
 The cache lives under `$XDG_CACHE_HOME/maniac/` keyed on `(path, mtime, size)`, carries `CACHE_SCHEMA_VERSION`, and is discarded wholesale on a version mismatch.
 A malformed row or corrupt cache file is treated as a miss rather than raising; a cache is an optimisation and corruption in one row should cost recomputing that row, not the entire cache.
 A dump entry point exists at `python -m maniac.classification`.
 
 Two decisions ADR-0012 did not settle: `.SS` subsections are not counted in `sections`, only top-level `.SH`; `has_examples_section` matches `EXAMPLES` or `USAGE` case-insensitively against exact section names, not substrings.
+One decision this work left unsettled: a page whose macro counts tie, or that carries neither macro set, is stored as `dialect=unknown` with `tp_count`/`sections` computed as man(7) (the default), since a dialect-blind fallback has to pick one; the verdict layer should treat `unknown` as no evidence rather than trusting those counts.
 
-Evidence from a real run on the development system: 5504 pages classified; generator origins split as none 3741, Pod::Man 867, DocBook XSL 654, help2man 220, pandoc 17, txt2man 4, po4a 1; 15 pages resolved a reachable source under the ADR-0008 installation-tied rule; 2 pages are MANIAC-authored.
-Known limitation: `tmux.1` is BSD mdoc, so its `tp_count` is 0 and `sections` empty while its `word_count` is correct; `docs/BACKLOG.md` carries that item.
+Evidence from a real run on the development system: 5504 pages classified; generator origins split as none 3741, Pod::Man 867, DocBook XSL 654, help2man 220, pandoc 17, txt2man 4, po4a 1; 15 pages resolved a reachable source under the ADR-0008 installation-tied rule; 2 pages are MANIAC-authored; dialects split as man 5411, mdoc 80, unknown 13.
+`tmux.1` is now correctly detected as mdoc, reporting `tp_count=1017` and 27 sections instead of the prior `tp_count=0`/`sections=[]`; `fzf.1` (man(7), `tp_count=128`) is unchanged.
 
 ## Repo-shipped manpage detection
 
@@ -60,4 +64,4 @@ The fixture carries a `TODO:` naming ADR-0013's `cli.py` split as the trigger fo
 
 ## Verification performed
 
-`just check` (Ruff format, Ruff lint, `ty`, pytest) passes with 194 tests, exit 0.
+`just check` (Ruff format, Ruff lint, `ty`, pytest) passes with 199 tests, exit 0.

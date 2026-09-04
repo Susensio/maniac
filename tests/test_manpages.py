@@ -3,9 +3,11 @@ from pathlib import Path
 
 from maniac.sources import manpages
 from maniac.sources.manpages import (
+    Dialect,
     Generator,
     count_tp_entries,
     count_words,
+    detect_dialect_from_content,
     detect_generator,
     detect_generator_from_content,
     extract_sections,
@@ -136,6 +138,44 @@ present in the input line, in the given order.
 Case-insensitive match, the default unless the query itself has an
 uppercase character.
 .RE
+"""
+
+# Trimmed fixture modeled on the real `tmux.1`: BSD mdoc, `.Dd`/`.Dt` at the
+# top, sections marked `.Sh` and flag entries `.It` inside `.Bl`/`.El` lists,
+# never a `.SH` or `.TP` anywhere.
+_TMUX_LIKE = """\
+.Dd August 23, 2026
+.Dt TMUX 1
+.Sh NAME
+.Nm tmux
+.Nd terminal multiplexer
+.Sh SYNOPSIS
+.Nm tmux
+.Op Fl 2CDluvV
+.Op Fl c Ar shell-command
+.Sh DESCRIPTION
+tmux is a terminal multiplexer.
+.Bl -tag -width Ds
+.It Fl 2
+Force tmux to assume the terminal supports 256 colours.
+.It Fl C
+Start in control mode.
+.It Fl l
+Behave as a login shell.
+.El
+.Sh OPTIONS
+.Bl -tag -width Ds
+.It Fl f Ar file
+Specify an alternative configuration file.
+.It Fl L Ar socket-name
+Specify a name for the server socket.
+.El
+"""
+
+# No macro from either dialect's marker set.
+_NEITHER_DIALECT = """\
+plain text with no roff macros at all
+just prose, nothing structural
 """
 
 
@@ -360,6 +400,33 @@ def test_extract_sections_returns_top_level_sh_titles_in_order() -> None:
 def test_extract_sections_ignores_ss_subsections() -> None:
     content = ".SH NAME\ntool\n.SS Details\nmore\n.SH DESCRIPTION\ntext\n"
     assert extract_sections(content) == ["NAME", "DESCRIPTION"]
+
+
+def test_detect_dialect_from_content_recognizes_mdoc() -> None:
+    assert detect_dialect_from_content(_TMUX_LIKE) is Dialect.MDOC
+
+
+def test_detect_dialect_from_content_recognizes_man_regression_guard() -> None:
+    """`fzf.1` must keep classifying as man(7) after mdoc detection lands."""
+    assert detect_dialect_from_content(_LS_LIKE) is Dialect.MAN
+    assert detect_dialect_from_content(_FZF_LIKE) is Dialect.MAN
+
+
+def test_detect_dialect_from_content_returns_unknown_for_neither_macro_set() -> None:
+    assert detect_dialect_from_content(_NEITHER_DIALECT) is Dialect.UNKNOWN
+
+
+def test_count_tp_entries_counts_it_as_flag_entries_for_mdoc() -> None:
+    assert count_tp_entries(_TMUX_LIKE, Dialect.MDOC) == 5
+
+
+def test_extract_sections_returns_sh_titles_for_mdoc() -> None:
+    assert extract_sections(_TMUX_LIKE, Dialect.MDOC) == [
+        "NAME",
+        "SYNOPSIS",
+        "DESCRIPTION",
+        "OPTIONS",
+    ]
 
 
 def test_has_examples_section_matches_examples_or_usage_case_insensitively() -> None:

@@ -9,6 +9,7 @@ from maniac.classification import ManpageFacts, collect_facts
 from maniac.installer import PROVENANCE_SIGNATURE
 from maniac.models import RepoSource
 from maniac.sources.manpages import (
+    Dialect,
     Generator,
     HelpDerivedManpage,
     count_tp_entries,
@@ -62,6 +63,7 @@ def test_collect_facts_classifies_a_new_page(monkeypatch, tmp_path: Path) -> Non
             exists=True,
             is_maniac_authored=False,
             generator=Generator.HELP2MAN,
+            dialect=Dialect.MAN,
             word_count=count_words(_LS_LIKE_CONTENT),
             tp_count=count_tp_entries(_LS_LIKE_CONTENT),
             sections=extract_sections(_LS_LIKE_CONTENT),
@@ -380,6 +382,7 @@ def test_dump_prints_one_row_per_tool_with_every_fact(monkeypatch) -> None:
             exists=True,
             is_maniac_authored=False,
             generator=Generator.HELP2MAN,
+            dialect=Dialect.MAN,
             word_count=178,
             tp_count=63,
             sections=["NAME", "SYNOPSIS", "DESCRIPTION"],
@@ -395,6 +398,7 @@ def test_dump_prints_one_row_per_tool_with_every_fact(monkeypatch) -> None:
             exists=True,
             is_maniac_authored=False,
             generator=None,
+            dialect=Dialect.MDOC,
             word_count=4,
             tp_count=986,
             sections=["NAME", "DESCRIPTION"],
@@ -409,10 +413,12 @@ def test_dump_prints_one_row_per_tool_with_every_fact(monkeypatch) -> None:
     assert result.exit_code == 0
     assert "ls(1)" in result.output
     assert "generator=help2man" in result.output
+    assert "dialect=man" in result.output
     assert "word_count=178" in result.output
     assert "tp_count=63" in result.output
     assert "coreutils/coreutils" in result.output
     assert "gum(1)" in result.output
     assert "generator=none" in result.output
+    assert "dialect=mdoc" in result.output
     assert "tp_count=986" in result.output
     assert "sources=none" in result.output

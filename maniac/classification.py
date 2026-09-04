@@ -20,10 +20,12 @@ from .installer import read_provenance_header
 from .models import RepoSource
 from .sources.discovery import discover_candidate_source
 from .sources.manpages import (
+    Dialect,
     Generator,
     HelpDerivedManpage,
     count_tp_entries,
     count_words,
+    detect_dialect_from_content,
     detect_generator_from_content,
     extract_sections,
     find_installed_manpages,
@@ -35,7 +37,7 @@ CACHE_FILENAME = "classification.json"
 
 # Bump on any change to ManpageFacts's fields (add, remove, rename, retype).
 # A mismatch discards the whole cache instead of crashing on stale rows.
-CACHE_SCHEMA_VERSION = 2
+CACHE_SCHEMA_VERSION = 3
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,6 +50,7 @@ class ManpageFacts:
     exists: bool
     is_maniac_authored: bool
     generator: Generator | None
+    dialect: Dialect
     word_count: int
     tp_count: int
     sections: list[str]
@@ -122,6 +125,7 @@ def _facts_to_row(facts: ManpageFacts) -> dict[str, Any]:
         "exists": facts.exists,
         "is_maniac_authored": facts.is_maniac_authored,
         "generator": facts.generator.value if facts.generator else None,
+        "dialect": facts.dialect.value,
         "word_count": facts.word_count,
         "tp_count": facts.tp_count,
         "sections": facts.sections,
@@ -138,6 +142,7 @@ def _row_to_facts(row: dict[str, Any]) -> ManpageFacts:
         exists=row["exists"],
         is_maniac_authored=row["is_maniac_authored"],
         generator=Generator(row["generator"]) if row["generator"] else None,
+        dialect=Dialect(row["dialect"]),
         word_count=row["word_count"],
         tp_count=row["tp_count"],
         sections=row["sections"],
@@ -167,7 +172,8 @@ def _classify_page(page: HelpDerivedManpage) -> ManpageFacts:
     """Compute facts for one page: read it once, resolve its source once."""
     content = read_manpage_source(page.path)
     source = discover_candidate_source(page.name)
-    sections = extract_sections(content)
+    dialect = detect_dialect_from_content(content)
+    sections = extract_sections(content, dialect)
     return ManpageFacts(
         tool=page.name,
         section=page.section,
@@ -175,8 +181,9 @@ def _classify_page(page: HelpDerivedManpage) -> ManpageFacts:
         exists=True,
         is_maniac_authored=read_provenance_header(page.path) is not None,
         generator=detect_generator_from_content(content),
+        dialect=dialect,
         word_count=count_words(content),
-        tp_count=count_tp_entries(content),
+        tp_count=count_tp_entries(content, dialect),
         sections=sections,
         has_examples_section=has_examples_section(sections),
         sources=[source] if source else [],
@@ -230,6 +237,7 @@ def dump(manpath_bin: str = "manpath") -> None:
         print(
             f"{facts.tool}({facts.section})\t{facts.path}\t"
             f"authored={facts.is_maniac_authored}\tgenerator={origin}\t"
+            f"dialect={facts.dialect.value}\t"
             f"word_count={facts.word_count}\ttp_count={facts.tp_count}\t"
             f"has_examples_section={facts.has_examples_section}\t"
             f"sections=[{sections}]\tsources={sources}"
