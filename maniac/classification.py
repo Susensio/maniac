@@ -33,6 +33,10 @@ from .sources.manpages import (
 
 CACHE_FILENAME = "classification.json"
 
+# Bump on any change to ManpageFacts's fields (add, remove, rename, retype).
+# A mismatch discards the whole cache instead of crashing on stale rows.
+CACHE_SCHEMA_VERSION = 2
+
 
 @dataclass(frozen=True, slots=True)
 class ManpageFacts:
@@ -67,18 +71,27 @@ def _cache_key(path: Path) -> tuple[float, int] | None:
 
 
 def _load_cache(cache_path: Path) -> dict[str, Any]:
+    """Return the cached rows, or an empty cache for any version mismatch or corruption."""
     try:
-        return json.loads(cache_path.read_text(encoding="utf-8"))
+        document = json.loads(cache_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return {}
+    if (
+        not isinstance(document, dict)
+        or document.get("version") != CACHE_SCHEMA_VERSION
+    ):
+        return {}
+    rows = document.get("rows")
+    return rows if isinstance(rows, dict) else {}
 
 
 def _save_cache(cache_path: Path, rows: dict[str, Any]) -> None:
     """Write the cache atomically, keeping only rows seen in this scan."""
     cache_path.parent.mkdir(parents=True, exist_ok=True)
+    document = {"version": CACHE_SCHEMA_VERSION, "rows": rows}
     temporary_path = cache_path.with_suffix(".tmp")
     temporary_path.write_text(
-        json.dumps(rows, indent=2, sort_keys=True), encoding="utf-8"
+        json.dumps(document, indent=2, sort_keys=True), encoding="utf-8"
     )
     temporary_path.replace(cache_path)
 
@@ -133,6 +146,23 @@ def _row_to_facts(row: dict[str, Any]) -> ManpageFacts:
     )
 
 
+def _facts_from_cache(cache_entry: Any, key: tuple[float, int]) -> ManpageFacts | None:
+    """Return the cached facts for a matching key, or None to force recomputation.
+
+    A row that fails to parse -- missing key, wrong type, bad enum value --
+    is treated as a miss rather than raising; a cache is an optimisation, and
+    corruption in one row should cost recomputing that row, not the command.
+    """
+    if not isinstance(cache_entry, dict):
+        return None
+    try:
+        if tuple(cache_entry["key"]) != key:
+            return None
+        return _row_to_facts(cache_entry["facts"])
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
 def _classify_page(page: HelpDerivedManpage) -> ManpageFacts:
     """Compute facts for one page: read it once, resolve its source once."""
     content = read_manpage_source(page.path)
@@ -171,10 +201,8 @@ def collect_facts(
         if key is None:
             continue
 
-        cache_entry = cache.get(str(page.path))
-        if cache_entry is not None and tuple(cache_entry["key"]) == key:
-            page_facts = _row_to_facts(cache_entry["facts"])
-        else:
+        page_facts = _facts_from_cache(cache.get(str(page.path)), key)
+        if page_facts is None:
             page_facts = _classify_page(page)
 
         fresh_cache[str(page.path)] = {

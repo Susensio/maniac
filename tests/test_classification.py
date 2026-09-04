@@ -138,6 +138,178 @@ def test_collect_facts_recomputes_when_the_page_changes(
     assert second[0].word_count == count_words(_LS_LIKE_CONTENT)
 
 
+def _write_cache(cache_path: Path, version: int, rows: dict) -> None:
+    cache_path.write_text(
+        json.dumps({"version": version, "rows": rows}), encoding="utf-8"
+    )
+
+
+def _track_classify(monkeypatch) -> list[Path]:
+    calls: list[Path] = []
+    original = classification._classify_page
+
+    def tracking_classify(page: HelpDerivedManpage) -> ManpageFacts:
+        calls.append(page.path)
+        return original(page)
+
+    monkeypatch.setattr(classification, "_classify_page", tracking_classify)
+    return calls
+
+
+def test_collect_facts_discards_a_cache_with_a_stale_schema_version(
+    monkeypatch, tmp_path: Path
+) -> None:
+    page_path = _page(tmp_path)
+    monkeypatch.setattr(
+        classification,
+        "find_installed_manpages",
+        lambda manpath_bin: [HelpDerivedManpage("ls", "1", page_path)],
+    )
+    monkeypatch.setattr(classification, "discover_candidate_source", lambda name: None)
+    cache_path = tmp_path / "cache.json"
+    stat = page_path.stat()
+    stale_row = {
+        "tool": "ls",
+        "section": "1",
+        "path": str(page_path),
+        "exists": True,
+        "is_maniac_authored": False,
+        "generator": None,
+        "prose_words": 38,  # field name from a retired schema
+        "sections": [],
+        "has_examples_section": False,
+        "sources": [],
+    }
+    _write_cache(
+        cache_path,
+        classification.CACHE_SCHEMA_VERSION - 1,
+        {str(page_path): {"key": [stat.st_mtime, stat.st_size], "facts": stale_row}},
+    )
+    calls = _track_classify(monkeypatch)
+
+    facts = collect_facts(cache_path=cache_path)
+
+    assert calls == [page_path]
+    assert facts[0].word_count == count_words(_LS_LIKE_CONTENT)
+
+
+def test_collect_facts_recomputes_a_row_missing_a_field(
+    monkeypatch, tmp_path: Path
+) -> None:
+    page_path = _page(tmp_path)
+    monkeypatch.setattr(
+        classification,
+        "find_installed_manpages",
+        lambda manpath_bin: [HelpDerivedManpage("ls", "1", page_path)],
+    )
+    monkeypatch.setattr(classification, "discover_candidate_source", lambda name: None)
+    cache_path = tmp_path / "cache.json"
+    stat = page_path.stat()
+    incomplete_row = {
+        "tool": "ls",
+        "section": "1",
+        "path": str(page_path),
+        "exists": True,
+        "is_maniac_authored": False,
+        "generator": None,
+        "tp_count": 1,
+        "sections": [],
+        "has_examples_section": False,
+        "sources": [],
+        # "word_count" missing
+    }
+    _write_cache(
+        cache_path,
+        classification.CACHE_SCHEMA_VERSION,
+        {
+            str(page_path): {
+                "key": [stat.st_mtime, stat.st_size],
+                "facts": incomplete_row,
+            }
+        },
+    )
+    calls = _track_classify(monkeypatch)
+
+    facts = collect_facts(cache_path=cache_path)
+
+    assert calls == [page_path]
+    assert facts[0].word_count == count_words(_LS_LIKE_CONTENT)
+
+
+def test_collect_facts_recomputes_a_row_with_a_wrong_typed_field(
+    monkeypatch, tmp_path: Path
+) -> None:
+    page_path = _page(tmp_path)
+    monkeypatch.setattr(
+        classification,
+        "find_installed_manpages",
+        lambda manpath_bin: [HelpDerivedManpage("ls", "1", page_path)],
+    )
+    monkeypatch.setattr(classification, "discover_candidate_source", lambda name: None)
+    cache_path = tmp_path / "cache.json"
+    stat = page_path.stat()
+    bad_type_row = {
+        "tool": "ls",
+        "section": "1",
+        "path": str(page_path),
+        "exists": True,
+        "is_maniac_authored": False,
+        "generator": "not-a-real-generator",  # bad enum value
+        "word_count": 1,
+        "tp_count": 1,
+        "sections": [],
+        "has_examples_section": False,
+        "sources": [],
+    }
+    _write_cache(
+        cache_path,
+        classification.CACHE_SCHEMA_VERSION,
+        {str(page_path): {"key": [stat.st_mtime, stat.st_size], "facts": bad_type_row}},
+    )
+    calls = _track_classify(monkeypatch)
+
+    facts = collect_facts(cache_path=cache_path)
+
+    assert calls == [page_path]
+    assert facts[0].generator is Generator.HELP2MAN
+
+
+def test_collect_facts_recomputes_when_cache_file_is_invalid_json(
+    monkeypatch, tmp_path: Path
+) -> None:
+    page_path = _page(tmp_path)
+    monkeypatch.setattr(
+        classification,
+        "find_installed_manpages",
+        lambda manpath_bin: [HelpDerivedManpage("ls", "1", page_path)],
+    )
+    monkeypatch.setattr(classification, "discover_candidate_source", lambda name: None)
+    cache_path = tmp_path / "cache.json"
+    cache_path.write_text("{not valid json", encoding="utf-8")
+
+    facts = collect_facts(cache_path=cache_path)
+
+    assert facts[0].generator is Generator.HELP2MAN
+
+
+def test_collect_facts_recomputes_when_cache_file_is_empty(
+    monkeypatch, tmp_path: Path
+) -> None:
+    page_path = _page(tmp_path)
+    monkeypatch.setattr(
+        classification,
+        "find_installed_manpages",
+        lambda manpath_bin: [HelpDerivedManpage("ls", "1", page_path)],
+    )
+    monkeypatch.setattr(classification, "discover_candidate_source", lambda name: None)
+    cache_path = tmp_path / "cache.json"
+    cache_path.write_text("", encoding="utf-8")
+
+    facts = collect_facts(cache_path=cache_path)
+
+    assert facts[0].generator is Generator.HELP2MAN
+
+
 def test_collect_facts_drops_rows_no_longer_found_in_the_scan(
     monkeypatch, tmp_path: Path
 ) -> None:
@@ -156,7 +328,7 @@ def test_collect_facts_drops_rows_no_longer_found_in_the_scan(
     )
     collect_facts(cache_path=cache_path)
 
-    assert json.loads(cache_path.read_text(encoding="utf-8")) == {}
+    assert json.loads(cache_path.read_text(encoding="utf-8"))["rows"] == {}
 
 
 def test_cache_is_json_keyed_on_path_mtime_and_size(
@@ -175,7 +347,8 @@ def test_cache_is_json_keyed_on_path_mtime_and_size(
 
     stat = page_path.stat()
     raw = json.loads(cache_path.read_text(encoding="utf-8"))
-    entry = raw[str(page_path)]
+    assert raw["version"] == classification.CACHE_SCHEMA_VERSION
+    entry = raw["rows"][str(page_path)]
     assert entry["key"] == [stat.st_mtime, stat.st_size]
     assert entry["facts"]["generator"] == "help2man"
     assert entry["facts"]["sections"] == ["NAME", "DESCRIPTION"]
