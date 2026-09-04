@@ -100,6 +100,50 @@ def _render_eval_table(target_console: Any, tool: str, result: Any) -> None:
             target_console.print(f" • [yellow]{defect}[/yellow]")
 
 
+def _render_comparison(
+    target_console: Any, tool: str, installed_path: Path, result: Any
+) -> None:
+    """Render and display a head-to-head installed-vs-generated manpage comparison."""
+    from rich.table import Table
+
+    table = Table(title=f"Manpage Comparison: {tool}")
+    table.add_column("", style="cyan")
+    table.add_column("Installed", justify="right")
+    table.add_column("MANIAC-generated", justify="right")
+
+    table.add_row("Source", str(installed_path), "(generated)")
+    table.add_row(
+        "Score", f"{result.installed.score}/100", f"{result.generated.score}/100"
+    )
+    table.add_row(
+        "Passed",
+        "✓" if result.installed.passed else "✗",
+        "✓" if result.generated.passed else "✗",
+    )
+
+    target_console.print(table)
+
+    winner_label = {
+        "installed": "[bold]Installed[/bold] manpage judged better overall.",
+        "generated": "[bold]MANIAC-generated[/bold] manpage judged better overall.",
+        "tie": "The two manpages are judged roughly equivalent overall.",
+    }[result.winner]
+    target_console.print(f"\n{winner_label}")
+
+    if result.differences:
+        target_console.print(f"\n[bold]Differences:[/bold] {result.differences}")
+
+    if result.installed_strengths:
+        target_console.print("\n[bold cyan]Installed page strengths:[/bold cyan]")
+        for s in result.installed_strengths:
+            target_console.print(f" • [cyan]{s}[/cyan]")
+
+    if result.generated_strengths:
+        target_console.print("\n[bold green]Generated page strengths:[/bold green]")
+        for s in result.generated_strengths:
+            target_console.print(f" • [green]{s}[/green]")
+
+
 @app.callback()
 def main(
     verbose: Annotated[
@@ -321,6 +365,92 @@ def eval_cmd(
         raise
     except (OSError, RuntimeError, ManiacError) as e:
         console.print(f"[bold red]Evaluation error for {tool}: {e}[/bold red]")
+        raise typer.Exit(1) from e
+
+
+@app.command("compare")
+def compare_cmd(
+    tool: Annotated[str, typer.Argument(help="Name of the tool to compare.")],
+    manpage_file: Annotated[
+        Path | None,
+        typer.Option(
+            help="Path to MANIAC's generated manpage Markdown file (default: $XDG_DATA_HOME/maniac/manpages/<tool>.1.md)."
+        ),
+    ] = None,
+    context_file: Annotated[
+        Path | None,
+        typer.Option(
+            help="Path to context file (default: $XDG_STATE_HOME/maniac/intermediate/<tool>_context.md)."
+        ),
+    ] = None,
+    model: Annotated[
+        str | None,
+        typer.Option(help="LLM model ID (e.g. 'gemini/gemini-3.5-flash')."),
+    ] = None,
+    min_score: Annotated[
+        int,
+        typer.Option(help="Minimum passing score threshold (0-100)."),
+    ] = 70,
+) -> None:
+    """Compare the manpage already installed on this system against the one MANIAC would generate."""
+    target_manpage = (
+        manpage_file
+        if manpage_file is not None
+        else default_cfg.output_dir / f"{tool}.1.md"
+    )
+    target_context = (
+        context_file
+        if context_file is not None
+        else default_cfg.intermediate_dir / f"{tool}_context.md"
+    )
+
+    if not target_manpage.exists():
+        console.print(
+            f"[bold red]Error: Generated manpage not found at {target_manpage}. "
+            f"Run 'maniac generate {tool}' first.[/bold red]"
+        )
+        raise typer.Exit(1)
+
+    if not target_context.exists():
+        console.print(
+            f"[bold red]Error: Context file not found at {target_context}[/bold red]"
+        )
+        raise typer.Exit(1)
+
+    from .sources.manpages import find_installed_manpage_path, read_manpage_source
+
+    installed_path = find_installed_manpage_path("man", tool)
+    if installed_path is None:
+        console.print(
+            f"[bold red]Error: No manpage is currently installed for '{tool}' "
+            f"(`man -w {tool}` found nothing).[/bold red]"
+        )
+        raise typer.Exit(1)
+
+    generated_text = target_manpage.read_text(encoding="utf-8")
+    context_text = target_context.read_text(encoding="utf-8")
+
+    from .evaluation.judge import compare_manpages
+
+    try:
+        installed_text = read_manpage_source(installed_path)
+
+        with console.status(f"[bold green]Comparing manpages for {tool}..."):
+            result = compare_manpages(
+                tool_name=tool,
+                generated_text=generated_text,
+                installed_text=installed_text,
+                context_text=context_text,
+                model=model,
+                pass_threshold=min_score,
+            )
+
+        _render_comparison(console, tool, installed_path, result)
+
+    except typer.Exit:
+        raise
+    except (OSError, RuntimeError, ManiacError) as e:
+        console.print(f"[bold red]Comparison error for {tool}: {e}[/bold red]")
         raise typer.Exit(1) from e
 
 

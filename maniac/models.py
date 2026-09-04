@@ -64,3 +64,16 @@ class EvaluationResult:
     deterministic_passed: bool = True
     deterministic_defects: list[str] = field(default_factory=list)
     coverage: CoverageStats | None = None
+
+
+@dataclass
+class ComparisonResult:
+    """Head-to-head evaluation of an installed manpage against MANIAC's generated one."""
+
+    tool_name: str
+    installed: EvaluationResult
+    generated: EvaluationResult
+    winner: str
+    differences: str
+    installed_strengths: list[str] = field(default_factory=list)
+    generated_strengths: list[str] = field(default_factory=list)

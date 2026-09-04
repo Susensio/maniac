@@ -11,7 +11,7 @@ from ..config import Config
 from ..generation.llm import run_llm_synthesis
 from ..generation.prompts import load_template
 from ..logging import logger
-from ..models import CoverageStats, EvaluationResult
+from ..models import ComparisonResult, CoverageStats, EvaluationResult
 from ..sources.crawler import extract_subcommands
 
 REQUIRED_SECTIONS: list[str | tuple[str, ...]] = [
@@ -408,8 +408,8 @@ def _extract_category_score(rubric: dict[str, Any], *candidate_keys: str) -> int
     return 0
 
 
-def parse_evaluation_json(raw_response: str) -> EvaluationResult:
-    """Parse structured JSON from LLM response with robust fallback repair."""
+def _extract_json_object(raw_response: str) -> dict[str, Any]:
+    """Extract a JSON object from an LLM response with robust fallback repair."""
     text = raw_response.strip()
 
     if "```" in text:
@@ -441,6 +441,13 @@ def parse_evaluation_json(raw_response: str) -> EvaluationResult:
 
     if not isinstance(data, dict):
         raise json.JSONDecodeError("Parsed JSON is not an object", text, 0)
+
+    return data
+
+
+def parse_evaluation_json(raw_response: str) -> EvaluationResult:
+    """Parse structured JSON from LLM response with robust fallback repair."""
+    data = _extract_json_object(raw_response)
 
     rubric = data.get("rubric_breakdown", {})
 
@@ -564,3 +571,156 @@ def evaluate_manpage(
         result.passed = False
 
     return result
+
+
+def get_default_compare_prompt() -> str:
+    """Load default head-to-head comparison rubric prompt from bundled markdown file."""
+    return load_template("compare_prompt.md", "Compare two manpages.\n")
+
+
+def build_comparison_prompt(
+    tool_name: str,
+    installed_text: str,
+    generated_text: str,
+    context_text: str,
+) -> str:
+    """Construct head-to-head comparison prompt for LLM judge from both rendered pages."""
+    system_prompt = get_default_compare_prompt()
+
+    def render_section(label: str, raw_text: str) -> str:
+        rendered = render_manpage_to_terminal(raw_text)
+        if rendered is None:
+            return (
+                f"=== {label} (RAW SOURCE -- TERMINAL RENDERING UNAVAILABLE) ===\n"
+                f"{raw_text}\n"
+                f"=== END {label} ==="
+            )
+        text, renderer = rendered
+        note = (
+            ""
+            if renderer == "man"
+            else " -- pandoc plain-text fallback, groff unavailable"
+        )
+        return f"=== {label} (RENDERED{note}) ===\n{text}\n=== END {label} ==="
+
+    installed_section = render_section("MANUAL PAGE A -- INSTALLED", installed_text)
+    generated_section = render_section(
+        "MANUAL PAGE B -- MANIAC-GENERATED", generated_text
+    )
+
+    return f"""{system_prompt}
+
+=== REFERENCE CONTEXT FOR '{tool_name}' ===
+{context_text}
+=== END REFERENCE CONTEXT ===
+
+{installed_section}
+
+{generated_section}
+
+Compare Manual Page A (installed) against Manual Page B (MANIAC-generated) for '{tool_name}' using the reference context as ground truth.
+Output ONLY the JSON object.
+"""
+
+
+def parse_comparison_json(raw_response: str) -> dict[str, Any]:
+    """Parse structured JSON from the comparison judge's response with fallback repair."""
+    data = _extract_json_object(raw_response)
+
+    winner = str(data.get("winner", "tie")).strip().lower()
+    if winner not in {"installed", "generated", "tie"}:
+        winner = "tie"
+
+    return {
+        "winner": winner,
+        "differences": str(data.get("differences", "")),
+        "installed_strengths": [str(s) for s in data.get("installed_strengths", [])],
+        "generated_strengths": [str(s) for s in data.get("generated_strengths", [])],
+    }
+
+
+def run_comparison_judge(
+    tool_name: str,
+    installed_text: str,
+    generated_text: str,
+    context_text: str,
+    model: str | None = None,
+    work_base_dir: str | Path | None = None,
+) -> dict[str, Any]:
+    """Run LLM-as-a-Judge head-to-head comparison between installed and generated manpages."""
+    target_work_dir = (
+        Path(work_base_dir) if work_base_dir is not None else Config().work_base_dir
+    )
+    prompt = build_comparison_prompt(
+        tool_name, installed_text, generated_text, context_text
+    )
+    raw_output = run_llm_synthesis(
+        prompt=prompt,
+        tool_name=tool_name,
+        model=model,
+        work_base_dir=target_work_dir,
+        clean_header=False,
+    )
+    try:
+        return parse_comparison_json(raw_output)
+    except (json.JSONDecodeError, KeyError, ValueError, TypeError) as e:
+        logger.error("Failed to parse LLM comparison JSON", error=str(e))
+        logger.debug("Raw LLM output was", raw_output=raw_output)
+        return {
+            "winner": "tie",
+            "differences": f"Comparison failed due to malformed LLM response: {e}",
+            "installed_strengths": [],
+            "generated_strengths": [],
+        }
+
+
+def compare_manpages(
+    tool_name: str,
+    generated_text: str,
+    installed_text: str,
+    context_text: str,
+    model: str | None = None,
+    pass_threshold: int = 70,
+    work_base_dir: str | Path | None = None,
+) -> ComparisonResult:
+    """Score an installed manpage and MANIAC's generated one against the same rubric,
+    then judge them head-to-head for a prose comparison.
+
+    The installed page is scored by the LLM judge alone -- it is raw roff, not
+    Markdown, so the deterministic Markdown-structure checks `evaluate_manpage`
+    runs for the generated page do not apply to it.
+    """
+    generated_result = evaluate_manpage(
+        tool_name=tool_name,
+        manpage_text=generated_text,
+        context_text=context_text,
+        model=model,
+        pass_threshold=pass_threshold,
+        work_base_dir=work_base_dir,
+    )
+    installed_result = run_llm_judge(
+        tool_name=tool_name,
+        manpage_text=installed_text,
+        context_text=context_text,
+        model=model,
+        pass_threshold=pass_threshold,
+        work_base_dir=work_base_dir,
+    )
+    comparison = run_comparison_judge(
+        tool_name=tool_name,
+        installed_text=installed_text,
+        generated_text=generated_text,
+        context_text=context_text,
+        model=model,
+        work_base_dir=work_base_dir,
+    )
+
+    return ComparisonResult(
+        tool_name=tool_name,
+        installed=installed_result,
+        generated=generated_result,
+        winner=comparison["winner"],
+        differences=comparison["differences"],
+        installed_strengths=comparison["installed_strengths"],
+        generated_strengths=comparison["generated_strengths"],
+    )
