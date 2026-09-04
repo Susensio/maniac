@@ -35,7 +35,7 @@ def test_clean_manpage_markdown_missing_header() -> None:
 
 def test_litellm_model_aliases() -> None:
     cfg = Config()
-    assert cfg.resolve_model("flash") == "gemini/gemini-3.5-flash"
+    assert cfg.resolve_model("flash") == "gemini/gemini-3.7-flash"
     assert cfg.resolve_model("flash-low") == "gemini/gemini-3.5-flash-lite"
 
 
@@ -62,7 +62,7 @@ def test_run_llm_synthesis_litellm(
     result = run_llm_synthesis("prompt text", "tool", config=cfg)
 
     assert result.startswith("% TOOL(1) | User Commands")
-    assert observed["model"] == "gemini/gemini-3.5-flash"
+    assert observed["model"] == "gemini/gemini-3.7-flash"
     assert observed["api_key"] == "maniac-only-key"
     assert observed["reasoning_effort"] == "low"
 

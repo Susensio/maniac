@@ -21,9 +21,9 @@ AGY_MODEL_ALIASES: dict[str, str] = {
 }
 
 LITELLM_MODEL_ALIASES: dict[str, str] = {
-    "flash": "gemini/gemini-3.5-flash",
-    "flash-high": "gemini/gemini-3.5-flash",
-    "flash-medium": "gemini/gemini-3.5-flash",
+    "flash": "gemini/gemini-3.7-flash",
+    "flash-high": "gemini/gemini-3.7-flash",
+    "flash-medium": "gemini/gemini-3.7-flash",
     "flash-low": "gemini/gemini-3.5-flash-lite",
     "flash-3.5": "gemini/gemini-3.5-flash",
     "flash-3.5-low": "gemini/gemini-3.5-flash-lite",
