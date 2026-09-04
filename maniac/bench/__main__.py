@@ -26,8 +26,8 @@ def main(
     model: Annotated[
         list[str] | None,
         typer.Option(
-            help="Model alias to benchmark (resolved via Config.model_aliases). "
-            "Repeatable; defaults to the built-in set."
+            help="LiteLLM model identifier to benchmark, at the configured "
+            "reasoning effort. Repeatable; defaults to the built-in set."
         ),
     ] = None,
     retries: Annotated[
@@ -37,7 +37,11 @@ def main(
     """Generate and judge a manpage for every (model, tool) combination."""
     cfg = Config()
     tools = tool or DEFAULT_TOOLS
-    models = [(m, cfg.resolve_model(m)) for m in model] if model else DEFAULT_MODELS
+    models = (
+        [(m, cfg.resolve_model(m), cfg.resolve_reasoning_effort()) for m in model]
+        if model
+        else DEFAULT_MODELS
+    )
     run_benchmark(tools=tools, models=models, config=cfg, retries=retries)
 
 

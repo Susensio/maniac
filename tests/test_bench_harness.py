@@ -45,10 +45,10 @@ def test_run_benchmark_records_skips_and_preserves_prior_run(
     cfg = Config(bench_dir=bench_dir, intermediate_dir=tmp_path / "intermediate")
     cfg.intermediate_dir.mkdir(parents=True)
 
-    models = [("flash-high", "Gemini 3.7 Flash (High)")]
+    models = [("flash-high", "gemini/gemini-flash-latest", "high")]
     tools = ["howdoi", "hx"]
 
-    def fake_generate(tool, model_name, cfg, out_dir, retries):
+    def fake_generate(tool, model_name, reasoning_effort, cfg, out_dir, retries):
         if tool == "howdoi":
             context_path = cfg.intermediate_dir / f"{tool}_context.md"
             context_path.write_text("context", encoding="utf-8")
@@ -102,7 +102,12 @@ def test_generate_returns_error_after_retries_exhausted(
     monkeypatch.setattr(harness.time, "sleep", lambda _: None)
 
     result, error, _duration = harness._generate(
-        "howdoi", "Gemini 3.7 Flash (High)", Config(), Path("/tmp/out"), retries=1
+        "howdoi",
+        "gemini/gemini-flash-latest",
+        "high",
+        Config(),
+        Path("/tmp/out"),
+        retries=1,
     )
 
     assert result is None

@@ -1,0 +1,14 @@
+[providers]              # declaration order is sniffing precedence
+gemini    = "gemini/gemini-flash-latest"
+anthropic = "anthropic/claude-sonnet-4-6"
+openai    = "openai/gpt-5.1-chat-latest"
+
+[limits]
+max_total_doc_chars = 75000
+max_arg_limit = 115000
+
+[timeouts]
+llm = 180
+help = 5
+git = 60
+pandoc = 15

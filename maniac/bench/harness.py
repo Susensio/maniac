@@ -8,6 +8,7 @@ row rather than dropped silently -- both were audit finding M8, and
 
 import json
 import time
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -25,19 +26,18 @@ console = Console()
 
 RETRYABLE_ERRORS = (ManiacError, OSError, RuntimeError)
 
-# BUG: these are agy display names, not litellm aliases -- resolve_model() passes
-# them through verbatim under the default litellm backend, so `just bench` with
-# no --model fails. Same for JUDGE_MODEL below.
-DEFAULT_MODELS: list[tuple[str, str]] = [
-    ("flash-high", "Gemini 3.7 Flash (High)"),
-    ("flash-medium", "Gemini 3.7 Flash (Medium)"),
-    ("flash-low", "Gemini 3.7 Flash (Low)"),
-    ("flash-3.5-low", "Gemini 3.5 Flash (Low)"),
+# (key, LiteLLM model identifier, reasoning effort) -- bench varies both model
+# and effort for the same underlying model, so effort is tracked alongside it.
+DEFAULT_MODELS: list[tuple[str, str, str | None]] = [
+    ("gemini-flash-high", "gemini/gemini-flash-latest", "high"),
+    ("gemini-flash-medium", "gemini/gemini-flash-latest", "medium"),
+    ("gemini-flash-low", "gemini/gemini-flash-latest", "low"),
+    ("claude-sonnet", "anthropic/claude-sonnet-4-6", None),
 ]
 
 DEFAULT_TOOLS: list[str] = ["howdoi", "hx", "uv"]
 
-JUDGE_MODEL = "Gemini 3.7 Flash (High)"
+JUDGE_MODEL = "gemini/gemini-flash-latest"
 
 
 def _skipped_entry(
@@ -76,6 +76,7 @@ def _load_results(results_file: Path) -> list[dict[str, Any]]:
 def _generate(
     tool: str,
     model_name: str,
+    reasoning_effort: str | None,
     cfg: Config,
     out_dir: Path,
     retries: int,
@@ -90,6 +91,7 @@ def _generate(
                 output_dir=out_dir,
                 intermediate_dir=cfg.intermediate_dir,
                 model=model_name,
+                reasoning_effort=reasoning_effort,
                 install=False,
                 dry_run=False,
             )
@@ -171,7 +173,7 @@ def _print_table(entries: list[dict[str, Any]]) -> None:
 
 def run_benchmark(
     tools: list[str] | None = None,
-    models: list[tuple[str, str]] | None = None,
+    models: Sequence[tuple[str, str, str | None]] | None = None,
     config: Config | None = None,
     retries: int = 2,
 ) -> list[dict[str, Any]]:
@@ -195,17 +197,17 @@ def run_benchmark(
 
     console.print("[bold blue]Starting Benchmark across Models and Tools[/bold blue]")
 
-    for model_key, model_name in models:
+    for model_key, model_name, reasoning_effort in models:
         for tool in tools:
             console.print(
                 f"\n[bold yellow]>>> Benchmarking {tool} with {model_key} "
-                f"({model_name})...[/bold yellow]"
+                f"({model_name}, effort={reasoning_effort})...[/bold yellow]"
             )
             out_dir = bench_dir / model_key
             out_dir.mkdir(parents=True, exist_ok=True)
 
             pipeline_res, gen_error, gen_duration = _generate(
-                tool, model_name, cfg, out_dir, retries
+                tool, model_name, reasoning_effort, cfg, out_dir, retries
             )
             if pipeline_res is None:
                 console.print(
@@ -242,6 +244,7 @@ def run_benchmark(
             entry = {
                 "model_key": model_key,
                 "model_name": model_name,
+                "reasoning_effort": reasoning_effort,
                 "tool": tool,
                 "status": "success",
                 "gen_duration_sec": round(gen_duration, 2),

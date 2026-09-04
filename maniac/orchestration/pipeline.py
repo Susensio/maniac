@@ -22,6 +22,7 @@ def run_pipeline(
     intermediate_dir: str | Path | None = None,
     prompt_file: str | Path | None = None,
     model: str | None = None,
+    reasoning_effort: str | None = None,
     install: bool = False,
     force: bool = False,
     dry_run: bool = False,
@@ -105,7 +106,11 @@ def run_pipeline(
         )
 
     markdown_content = run_llm_synthesis(
-        full_prompt, tool_name=tool_name, model=model, config=cfg
+        full_prompt,
+        tool_name=tool_name,
+        model=model,
+        reasoning_effort=reasoning_effort,
+        config=cfg,
     )
 
     md_file = out_dir / f"{tool_name}.1.md"

@@ -33,8 +33,7 @@ Most modern utilities ship without standard Unix manual pages. Instead, you're f
 - **[Python](https://www.python.org/)**: 3.12+
 - **[uv](https://github.com/astral-sh/uv)**: Fast Python package and tool runner
 - **[pandoc](https://pandoc.org/)**: Document converter for Markdown &rarr; roff compilation
-- **LiteLLM-compatible API key**: A provider-native key, such as `GEMINI_API_KEY`, for the default API backend
-- **[agy](https://github.com/google-antigravity/antigravity-cli)** *(optional)*: Explicit fallback backend
+- **LiteLLM-compatible API key**: A provider-native key, such as `GEMINI_API_KEY`, `ANTHROPIC_API_KEY`, or `OPENAI_API_KEY`
 - **[git](https://git-scm.com/)**: Repository cloning and remote URL inspection
 
 ---
@@ -65,39 +64,35 @@ Or print the raw completion script to inspect or redirect to a custom path:
 maniac --show-completion
 ```
 
-### LLM Backend
+### LLM Configuration
 
-MANIAC uses LiteLLM by default and accepts any provider-qualified LiteLLM model ID.
-It reads settings from `$XDG_CONFIG_HOME/maniac/config.yaml` (usually `~/.config/maniac/config.yaml`):
+MANIAC calls LiteLLM directly and accepts any provider-qualified LiteLLM model ID (for example `gemini/gemini-flash-latest`).
+It packages a default model per provider; nothing needs configuring if exactly one provider's API key is in your environment.
 
-```yaml
-model: gemini/gemini-3.5-flash
-backend: litellm
-reasoning_effort: low
+Optional settings live in `$XDG_CONFIG_HOME/maniac/config.toml` (usually `~/.config/maniac/config.toml`):
+
+```toml
+provider = "anthropic"
+model = "anthropic/claude-sonnet-4-6"
+reasoning_effort = "low"
 ```
 
-Only `model` is required; `backend` and `reasoning_effort` are optional.
-It autoloads credentials from the neighbouring `.env` without replacing variables already set in your shell.
-For example, `~/.config/maniac/.env` can hold either Gemini or Anthropic credentials:
+All three keys are optional.
+Setting `provider` alone picks that provider's packaged default model; setting `model` pins an exact identifier and takes priority over `provider`.
+`reasoning_effort` is sent to LiteLLM only for models that support it.
+
+MANIAC autoloads credentials from the neighbouring `.env` without replacing variables already set in your shell.
+For example, `~/.config/maniac/.env` can hold credentials for several providers at once:
 
 ```dotenv
 GEMINI_API_KEY='your-api-key'
 ANTHROPIC_API_KEY='your-api-key'
 ```
 
-You can keep credentials for several providers in that one file and select one at a time with `model`.
-`MANIAC_LLM_API_KEY` remains available when you want to override LiteLLM's provider-native credential lookup.
-Environment variables, such as `MANIAC_MODEL`, override `config.yaml` settings.
-
-For Gemini models, `MANIAC_REASONING_EFFORT` defaults to `low` to conserve API quota.
-Other models omit it unless you set it explicitly.
-Set it to `high` only when your selected provider supports a higher-reasoning mode.
-
-The legacy `agy` integration remains available as an explicit fallback:
-
-```bash
-MANIAC_LLM_BACKEND=agy maniac generate <tool>
-```
+With no `model`/`provider` configured, MANIAC picks the first provider (in packaged declaration order: Gemini, Anthropic, OpenAI) whose API key is present in the environment.
+Zero keys present is a hard error; two or more prints one line to stderr naming the provider chosen and how to pin it.
+`MANIAC_LLM_API_KEY` overrides LiteLLM's provider-native credential lookup.
+`MANIAC_MODEL` and `MANIAC_REASONING_EFFORT` are used when `config.toml` sets no `model`/`reasoning_effort`; an explicit `--model` argument and `config.toml` both outrank them.
 
 ---
 
