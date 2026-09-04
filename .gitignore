@@ -176,3 +176,6 @@ missing_manpages.txt
 
 # End of https://www.toptal.com/developers/gitignore/api/python
 
+
+# Agent worktrees and local agent state
+.claude/
