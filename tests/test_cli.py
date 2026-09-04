@@ -22,6 +22,10 @@ def _plain_console(monkeypatch: pytest.MonkeyPatch) -> None:
     environment, so pin it here rather than changing production colour
     behaviour.
 
+    TODO: remove this fixture once commands return a result structure that
+    tests assert against directly -- pinning console state is treating the
+    symptom of asserting on rendered prose. Trigger: ADR-0013's cli.py split.
+
     The width is pinned for the same reason: without it Rich wraps to the
     ambient terminal size and breaks long paths mid-word, so an assertion
     like `str(foreign_path) in res.output` fails purely because pytest's
