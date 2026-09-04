@@ -15,17 +15,24 @@ runner = CliRunner()
 
 @pytest.fixture(autouse=True)
 def _plain_console(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Pin the CLI's lazy console to a colourless one for this module.
+    """Pin the CLI's lazy console to a colourless, fixed-width one for this module.
 
     H1: `Console()` picks up ambient `FORCE_COLOR`, injecting ANSI codes that
     split plain-substring assertions. Tests must not depend on the shell's
     environment, so pin it here rather than changing production colour
     behaviour.
+
+    The width is pinned for the same reason: without it Rich wraps to the
+    ambient terminal size and breaks long paths mid-word, so an assertion
+    like `str(foreign_path) in res.output` fails purely because pytest's
+    `--basetemp` happened to be deep enough to push the line over. That made
+    `test_cli_uninstall_foreign_kept` fail or pass by environment rather than
+    by behaviour.
     """
     monkeypatch.setattr(
         cli_module.console,
         "_instance",
-        Console(force_terminal=False, no_color=True),
+        Console(force_terminal=False, no_color=True, width=400),
     )
 
 
