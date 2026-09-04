@@ -1,6 +1,6 @@
 # ADR-0010: Probe subcommands by default instead of source-only candidate filtering
 
-Status: Accepted
+Status: Superseded by [ADR-0012](0012-classification-facts-not-state.md)
 Date: 2026-09-02
 Supersedes: [ADR-0009](0009-opt-in-subcommand-probes.md)
 

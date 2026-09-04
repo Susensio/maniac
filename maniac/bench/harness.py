@@ -25,6 +25,9 @@ console = Console()
 
 RETRYABLE_ERRORS = (ManiacError, OSError, RuntimeError)
 
+# BUG: these are agy display names, not litellm aliases -- resolve_model() passes
+# them through verbatim under the default litellm backend, so `just bench` with
+# no --model fails. Same for JUDGE_MODEL below.
 DEFAULT_MODELS: list[tuple[str, str]] = [
     ("flash-high", "Gemini 3.7 Flash (High)"),
     ("flash-medium", "Gemini 3.7 Flash (Medium)"),

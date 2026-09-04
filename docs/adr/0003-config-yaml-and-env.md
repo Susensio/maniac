@@ -1,6 +1,6 @@
 # ADR-0003: Use config.yaml and .env in Maniac configuration directory
 
-Status: Accepted
+Status: Superseded by [ADR-0011](0011-packaged-toml-provider-defaults.md)
 Date: 2026-08-31
 Supersedes: [ADR-0002](0002-provider-native-credentials.md)
 
