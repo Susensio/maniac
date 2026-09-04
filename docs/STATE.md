@@ -1,29 +1,34 @@
 # Implementation State
 
-## Candidate discovery
+## Configuration and LLM access
 
-`maniac list-missing` lists pages missing from the selected binary directory.
-`--include-candidates` additionally scans the active manpath once (via `manpath`), reading at most 8 KiB per plain or compressed page to identify Help2man-generated pages by their marker, and deduplicates localized copies by `(name, section)` down to the shortest path.
-There is no command-name exclusion, including for `help2man` itself.
+ADR-0011 removed the `backend` setting, both model alias tables, and the `agy` subprocess integration.
+A model is now a literal LiteLLM identifier; there is no translation layer.
+`maniac/defaults.toml` ships in the wheel holding a flat `[providers]` table mapping provider to default model, plus `[limits]` and `[timeouts]` tables for resource and timeout configuration.
+User settings live in `$XDG_CONFIG_HOME/maniac/config.toml` with optional keys `provider`, `model`, and `reasoning_effort`; `.env` continues to hold credentials.
+A leftover `config.yaml` with no `config.toml` present raises an error naming the format change.
+`pyyaml` was dropped as a dependency.
 
-A candidate row is actionable through either a source-backed executable (a local project, UV tool metadata, or a Mise installation) or, lacking that, a subcommand probe: `--include-candidates` runs every source-unknown candidate that is on `$PATH` with `--help` (one-second timeout) and extracts its top-level subcommands.
-Candidates whose manpage exists but whose executable is unavailable are skipped before spawning a process, so a stale page like `pysetup3.12`'s doesn't produce a noisy `pysetup3.12 --help` attempt; candidates with no subcommands are omitted unless source-backed.
-Source-unknown subcommand rows show `Unknown`; known remote sources render as OSC 8 hyperlinks without an underline.
+Model resolution follows one chain: CLI flag, then `config.toml` settings, then environment (`MANIAC_MODEL`), then the first configured provider whose API key is present, then that provider's default model.
+Four resolution decisions not settled by ADR-0011: `model` in `config.toml` outranks `provider` there; `reasoning_effort` precedence mirrors the model chain; no `MANIAC_PROVIDER` env var exists; model validation strips the provider prefix before checking the registry.
+Provider env-var names come from `litellm.validate_environment`, so no hand-maintained table exists.
+`reasoning_effort` is sent only when `litellm.supports_reasoning` reports the model accepts it, and a resolved model is validated against `litellm.models_by_provider` with an error naming the model rather than a raw LiteLLM failure.
 
-Candidate discovery is deliberately stricter than general `docs`/`generate` repository resolution: it requires an installed executable plus installation-derived evidence, and never turns a bare command name into a repository through the Mise registry.
-The cached official registry matched `mise registry --json` for all 778 shared GitHub/Aqua short names on the development system with zero conflicting selections, and Mise-config matching is exact for repository tails and `filter_bins` (no substring matches).
-See `docs/BACKLOG.md` for the still-open repository-resolution and package-provenance work.
+## Manpage classification facts
 
-## Decisions
+ADR-0012 replaced binary Help2man classification with a facts-only layer stored in `maniac/classification.py`.
+Per-page stored facts are `word_count`, `tp_count`, `sections`, `has_examples_section`, plus path, existence, whether MANIAC authored it, and reachable sources for the tool.
+There is deliberately no verdict, state vocabulary, or combined score — the verdict layer is deferred to real output per ADR-0012.
+Generator origin covers help2man, Pod::Man, Pandoc, txt2man, DocBook XSL, po4a and cobra, identified by marker in the first 8 KiB of the roff source; generator origin is internal and not user-facing.
 
-ADR-0005 records the removal of the Mise executable dependency in favour of optional local configuration and the official registry archive.
-ADR-0010 is the current candidate policy (supersedes ADR-0009): generic Help2man classification and deduplication, installation-tied sources, no name-only repository attribution, default one-second subcommand probes for available unbacked commands, and `Unknown` source presentation for subcommand-backed rows.
+The cache lives under `$XDG_CACHE_HOME/maniac/` keyed on `(path, mtime, size)`, carries `CACHE_SCHEMA_VERSION`, and is discarded wholesale on a version mismatch.
+A malformed row or corrupt cache file is treated as a miss rather than raising; a cache is an optimisation and corruption in one row should cost recomputing that row, not the entire cache.
+A dump entry point exists at `python -m maniac.classification`.
 
-## Verification performed
+Two decisions ADR-0012 did not settle: `.SS` subsections are not counted in `sections`, only top-level `.SH`; `has_examples_section` matches `EXAMPLES` or `USAGE` case-insensitively against exact section names, not substrings.
 
-`just check` (Ruff format, Ruff lint, `ty`, pytest) passes.
-An independent audit passed the default-probe, PATH-guard, source-attribution, and ADR-0010 criteria.
-On the development system, `config.guess`, `config.sub`, and `pysetup3.12` are confirmed off `$PATH` and are skipped without being invoked.
+Evidence from a real run on the development system: 5504 pages classified; generator origins split as none 3741, Pod::Man 867, DocBook XSL 654, help2man 220, pandoc 17, txt2man 4, po4a 1; 15 pages resolved a reachable source under the ADR-0008 installation-tied rule; 2 pages are MANIAC-authored.
+Known limitation: `tmux.1` is BSD mdoc, so its `tp_count` is 0 and `sections` empty while its `word_count` is correct; `docs/BACKLOG.md` carries that item.
 
 ## Repo-shipped manpage detection
 
@@ -46,7 +51,13 @@ A third call (`run_comparison_judge`, prompt in `maniac/templates/compare_prompt
 Not yet run against a live LLM -- covered by unit tests only (`tests/test_compare.py`, `tests/test_manpages.py`), all with `run_llm_synthesis` mocked.
 A staged `fzf` markdown/context pair is ready at `~/.local/share/maniac/manpages/fzf.1.md` / `~/.local/state/maniac/intermediate/fzf_context.md` for whenever the API is available; see `docs/BACKLOG.md`.
 
-## Working-tree note
+## Test-suite note
 
-The repository contains uncommitted, related work across candidate discovery, Mise registry discovery, configuration, LLM integration, documentation, and tests.
-Do not reset or discard unrelated changes when continuing this work.
+`tests/test_cli.py`'s `_plain_console` fixture now pins console width as well as colour.
+Assertions matching rendered Rich output were failing or passing according to the ambient terminal width and `--basetemp` depth because `Rich.console` wraps to the terminal size, breaking path assertions mid-word; pinning width to 400 stabilizes the assertions.
+The fixture carries a `TODO:` naming ADR-0013's `cli.py` split as the trigger for removing the coupling altogether.
+`docs/BACKLOG.md` carries the item to stop asserting on prose and instead assert on result structures.
+
+## Verification performed
+
+`just check` (Ruff format, Ruff lint, `ty`, pytest) passes with 194 tests, exit 0.
