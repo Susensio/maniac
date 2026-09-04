@@ -5,6 +5,7 @@ import pytest
 
 from maniac.models import DocFile, RepoSource
 from maniac.sources.docs import (
+    discover_repo_manpage,
     extract_docs_from_dir,
     fetch_and_extract_docs,
     format_docs_section,
@@ -138,6 +139,54 @@ def test_fetch_and_extract_docs_git_error(
     )
     docs = fetch_and_extract_docs(source, cache_dir=tmp_path)
     assert docs == []
+
+
+def test_discover_repo_manpage_local(tmp_path: Path) -> None:
+    man_dir = tmp_path / "man"
+    man_dir.mkdir()
+    manpage = man_dir / "tool.1"
+    manpage.write_text(".TH TOOL 1\n", encoding="utf-8")
+    source = RepoSource(
+        name="tool", target=f"LOCAL:{tmp_path}", is_local=True, local_path=tmp_path
+    )
+
+    assert discover_repo_manpage(source, "tool") == manpage
+
+
+def test_discover_repo_manpage_clones_and_reuses_cache(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from maniac.sources import docs as docs_module
+
+    clone_calls = 0
+
+    def fake_clone(
+        clone_url: str, dest_dir: Path, cfg: object, **kwargs: object
+    ) -> bool:
+        nonlocal clone_calls
+        clone_calls += 1
+        dest_dir.mkdir()
+        (dest_dir / ".git").mkdir()
+        (dest_dir / "doc").mkdir()
+        (dest_dir / "doc" / "tool.1").write_text(".TH TOOL 1\n", encoding="utf-8")
+        return True
+
+    monkeypatch.setattr(docs_module, "_clone_repository", fake_clone)
+    source = RepoSource(name="tool", target="owner/tool", is_local=False)
+
+    manpage = discover_repo_manpage(source, "tool", cache_dir=tmp_path)
+    assert manpage == tmp_path / "tool" / "doc" / "tool.1"
+
+    discover_repo_manpage(source, "tool", cache_dir=tmp_path)
+    assert clone_calls == 1
+
+
+def test_discover_repo_manpage_no_match_returns_none(tmp_path: Path) -> None:
+    source = RepoSource(
+        name="tool", target=f"LOCAL:{tmp_path}", is_local=True, local_path=tmp_path
+    )
+
+    assert discover_repo_manpage(source, "tool") is None
 
 
 def test_fetch_and_extract_docs_no_clone_url() -> None:

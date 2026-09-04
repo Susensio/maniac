@@ -9,6 +9,7 @@ from pathlib import Path
 from ..config import Config
 from ..logging import logger
 from ..models import DocFile, RepoSource
+from .manpages import find_repo_manpage as _find_repo_manpage
 from .manpages import is_help2man_content
 
 DOC_EXTENSIONS = {".md", ".markdown", ".rst", ".1", ".txt"}
@@ -74,24 +75,10 @@ def fetch_and_extract_docs(
 ) -> list[DocFile]:
     """Fetch repository (if remote and not cached) and extract prioritized documentation files."""
     cfg = config or Config()
-    if source.is_local and source.local_path:
-        target_path = source.local_path
-    else:
-        cache_dir_path = Path(cache_dir) if cache_dir is not None else cfg.cache_dir
-        cache_dir_path.mkdir(parents=True, exist_ok=True)
-        dest_dir = cache_dir_path / source.name
-
-        if dest_dir.exists() and not (dest_dir / ".git").exists():
-            shutil.rmtree(dest_dir, ignore_errors=True)
-
-        if not dest_dir.exists():
-            clone_url = source.clone_url
-            if not clone_url:
-                logger.debug("No clone URL for repository", source=source.name)
-                return []
-            if not _clone_repository(clone_url, dest_dir, cfg):
-                return []
-        target_path = dest_dir
+    cache_dir_path = Path(cache_dir) if cache_dir is not None else cfg.cache_dir
+    target_path = resolve_repo_dir(source, cache_dir_path, cfg)
+    if target_path is None:
+        return []
 
     doc_files = extract_docs_from_dir(target_path, max_total_chars=max_total_chars)
     if source.is_local:
@@ -104,6 +91,49 @@ def fetch_and_extract_docs(
     return doc_files + _fetch_github_wiki_docs(
         source, cache_dir_path, cfg, remaining_chars
     )
+
+
+def resolve_repo_dir(
+    source: RepoSource, cache_dir_path: Path, cfg: Config
+) -> Path | None:
+    """Resolve a source to its local directory, cloning a remote repository if needed."""
+    if source.is_local and source.local_path:
+        return source.local_path
+
+    cache_dir_path.mkdir(parents=True, exist_ok=True)
+    dest_dir = cache_dir_path / source.name
+
+    if dest_dir.exists() and not (dest_dir / ".git").exists():
+        shutil.rmtree(dest_dir, ignore_errors=True)
+
+    if not dest_dir.exists():
+        clone_url = source.clone_url
+        if not clone_url:
+            logger.debug("No clone URL for repository", source=source.name)
+            return None
+        if not _clone_repository(clone_url, dest_dir, cfg):
+            return None
+    return dest_dir
+
+
+def discover_repo_manpage(
+    source: RepoSource,
+    binary_name: str,
+    cache_dir: str | Path | None = None,
+    config: Config | None = None,
+) -> Path | None:
+    """Return a hand-authored manpage for ``binary_name`` shipped in ``source``'s repository.
+
+    Resolves (and clones, if needed and not already cached) the same repository
+    directory ``fetch_and_extract_docs`` uses, then looks for a manpage MANIAC
+    can install as-is instead of generating one.
+    """
+    cfg = config or Config()
+    cache_dir_path = Path(cache_dir) if cache_dir is not None else cfg.cache_dir
+    repo_dir = resolve_repo_dir(source, cache_dir_path, cfg)
+    if repo_dir is None:
+        return None
+    return _find_repo_manpage(repo_dir, binary_name)
 
 
 def _clone_repository(
