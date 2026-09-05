@@ -43,25 +43,39 @@ An exact `<bin>.<section>` match always wins over a `-*` subcommand variant -- n
 Confirmed against real repos: finds `fzf.1` at `junegunn/fzf` and `tmux.1` at the root of `tmux/tmux`.
 Cannot find a page for `eza-community/eza` or `sharkdp/bat`, whose manpages are release-time-generated assets never committed to the tree; see `docs/BACKLOG.md` for that gap and the separate `tmux`/`tmux-builds` docs-repo mismatch this testing surfaced.
 
-Not wired into any command yet -- `list-missing --include-candidates` and `run_pipeline` both still treat every candidate as needing an LLM-generated page; see `docs/BACKLOG.md`.
+Not wired into any command yet -- `status` and `run_pipeline` both still treat every candidate as needing an LLM-generated page; see `docs/BACKLOG.md`.
 
 ## Installed-vs-generated manpage comparison
 
-`maniac compare <tool>` locates the installed page via `manpages.find_installed_manpage_path` (`man -w <tool>`), reads it in full with `manpages.read_manpage_source` (same decompression as `_read_prefix`, without its 8 KB cap), and passes both it and MANIAC's generated Markdown to `evaluation.judge.compare_manpages`.
+`maniac eval <tool> --against-installed` locates the installed page via `manpages.find_installed_manpage_path` (`man -w <tool>`), reads it in full with `manpages.read_manpage_source` (same decompression as `_read_prefix`, without its 8 KB cap), and passes both it and MANIAC's generated Markdown to `evaluation.judge.compare_manpages`.
 The generated page is scored with `evaluate_manpage` (deterministic Markdown-structure checks plus the LLM judge); the installed page, being raw roff rather than Markdown, is scored with `run_llm_judge` alone.
 A third call (`run_comparison_judge`, prompt in `maniac/templates/compare_prompt.md`) judges both pages head-to-head against the same reference context and returns a prose verdict, not just two independent scores.
-`parse_evaluation_json`'s JSON-extraction/repair logic is now shared through `_extract_json_object`, reused by the new `parse_comparison_json`.
+`parse_evaluation_json`'s JSON-extraction/repair logic is shared through `_extract_json_object`, reused by `parse_comparison_json`.
+`compare` was a standalone command until ADR-0013 folded it into `eval` behind `--against-installed`, since both took the same generated-manpage-plus-context inputs; `maniac/cli/evaluate.py` dispatches on the flag to `compute_eval` or `compute_compare`, sharing option parsing and manpage/context resolution.
 
 Not yet run against a live LLM -- covered by unit tests only (`tests/test_compare.py`, `tests/test_manpages.py`), all with `run_llm_synthesis` mocked.
 A staged `fzf` markdown/context pair is ready at `~/.local/share/maniac/manpages/fzf.1.md` / `~/.local/state/maniac/intermediate/fzf_context.md` for whenever the API is available; see `docs/BACKLOG.md`.
 
-## Test-suite note
+## CLI command surface (ADR-0013)
 
-`tests/test_cli.py`'s `_plain_console` fixture now pins console width as well as colour.
-Assertions matching rendered Rich output were failing or passing according to the ambient terminal width and `--basetemp` depth because `Rich.console` wraps to the terminal size, breaking path assertions mid-word; pinning width to 400 stabilizes the assertions.
-The fixture carries a `TODO:` naming ADR-0013's `cli.py` split as the trigger for removing the coupling altogether.
-`docs/BACKLOG.md` carries the item to stop asserting on prose and instead assert on result structures.
+`maniac/cli.py` (834 lines, nine commands) is now `maniac/cli/`, one module per command group: `options.py` (shared `--output-dir`/`--cache-dir`/`--model`/`--force`/`--dry-run` type aliases), `render.py` (Rich rendering only), `source.py` (`source crawl`/`source docs`), `generate.py`, `evaluate.py` (`eval`, with `compare`'s old behaviour behind `--against-installed`), `status.py`, `uninstall.py`.
+`list`, `list-missing`, `generate-missing` and the standalone `compare` command are gone.
+
+Every command computes a result dataclass (`EvalOutcome`, `CompareOutcome`, `UninstallOutcome`, `StatusRow`) before a thin render function prints it, so a test can assert on the decision directly instead of scraping `res.output`.
+`tests/test_cli.py`, `tests/test_eval.py` and `tests/test_compare.py` do this now; a handful of `CliRunner`-based smoke tests remain per module, checking only short fixed strings that cannot wrap at any terminal width.
+The `_plain_console` fixture's `width=400` pin and its `TODO:` are gone with it -- no remaining assertion depends on how Rich wraps a long dynamic value such as a path.
+
+`status [TOOL...] [--candidates]` replaces `list` and `list-missing`.
+With no arguments it reads `classification.collect_facts()` (never recomputing classification) and keeps pages with a resolvable source or that MANIAC already manages; with tool names it reports exactly those, unfiltered -- classification facts only exist for pages the manpath scan can see, so a named tool with no installed page at all reports nothing, a gap left open rather than reimplementing a bin-dir scan ADR-0013 deliberately removed.
+`--candidates` filters further to `candidates.select_candidate(...) is SELECTED` against `Config.min_words_per_flag`, never a CLI-exposed threshold, per ADR-0014.
+Columns are observations only (word count, flag-entry count, ownership, source), never a verdict.
+Redirected to anything but a terminal, `status` prints bare tool names -- one per line, deduplicated across sections, via `print()` rather than the Rich console -- which is what makes `maniac status --candidates | xargs maniac generate` and `maniac generate $(maniac status --candidates)` work; `--names` forces the same output on a real terminal.
+
+`generate` now installs by default, with `--no-install` to stop after compiling -- it and the removed `generate-missing` disagreeing on this default for the same pipeline was the bug named in ADR-0013.
+`generate` with zero tool names exits 0 quietly rather than raising Typer's missing-argument error, since a `$(maniac status --candidates)` expansion can legitimately be empty.
+
+Verified for real on the development system: `maniac status --candidates` selects `gum`, `gh`, `pastel`, `just` and excludes `usage`, `aichat`, `tmux`, `bat`, `fish-lsp`, matching ADR-0014's numbers; `maniac status --candidates | cat` prints the four names bare, one per line.
 
 ## Verification performed
 
-`just check` (Ruff format, Ruff lint, `ty`, pytest) passes with 199 tests, exit 0.
+`just check` (Ruff format, Ruff lint, `ty`, pytest) passes with 224 tests, exit 0.

@@ -100,14 +100,17 @@ Zero keys present is a hard error; two or more prints one line to stderr naming 
 
 ### 1. Generate & Install Manpages
 
-Generate complete manpages and install them to your user manual directory:
+`generate` compiles a manpage and installs it straight into your user manual directory; pass `--no-install` to stop after compiling:
 
 ```bash
-# Generate for a single tool
-maniac generate hx --install
+# Generate and install for a single tool
+maniac generate hx
 
 # Generate for multiple tools at once
-maniac generate uv howdoi glow ruff bat --install
+maniac generate uv howdoi glow ruff bat
+
+# Compile only, without touching your man path
+maniac generate hx --no-install
 
 # Now use standard man immediately
 man hx
@@ -115,29 +118,40 @@ man uv
 man howdoi
 ```
 
-### 2. Discover Missing or Help-Derived Manpages
+### 2. Find Tools MANIAC Can Act On
 
-Scan your local binary directory (`~/.local/bin`) to find everything you have installed that lacks a usable manual entry:
-
-```bash
-maniac list-missing
-```
-
-Include system-wide help-derived pages that MANIAC can improve from an installed source or deeper subcommand help.
-This scans the active manpath, resolves each candidate's installed source when possible, and makes one short local help probe for source-unknown commands.
-It does not call an LLM:
+`status` reports, with no arguments, every tool with a source MANIAC can reach plus every tool it already manages.
+Columns are observations only -- word count, flag-entry count, page ownership, discovered source -- never a verdict:
 
 ```bash
-maniac list-missing --include-candidates
+maniac status
 ```
 
-### 3. Automatically Generate Missing Manpages
-
-Find all installed executables that lack manpages and automatically synthesize and install them in one go:
+Name tools explicitly to report on exactly those, regardless of source or ownership:
 
 ```bash
-maniac generate-missing
+maniac status hx uv bat
 ```
+
+`--candidates` narrows the listing to pages MANIAC's internal heuristic flags as worth improving.
+The heuristic and its threshold are internal (tunable via `config.toml`, never a CLI flag) — the columns above are what make a borderline page visible even when it isn't selected:
+
+```bash
+maniac status --candidates
+```
+
+### 3. Bulk-Generate via Piping
+
+There is no bulk generation command: piping `status`'s output into `generate` is the bulk path.
+Redirected to anything other than a terminal, `status` prints bare tool names, one per line, with no table, colour, or header:
+
+```bash
+maniac status --candidates | xargs maniac generate
+# or, equivalently
+maniac generate $(maniac status --candidates)
+```
+
+`generate` with zero tool names exits quietly, so an empty expansion is harmless.
 
 ### 4. Evaluate Manual Quality
 
@@ -147,6 +161,9 @@ Run the automated LLM-as-a-Judge evaluation against the extracted documentation 
 # Grade the generated manual (0-100 score with category breakdown)
 maniac eval howdoi
 maniac eval uv --min-score 80
+
+# Judge the generated manual head-to-head against the one already installed
+maniac eval howdoi --against-installed
 ```
 
 ```text
@@ -167,12 +184,10 @@ maniac eval uv --min-score 80
 
 ### 5. Manage Installed Manpages
 
-List all MANIAC-synthesized manpages or safely uninstall them:
+`status` doubles as the inventory view -- a tool MANIAC manages is marked in its Owner column.
+Uninstall safely restores any vendor backup:
 
 ```bash
-# List all generated manpages with generation date, model, and backup status
-maniac list
-
 # Uninstall an installed manpage (automatically restoring vendor backups if present)
 maniac uninstall howdoi
 
@@ -182,14 +197,14 @@ maniac uninstall howdoi --purge
 
 ### 6. Inspect Subcommands or Upstream Docs
 
-Debug and inspect extracted CLI help trees and upstream doc files independently:
+Debug and inspect extracted CLI help trees and upstream doc files independently, under the `source` group:
 
 ```bash
 # Inspect the scraped help tree for deep subcommands
-maniac crawl uv pip
+maniac source crawl uv pip
 
 # Discover the upstream repository and inspect extracted reference files
-maniac docs hx
+maniac source docs hx
 ```
 
 ---
