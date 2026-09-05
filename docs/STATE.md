@@ -66,6 +66,7 @@ Every command computes a result dataclass (`EvalOutcome`, `CompareOutcome`, `Uni
 The `_plain_console` fixture's `width=400` pin and its `TODO:` are gone with it -- no remaining assertion depends on how Rich wraps a long dynamic value such as a path.
 
 `status [TOOL...] [--candidates]` replaces `list` and `list-missing`.
+The threshold `--candidates` selects on is `[classification] min_words_per_flag` in `maniac/defaults.toml`, overridable in the user's `config.toml`; ADR-0014 records why it is configuration rather than a command-line option.
 With no arguments it reads `classification.collect_facts()` (never recomputing classification) and keeps pages with a resolvable source or that MANIAC already manages; with tool names it reports exactly those, unfiltered -- classification facts only exist for pages the manpath scan can see, so a named tool with no installed page at all reports nothing, a gap left open rather than reimplementing a bin-dir scan ADR-0013 deliberately removed.
 `--candidates` filters further to `candidates.select_candidate(...) is SELECTED` against `Config.min_words_per_flag`, never a CLI-exposed threshold, per ADR-0014.
 Columns are observations only (word count, flag-entry count, ownership, source), never a verdict.
@@ -78,4 +79,4 @@ Verified for real on the development system: `maniac status --candidates` select
 
 ## Verification performed
 
-`just check` (Ruff format, Ruff lint, `ty`, pytest) passes with 224 tests, exit 0.
+`just check` (Ruff format, Ruff lint, `ty`, pytest) passes with 232 tests, exit 0.

@@ -257,7 +257,19 @@ just check
 # Run pytest unit and integration tests
 just test
 
-# Fix linting and format codebase
-just format
-just lint-fix
+# Fix lint issues and format code
+just fix
+```
+
+Configuration lives in `~/.config/maniac/config.toml`; credentials go in
+`~/.config/maniac/.env`. Packaged defaults ship in `maniac/defaults.toml`
+and any of them can be overridden:
+
+```toml
+provider = "gemini"            # picked by API key if unset
+model = "gemini/gemini-flash-latest"
+reasoning_effort = "low"
+
+[classification]
+min_words_per_flag = 15        # threshold `status --candidates` selects on
 ```
