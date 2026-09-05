@@ -74,7 +74,29 @@ def compute_status(
     return [StatusRow(facts=facts) for facts in matching]
 
 
-def _render_status(target_console: Any, rows: list[StatusRow]) -> None:
+def _bare_names(rows: list[StatusRow]) -> list[str]:
+    """Deduplicated tool names in first-seen order, for the pipe-friendly path."""
+    seen: dict[str, None] = {}
+    for row in rows:
+        seen.setdefault(row.facts.tool, None)
+    return list(seen)
+
+
+def _render_status(
+    target_console: Any, rows: list[StatusRow], *, names: bool = False
+) -> None:
+    """Render as a Rich table on a terminal, or bare tool names otherwise.
+
+    Bare names is what makes `maniac status --candidates | xargs maniac
+    generate` and `maniac generate $(maniac status --candidates)` work: no
+    table, no colour, no header, one name per line -- plain `print`, not the
+    Rich console, so nothing in a tool's name can be misread as markup.
+    """
+    if names or not target_console.is_terminal:
+        for tool in _bare_names(rows):
+            print(tool)
+        return
+
     if not rows:
         target_console.print("[yellow]No tools to report.[/yellow]")
         return
@@ -117,6 +139,14 @@ def status(
             help="Only pages MANIAC's internal heuristic flags as improvable.",
         ),
     ] = False,
+    names: Annotated[
+        bool,
+        typer.Option(
+            "--names",
+            help="Force bare tool names, one per line, even on a terminal.",
+        ),
+    ] = False,
 ) -> None:
     """Report tools MANIAC could act on, or exactly the tools named."""
-    _render_status(console, compute_status(tools, candidates_only=candidates))
+    rows = compute_status(tools, candidates_only=candidates)
+    _render_status(console, rows, names=names)
