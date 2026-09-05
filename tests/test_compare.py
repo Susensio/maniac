@@ -272,8 +272,10 @@ def test_compute_compare_missing_generated_manpage(tmp_path: Path) -> None:
     assert "Generated manpage not found" in outcome.error
 
 
-def test_cli_compare_smoke(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """Rendering smoke test: the wiring from outcome to console output, exit code included."""
+def test_cli_eval_against_installed_smoke(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Rendering smoke test: `eval --against-installed`, outcome to console, exit code included."""
     manpage_path = tmp_path / "tool.1.md"
     manpage_path.write_text(GENERATED_MANPAGE, encoding="utf-8")
     context_path = tmp_path / "tool_context.md"
@@ -303,8 +305,9 @@ def test_cli_compare_smoke(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> N
     res = runner.invoke(
         app,
         [
-            "compare",
+            "eval",
             "tool",
+            "--against-installed",
             "--manpage-file",
             str(manpage_path),
             "--context-file",

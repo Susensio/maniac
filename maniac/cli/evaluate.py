@@ -1,6 +1,10 @@
-"""`eval` and `compare`: score a generated manpage, or judge it against the installed one.
+"""`eval`: score a generated manpage, or judge it head-to-head against the installed one.
 
-Each command computes a result structure first and renders it after, so a
+`--against-installed` selects the second mode -- `compare` folded into `eval`
+behind a flag per ADR-0013, rather than staying a separate command for the
+same generated-manpage-plus-context inputs.
+
+Each mode computes a result structure first and renders it after, so a
 caller (or a test) can inspect the decision -- pass/fail, which error fired
 -- without going through Rich-rendered prose.
 """
@@ -96,39 +100,6 @@ def _render_eval_outcome(target_console: Any, outcome: EvalOutcome) -> None:
         )
 
 
-@app.command("eval")
-def eval_cmd(
-    tool: Annotated[str, typer.Argument(help="Name of the tool to evaluate.")],
-    manpage_file: Annotated[
-        Path | None,
-        typer.Option(
-            help="Path to manpage Markdown file (default: $XDG_DATA_HOME/maniac/manpages/<tool>.1.md)."
-        ),
-    ] = None,
-    context_file: Annotated[
-        Path | None,
-        typer.Option(
-            help="Path to context file (default: $XDG_STATE_HOME/maniac/intermediate/<tool>_context.md)."
-        ),
-    ] = None,
-    model: ModelOption = None,
-    min_score: Annotated[
-        int,
-        typer.Option(help="Minimum passing score threshold (0-100)."),
-    ] = 70,
-) -> None:
-    """Evaluate quality of a generated manpage using deterministic checks and LLM-as-a-Judge."""
-    with console.status(f"[bold green]Evaluating manpage for {tool}..."):
-        outcome = compute_eval(tool, manpage_file, context_file, model, min_score)
-
-    _render_eval_outcome(console, outcome)
-
-    if outcome.error is not None or (
-        outcome.result is not None and not outcome.result.passed
-    ):
-        raise typer.Exit(1)
-
-
 @dataclass
 class CompareOutcome:
     """Result of computing `compare`: a head-to-head result, or the reason it could not run."""
@@ -204,13 +175,13 @@ def _render_compare_outcome(target_console: Any, outcome: CompareOutcome) -> Non
     )
 
 
-@app.command("compare")
-def compare_cmd(
-    tool: Annotated[str, typer.Argument(help="Name of the tool to compare.")],
+@app.command("eval")
+def eval_cmd(
+    tool: Annotated[str, typer.Argument(help="Name of the tool to evaluate.")],
     manpage_file: Annotated[
         Path | None,
         typer.Option(
-            help="Path to MANIAC's generated manpage Markdown file (default: $XDG_DATA_HOME/maniac/manpages/<tool>.1.md)."
+            help="Path to manpage Markdown file (default: $XDG_DATA_HOME/maniac/manpages/<tool>.1.md)."
         ),
     ] = None,
     context_file: Annotated[
@@ -224,12 +195,36 @@ def compare_cmd(
         int,
         typer.Option(help="Minimum passing score threshold (0-100)."),
     ] = 70,
+    against_installed: Annotated[
+        bool,
+        typer.Option(
+            "--against-installed",
+            help=(
+                "Judge head-to-head against the manpage already installed on "
+                "this system, instead of scoring against --min-score."
+            ),
+        ),
+    ] = False,
 ) -> None:
-    """Compare the manpage already installed on this system against the one MANIAC would generate."""
-    with console.status(f"[bold green]Comparing manpages for {tool}..."):
-        outcome = compute_compare(tool, manpage_file, context_file, model, min_score)
+    """Evaluate a generated manpage's quality, or compare it against the one installed here."""
+    if against_installed:
+        with console.status(f"[bold green]Comparing manpages for {tool}..."):
+            compare_outcome = compute_compare(
+                tool, manpage_file, context_file, model, min_score
+            )
 
-    _render_compare_outcome(console, outcome)
+        _render_compare_outcome(console, compare_outcome)
 
-    if outcome.error is not None:
+        if compare_outcome.error is not None:
+            raise typer.Exit(1)
+        return
+
+    with console.status(f"[bold green]Evaluating manpage for {tool}..."):
+        outcome = compute_eval(tool, manpage_file, context_file, model, min_score)
+
+    _render_eval_outcome(console, outcome)
+
+    if outcome.error is not None or (
+        outcome.result is not None and not outcome.result.passed
+    ):
         raise typer.Exit(1)

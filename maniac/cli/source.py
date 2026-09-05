@@ -1,4 +1,4 @@
-"""`crawl` and `docs`: inspect a tool's CLI help and upstream documentation."""
+"""`source crawl` and `source docs`: inspect a tool's CLI help and upstream documentation."""
 
 from typing import Annotated
 
@@ -8,8 +8,11 @@ from ..exceptions import ManiacError
 from . import app, console, default_cfg
 from .options import CacheDirOption
 
+source_app = typer.Typer(help="Inspect a tool's CLI help and upstream documentation.")
+app.add_typer(source_app, name="source")
 
-@app.command()
+
+@source_app.command()
 def crawl(
     cmd: Annotated[
         list[str],
@@ -30,7 +33,7 @@ def crawl(
         raise typer.Exit(1) from e
 
 
-@app.command()
+@source_app.command()
 def docs(
     tool: Annotated[
         str, typer.Argument(help="Name of the tool/binary to extract docs for.")

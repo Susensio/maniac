@@ -23,11 +23,10 @@ def _plain_console(monkeypatch: pytest.MonkeyPatch) -> None:
     behaviour.
 
     No width pin: commands now compute a result structure that tests assert
-    against directly (see `compute_eval`, `compute_compare`, `compute_uninstall`,
-    `compute_list`), so no remaining assertion depends on how Rich wraps a
-    long dynamic value such as a path. A handful of rendering smoke tests
-    below only check short, fixed strings that cannot wrap at any terminal
-    width.
+    against directly (see `compute_eval`, `compute_compare`, `compute_uninstall`),
+    so no remaining assertion depends on how Rich wraps a long dynamic value
+    such as a path. A handful of rendering smoke tests below only check
+    short, fixed strings that cannot wrap at any terminal width.
     """
     monkeypatch.setattr(
         cli_module.console,
@@ -40,9 +39,10 @@ def test_cli_help() -> None:
     result = runner.invoke(app, ["--help"])
     assert result.exit_code == 0
     assert "Maniac:" in result.output
-    assert "crawl" in result.output
+    assert "source" in result.output
     assert "generate" in result.output
     assert "eval" in result.output
+    assert "status" in result.output
 
 
 def test_repo_cell_links_known_repo_and_labels_unknown() -> None:
@@ -57,18 +57,18 @@ def test_repo_cell_links_known_repo_and_labels_unknown() -> None:
     assert unknown.plain == "Unknown"
 
 
-def test_cli_crawl(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_cli_source_crawl(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         "maniac.sources.crawler.find_subcommands",
         lambda cmd: {"> git --help": "git help content"},
     )
-    result = runner.invoke(app, ["crawl", "git"])
+    result = runner.invoke(app, ["source", "crawl", "git"])
     assert result.exit_code == 0
     assert "> git --help" in result.output
     assert "git help content" in result.output
 
 
-def test_cli_docs(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_cli_source_docs(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         "maniac.sources.discovery.discover_repo",
         lambda tool: RepoSource(name=tool, target="test/tool", is_local=False),
@@ -79,7 +79,7 @@ def test_cli_docs(monkeypatch: pytest.MonkeyPatch) -> None:
             DocFile(rel_path="README.md", content="Content")
         ],
     )
-    result = runner.invoke(app, ["docs", "mytool"])
+    result = runner.invoke(app, ["source", "docs", "mytool"])
     assert result.exit_code == 0
     assert "Discovered repository source" in result.output
     assert "README.md" in result.output
@@ -226,49 +226,8 @@ def test_render_eval_table() -> None:
     assert "Minor defect note" in output
 
 
-def test_cli_list(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    from maniac.cli.inventory import ManagedManpage, compute_list
-
-    monkeypatch.setattr(
-        "maniac.installer.list_installed_manpages",
-        lambda cfg: [
-            {
-                "tool": "mytool",
-                "path": tmp_path / "mytool.1",
-                "date": "2026-08-25",
-                "model": "Flash",
-                "has_backup": False,
-            }
-        ],
-    )
-    assert compute_list() == [
-        ManagedManpage(
-            tool="mytool",
-            path=tmp_path / "mytool.1",
-            model="Flash",
-            date="2026-08-25",
-            has_backup=False,
-        )
-    ]
-
-    res = runner.invoke(app, ["list"])
-    assert res.exit_code == 0
-    assert "MANIAC-Managed Manpages" in res.output
-
-
-def test_cli_list_empty(monkeypatch: pytest.MonkeyPatch) -> None:
-    from maniac.cli.inventory import compute_list
-
-    monkeypatch.setattr("maniac.installer.list_installed_manpages", lambda cfg: [])
-    assert compute_list() == []
-
-    res = runner.invoke(app, ["list"])
-    assert res.exit_code == 0
-    assert "No MANIAC-managed manpages found" in res.output
-
-
 def test_cli_uninstall(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    from maniac.cli.inventory import compute_uninstall
+    from maniac.cli.uninstall import compute_uninstall
 
     monkeypatch.setattr(
         "maniac.installer.uninstall_manpage",
@@ -283,7 +242,7 @@ def test_cli_uninstall(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
 
 
 def test_cli_uninstall_not_found(monkeypatch: pytest.MonkeyPatch) -> None:
-    from maniac.cli.inventory import compute_uninstall
+    from maniac.cli.uninstall import compute_uninstall
 
     monkeypatch.setattr(
         "maniac.installer.uninstall_manpage",
@@ -306,7 +265,7 @@ def test_cli_uninstall_foreign_kept(
     foreign path is an arbitrary-length pytest tmp_path, and Rich would wrap
     it unpredictably depending on the ambient terminal width.
     """
-    from maniac.cli.inventory import compute_uninstall
+    from maniac.cli.uninstall import compute_uninstall
 
     foreign_path = tmp_path / "man1" / "mytool.1"
     monkeypatch.setattr(
@@ -323,17 +282,6 @@ def test_cli_uninstall_foreign_kept(
     assert res.exit_code == 0
     assert "Uninstalled manpage for mytool!" in res.output
     assert "Left non-MANIAC manpage in place" in res.output
-
-
-def test_cli_list_missing_no_man(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    import shutil
-
-    monkeypatch.setattr(shutil, "which", lambda name: None)
-    res = runner.invoke(app, ["list-missing", "--bin-dir", str(tmp_path)])
-    assert res.exit_code == 1
-    assert "'man' utility is not installed" in res.output
 
 
 def test_cli_generate_multiple_all_fail_exits_nonzero(
@@ -380,270 +328,3 @@ def test_cli_generate_multiple_partial_success_exits_nonzero(
     res = runner.invoke(app, ["generate", "goodtool", "badtool"])
     assert res.exit_code == 1
     assert "1/2 tool(s) failed" in res.output
-
-
-def test_cli_generate_missing_all_have_man(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    import shutil
-    import subprocess
-
-    # Create fake bins
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
-    (bin_dir / "foo").touch()
-
-    # Fake man saying it exists
-    monkeypatch.setattr(shutil, "which", lambda name: "/usr/bin/man")
-    monkeypatch.setattr(
-        subprocess,
-        "run",
-        lambda *args, **kwargs: subprocess.CompletedProcess(
-            args, 0, stdout="man exists", stderr=""
-        ),
-    )
-
-    res = runner.invoke(app, ["generate-missing", "--bin-dir", str(bin_dir)])
-    assert res.exit_code == 0
-    assert "All binaries have manpages" in res.output
-
-
-def test_cli_generate_missing_uses_custom_bin_dir(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    import shutil
-    import subprocess
-
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
-    tool = bin_dir / "custom-tool"
-    tool.touch(mode=0o755)
-    observed: dict[str, object] = {}
-
-    def _run_pipeline(tool_name: str, **kwargs: object) -> None:
-        observed["tool_name"] = tool_name
-        observed["bin_dir"] = kwargs["bin_dir"]
-
-    monkeypatch.setattr(shutil, "which", lambda name: "/usr/bin/man")
-    monkeypatch.setattr(
-        subprocess,
-        "run",
-        lambda *args, **kwargs: subprocess.CompletedProcess(
-            args, 1, stdout="", stderr=""
-        ),
-    )
-    monkeypatch.setattr("maniac.orchestration.pipeline.run_pipeline", _run_pipeline)
-
-    res = runner.invoke(app, ["generate-missing", "--bin-dir", str(bin_dir)])
-
-    assert res.exit_code == 0
-    assert observed == {"tool_name": "custom-tool", "bin_dir": bin_dir}
-
-
-def test_cli_generate_missing_skips_nonexecutables(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    import shutil
-    import subprocess
-
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
-    (bin_dir / "not-executable").touch()
-    (bin_dir / "directory").mkdir()
-    (bin_dir / "broken-link").symlink_to(bin_dir / "missing")
-    (bin_dir / "directory-link").symlink_to(
-        bin_dir / "directory", target_is_directory=True
-    )
-    calls: list[object] = []
-
-    def _run(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
-        calls.append(args)
-        return subprocess.CompletedProcess([], 1, stdout="", stderr="")
-
-    monkeypatch.setattr(shutil, "which", lambda name: "/usr/bin/man")
-    monkeypatch.setattr(subprocess, "run", _run)
-
-    res = runner.invoke(app, ["generate-missing", "--bin-dir", str(bin_dir)])
-
-    assert res.exit_code == 0
-    assert calls == []
-
-
-def test_cli_generate_missing_replaces_help2man_page(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    import shutil
-    import subprocess
-
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
-    tool = bin_dir / "custom-tool"
-    tool.touch(mode=0o755)
-    manpage = tmp_path / "custom-tool.1"
-    manpage.write_text(
-        '.\\" DO NOT MODIFY THIS FILE!  It was generated by help2man 1.49.3.\n',
-        encoding="utf-8",
-    )
-    generated: list[tuple[str, bool]] = []
-
-    monkeypatch.setattr(shutil, "which", lambda name: "/usr/bin/man")
-    monkeypatch.setattr(
-        subprocess,
-        "run",
-        lambda *args, **kwargs: subprocess.CompletedProcess(
-            args, 0, stdout=f"{manpage}\n", stderr=""
-        ),
-    )
-    monkeypatch.setattr(
-        "maniac.orchestration.pipeline.run_pipeline",
-        lambda tool_name, **kwargs: generated.append((tool_name, kwargs["force"])),
-    )
-
-    res = runner.invoke(app, ["generate-missing", "--bin-dir", str(bin_dir)])
-
-    assert res.exit_code == 0
-    assert generated == [("custom-tool", True)]
-
-
-def test_cli_list_missing_lists_help2man_page(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    import shutil
-    import subprocess
-
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
-    tool = bin_dir / "custom-tool"
-    tool.touch(mode=0o755)
-    manpage = tmp_path / "custom-tool.1"
-    manpage.write_text(
-        '.\\" DO NOT MODIFY THIS FILE!  It was generated by help2man 1.49.3.\n',
-        encoding="utf-8",
-    )
-    monkeypatch.setattr(shutil, "which", lambda name: "/usr/bin/man")
-    monkeypatch.setattr(
-        subprocess,
-        "run",
-        lambda *args, **kwargs: subprocess.CompletedProcess(
-            args, 0, stdout=f"{manpage}\n", stderr=""
-        ),
-    )
-    monkeypatch.setattr(
-        "maniac.sources.discovery.discover_repo",
-        lambda *args, **kwargs: RepoSource(
-            name="custom-tool", target="owner/custom-tool", is_local=False
-        ),
-    )
-
-    res = runner.invoke(app, ["list-missing", "--bin-dir", str(bin_dir)])
-
-    assert res.exit_code == 0
-    assert "custom-tool" in res.output
-    assert "1/1" in res.output
-
-
-def test_cli_list_missing_includes_global_help_derived_pages(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    import shutil
-    import subprocess
-
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
-    (bin_dir / "missing-tool").touch(mode=0o755)
-    (bin_dir / "not-an-executable").touch()
-    manpath = tmp_path / "share" / "man"
-    manpage = manpath / "man1" / "generated-tool.1"
-    manpage.parent.mkdir(parents=True)
-    manpage.write_text(
-        '.\\" DO NOT MODIFY THIS FILE!  It was generated by help2man 1.49.3.\n',
-        encoding="utf-8",
-    )
-    unknown_manpage = manpath / "man1" / "unknown-tool.1"
-    unknown_manpage.write_text(
-        '.\\" DO NOT MODIFY THIS FILE!  It was generated by help2man 1.49.3.\n',
-        encoding="utf-8",
-    )
-
-    monkeypatch.setattr(
-        shutil,
-        "which",
-        lambda name: {"man": "/usr/bin/man", "manpath": "/usr/bin/manpath"}.get(name),
-    )
-
-    def fake_run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
-        if args[0] == "/usr/bin/man":
-            return subprocess.CompletedProcess(args, 1, stdout="", stderr="")
-        assert args == ["/usr/bin/manpath"]
-        return subprocess.CompletedProcess(args, 0, stdout=str(manpath), stderr="")
-
-    monkeypatch.setattr(subprocess, "run", fake_run)
-    resolved: list[tuple[str, Path | None]] = []
-
-    def discover_repo(name: str, **kwargs: object) -> RepoSource:
-        bin_dir = kwargs.get("bin_dir")
-        assert bin_dir is None or isinstance(bin_dir, Path)
-        resolved.append((name, bin_dir))
-        return RepoSource(name=name, target=f"owner/{name}", is_local=False)
-
-    monkeypatch.setattr("maniac.sources.discovery.discover_repo", discover_repo)
-    monkeypatch.setattr(
-        "maniac.sources.discovery.discover_candidate_source",
-        lambda name: (
-            None
-            if name == "unknown-tool"
-            else RepoSource(name=name, target=f"owner/{name}", is_local=False)
-        ),
-    )
-    probed: list[list[str]] = []
-    monkeypatch.setattr(
-        "maniac.sources.crawler.get_help",
-        lambda cmd, **kwargs: probed.append(cmd) or "",
-    )
-
-    res = runner.invoke(
-        app,
-        ["list-missing", "--include-candidates", "--bin-dir", str(bin_dir)],
-    )
-
-    assert res.exit_code == 0
-    assert "missing-tool" in res.output
-    assert "not-an-executable" not in res.output
-    assert "generated-tool(1)" in res.output
-    assert "unknown-tool(1)" not in res.output
-    assert "Help-derived" in res.output
-    assert "owner/missing-tool" in res.output
-    assert "1 skipped because their" in res.output
-    assert "source is unknown" in res.output
-    assert resolved == [("missing-tool", bin_dir)]
-    assert probed == []
-
-    monkeypatch.setattr(
-        shutil,
-        "which",
-        lambda name: {
-            "man": "/usr/bin/man",
-            "manpath": "/usr/bin/manpath",
-            "unknown-tool": "/usr/bin/unknown-tool",
-        }.get(name),
-    )
-    monkeypatch.setattr(
-        "maniac.sources.crawler.get_help",
-        lambda cmd, **kwargs: (
-            "Commands:\n  sync  Synchronize data\n  status  Show status\n"
-        ),
-    )
-    res = runner.invoke(
-        app,
-        [
-            "list-missing",
-            "--include-candidates",
-            "--bin-dir",
-            str(bin_dir),
-        ],
-    )
-
-    assert res.exit_code == 0
-    assert "unknown-tool(1)" in res.output
-    assert "Subcommands (2)" in res.output
-    assert "Unknown" in res.output
