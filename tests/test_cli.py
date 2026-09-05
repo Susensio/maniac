@@ -109,6 +109,58 @@ def test_cli_generate_dry_run(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -
     assert "Successfully generated manpage" in result.output
 
 
+def test_cli_generate_installs_by_default(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """M-inverted-install: `generate` installs unless told `--no-install`."""
+    from maniac.models import PipelineResult
+
+    observed: dict[str, object] = {}
+
+    def _run_pipeline(tool_name: str, **kwargs: object) -> PipelineResult:
+        observed["install"] = kwargs["install"]
+        return PipelineResult(
+            tool_name=tool_name,
+            repo_source=RepoSource(name=tool_name, target="org/repo", is_local=False),
+            command_count=1,
+            doc_file_count=1,
+            context_path=None,
+            prompt_path=None,
+            markdown_path=tmp_path / f"{tool_name}.1.md",
+            roff_path=None,
+            installed_path=None,
+            markdown_content="# doc",
+        )
+
+    monkeypatch.setattr("maniac.orchestration.pipeline.run_pipeline", _run_pipeline)
+
+    res = runner.invoke(app, ["generate", "mytool"])
+    assert res.exit_code == 0
+    assert observed == {"install": True}
+
+    res = runner.invoke(app, ["generate", "mytool", "--no-install"])
+    assert res.exit_code == 0
+    assert observed == {"install": False}
+
+
+def test_cli_generate_zero_tools_exits_quietly(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`$(maniac status --candidates)` can legitimately expand to nothing."""
+    called = False
+
+    def _run_pipeline(*args: object, **kwargs: object) -> None:
+        nonlocal called
+        called = True
+
+    monkeypatch.setattr("maniac.orchestration.pipeline.run_pipeline", _run_pipeline)
+
+    res = runner.invoke(app, ["generate"])
+    assert res.exit_code == 0
+    assert res.output == ""
+    assert not called
+
+
 def test_fish_completion_includes_only_dry_run() -> None:
     result = runner.invoke(
         app,

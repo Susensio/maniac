@@ -19,8 +19,9 @@ from .options import (
 @app.command()
 def generate(
     tools: Annotated[
-        list[str], typer.Argument(help="List of tool names to generate manpages for.")
-    ],
+        list[str] | None,
+        typer.Argument(help="List of tool names to generate manpages for."),
+    ] = None,
     output_dir: OutputDirOption = str(default_cfg.output_dir),
     cache_dir: CacheDirOption = str(default_cfg.cache_dir),
     prompt_file: Annotated[
@@ -28,12 +29,21 @@ def generate(
     ] = None,
     model: ModelOption = None,
     install: Annotated[
-        bool, typer.Option(help="Install compiled manpage to ~/.local/share/man/man1.")
-    ] = False,
+        bool,
+        typer.Option(help="Install the compiled manpage to ~/.local/share/man/man1."),
+    ] = True,
     force: ForceOption = False,
     dry_run: DryRunOption = False,
 ) -> None:
-    """Run end-to-end pipeline: scrape help, fetch docs, synthesize via LLM, and compile."""
+    """Run end-to-end pipeline: scrape help, fetch docs, synthesize via LLM, and compile.
+
+    Zero tool names exits quietly rather than raising Typer's missing-argument
+    error, since `$(maniac status --candidates)` can legitimately expand to
+    nothing.
+    """
+    if not tools:
+        return
+
     from ..orchestration.pipeline import run_pipeline
 
     failures = 0
