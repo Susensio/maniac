@@ -2,13 +2,16 @@
 
 import os
 import shutil
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 
 import typer
 from rich.table import Table
 
+from ..config import Config
 from ..exceptions import CrawlerError, ManiacError
+from ..installer import UninstallResult
 from ..sources.manpages import inspect_manpage
 from . import app, console, default_cfg
 from .options import CacheDirOption, ForceOption, ModelOption, OutputDirOption
@@ -295,40 +298,109 @@ def _list_missing_with_candidates(target_bin_dir: Path, man_bin: str) -> None:
         raise typer.Exit(1) from e
 
 
+@dataclass(frozen=True, slots=True)
+class ManagedManpage:
+    """One row of `list`'s inventory: a MANIAC-managed manpage and its metadata."""
+
+    tool: str
+    path: Path
+    model: str
+    date: str
+    has_backup: bool
+
+
+def compute_list(config: Config | None = None) -> list[ManagedManpage]:
+    """Return every MANIAC-managed manpage found, sorted by tool name."""
+    from ..installer import list_installed_manpages
+
+    return [
+        ManagedManpage(
+            tool=item["tool"],
+            path=item["path"],
+            model=item["model"],
+            date=item["date"],
+            has_backup=item["has_backup"],
+        )
+        for item in list_installed_manpages(config or default_cfg)
+    ]
+
+
+def _render_list(target_console: Any, items: list[ManagedManpage]) -> None:
+    if not items:
+        target_console.print("[yellow]No MANIAC-managed manpages found.[/yellow]")
+        return
+
+    table = Table(title="MANIAC-Managed Manpages")
+    table.add_column("Tool", style="cyan")
+    table.add_column("Installed Path", style="magenta")
+    table.add_column("Model", style="green")
+    table.add_column("Generated Date", style="dim")
+    table.add_column("Backup", justify="center")
+
+    for item in items:
+        table.add_row(
+            item.tool,
+            str(item.path),
+            item.model,
+            item.date,
+            "[green]Yes[/green]" if item.has_backup else "-",
+        )
+
+    target_console.print(table)
+
+
 @app.command("list")
 def list_cmd() -> None:
     """List all MANIAC-managed manpages with metadata and backup status."""
-    from ..installer import list_installed_manpages
-
     try:
-        items = list_installed_manpages(default_cfg)
-        if not items:
-            console.print("[yellow]No MANIAC-managed manpages found.[/yellow]")
-            return
-
-        table = Table(title="MANIAC-Managed Manpages")
-        table.add_column("Tool", style="cyan")
-        table.add_column("Installed Path", style="magenta")
-        table.add_column("Model", style="green")
-        table.add_column("Generated Date", style="dim")
-        table.add_column("Backup", justify="center")
-
-        for item in items:
-            bak_str = "[green]Yes[/green]" if item["has_backup"] else "-"
-            table.add_row(
-                item["tool"],
-                str(item["path"]),
-                item["model"],
-                item["date"],
-                bak_str,
-            )
-
-        console.print(table)
+        _render_list(console, compute_list())
     except typer.Exit:
         raise
     except (OSError, RuntimeError, ManiacError) as e:
         console.print(f"[bold red]Error listing manpages: {e}[/bold red]")
         raise typer.Exit(1) from e
+
+
+@dataclass(frozen=True, slots=True)
+class UninstallOutcome:
+    """Result of computing `uninstall`: the tool it was asked for plus the outcome."""
+
+    tool: str
+    result: UninstallResult
+
+
+def compute_uninstall(
+    tool: str, purge: bool = False, config: Config | None = None
+) -> UninstallOutcome:
+    """Uninstall a MANIAC-managed manpage and report what happened."""
+    from ..installer import uninstall_manpage
+
+    return UninstallOutcome(
+        tool=tool,
+        result=uninstall_manpage(tool, purge=purge, config=config or default_cfg),
+    )
+
+
+def _render_uninstall(target_console: Any, outcome: UninstallOutcome) -> None:
+    result = outcome.result
+    if not result.removed and result.foreign_kept is None:
+        target_console.print(
+            f"[yellow]No installed manpage found for '{outcome.tool}'.[/yellow]"
+        )
+        return
+
+    if result.removed:
+        target_console.print(
+            f"[bold green]✓ Uninstalled manpage for {outcome.tool}![/bold green]"
+        )
+        for p in result.removed:
+            target_console.print(f" • Removed: {p}")
+
+    if result.foreign_kept is not None:
+        target_console.print(
+            f"[yellow]⚠ Left non-MANIAC manpage in place at "
+            f"{result.foreign_kept} (not ours to remove).[/yellow]"
+        )
 
 
 @app.command("uninstall")
@@ -343,28 +415,12 @@ def uninstall_cmd(
     ] = False,
 ) -> None:
     """Uninstall a MANIAC-generated manpage and restore vendor backup if present."""
-    from ..installer import uninstall_manpage
-
     try:
-        result = uninstall_manpage(tool, purge=purge, config=default_cfg)
-        if not result.removed and result.foreign_kept is None:
-            console.print(f"[yellow]No installed manpage found for '{tool}'.[/yellow]")
-            return
-
-        if result.removed:
-            console.print(f"[bold green]✓ Uninstalled manpage for {tool}![/bold green]")
-            for p in result.removed:
-                console.print(f" • Removed: {p}")
-
-        if result.foreign_kept is not None:
-            console.print(
-                f"[yellow]⚠ Left non-MANIAC manpage in place at "
-                f"{result.foreign_kept} (not ours to remove).[/yellow]"
-            )
-    except typer.Exit:
-        raise
+        outcome = compute_uninstall(tool, purge=purge)
     except (OSError, RuntimeError, ManiacError) as e:
         console.print(
             f"[bold red]Error uninstalling manpage for {tool}: {e}[/bold red]"
         )
         raise typer.Exit(1) from e
+
+    _render_uninstall(console, outcome)

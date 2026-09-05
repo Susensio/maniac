@@ -201,7 +201,79 @@ def test_compare_manpages_integration(monkeypatch: pytest.MonkeyPatch) -> None:
     assert result.generated_strengths == ["Covers all subcommands", "Includes examples"]
 
 
-def test_cli_compare_success(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_compute_compare_success(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from maniac.cli.evaluate import compute_compare
+
+    manpage_path = tmp_path / "tool.1.md"
+    manpage_path.write_text(GENERATED_MANPAGE, encoding="utf-8")
+    context_path = tmp_path / "tool_context.md"
+    context_path.write_text("Context documentation", encoding="utf-8")
+    installed_path = Path("/usr/share/man/man1/tool.1.gz")
+
+    monkeypatch.setattr(
+        "maniac.sources.manpages.find_installed_manpage_path",
+        lambda man_bin, tool_name: installed_path,
+    )
+    monkeypatch.setattr(
+        "maniac.sources.manpages.read_manpage_source",
+        lambda path: INSTALLED_MANPAGE,
+    )
+    expected = ComparisonResult(
+        tool_name="tool",
+        installed=EvaluationResult(score=60, passed=False, rubric_breakdown={}),
+        generated=EvaluationResult(score=90, passed=True, rubric_breakdown={}),
+        winner="generated",
+        differences="Generated is more thorough.",
+        installed_strengths=["Concise"],
+        generated_strengths=["Covers all subcommands"],
+    )
+    monkeypatch.setattr(
+        "maniac.evaluation.judge.compare_manpages", lambda **kw: expected
+    )
+
+    outcome = compute_compare("tool", manpage_path, context_path)
+    assert outcome.error is None
+    assert outcome.result is expected
+    assert outcome.installed_path == installed_path
+
+
+def test_compute_compare_no_installed_manpage(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from maniac.cli.evaluate import compute_compare
+
+    manpage_path = tmp_path / "tool.1.md"
+    manpage_path.write_text(GENERATED_MANPAGE, encoding="utf-8")
+    context_path = tmp_path / "tool_context.md"
+    context_path.write_text("Context documentation", encoding="utf-8")
+
+    monkeypatch.setattr(
+        "maniac.sources.manpages.find_installed_manpage_path",
+        lambda man_bin, tool_name: None,
+    )
+
+    outcome = compute_compare("tool", manpage_path, context_path)
+    assert outcome.result is None
+    assert outcome.error is not None
+    assert "No manpage is currently installed" in outcome.error
+
+
+def test_compute_compare_missing_generated_manpage(tmp_path: Path) -> None:
+    from maniac.cli.evaluate import compute_compare
+
+    context_path = tmp_path / "tool_context.md"
+    context_path.write_text("Context documentation", encoding="utf-8")
+
+    outcome = compute_compare("nonexistent_binary_xyz_123", context_file=context_path)
+    assert outcome.result is None
+    assert outcome.error is not None
+    assert "Generated manpage not found" in outcome.error
+
+
+def test_cli_compare_smoke(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Rendering smoke test: the wiring from outcome to console output, exit code included."""
     manpage_path = tmp_path / "tool.1.md"
     manpage_path.write_text(GENERATED_MANPAGE, encoding="utf-8")
     context_path = tmp_path / "tool_context.md"
@@ -241,50 +313,4 @@ def test_cli_compare_success(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) ->
     )
     assert res.exit_code == 0
     assert "Generated is more thorough." in res.output
-    assert "Covers all subcommands" in res.output
     assert "MANIAC-generated" in res.output
-
-
-def test_cli_compare_no_installed_manpage(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    manpage_path = tmp_path / "tool.1.md"
-    manpage_path.write_text(GENERATED_MANPAGE, encoding="utf-8")
-    context_path = tmp_path / "tool_context.md"
-    context_path.write_text("Context documentation", encoding="utf-8")
-
-    monkeypatch.setattr(
-        "maniac.sources.manpages.find_installed_manpage_path",
-        lambda man_bin, tool_name: None,
-    )
-
-    res = runner.invoke(
-        app,
-        [
-            "compare",
-            "tool",
-            "--manpage-file",
-            str(manpage_path),
-            "--context-file",
-            str(context_path),
-        ],
-    )
-    assert res.exit_code == 1
-    assert "No manpage is currently installed" in res.output
-
-
-def test_cli_compare_missing_generated_manpage(tmp_path: Path) -> None:
-    context_path = tmp_path / "tool_context.md"
-    context_path.write_text("Context documentation", encoding="utf-8")
-
-    res = runner.invoke(
-        app,
-        [
-            "compare",
-            "nonexistent_binary_xyz_123",
-            "--context-file",
-            str(context_path),
-        ],
-    )
-    assert res.exit_code == 1
-    assert "Generated manpage not found" in res.output

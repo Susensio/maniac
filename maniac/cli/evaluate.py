@@ -1,14 +1,99 @@
-"""`eval` and `compare`: score a generated manpage, or judge it against the installed one."""
+"""`eval` and `compare`: score a generated manpage, or judge it against the installed one.
 
+Each command computes a result structure first and renders it after, so a
+caller (or a test) can inspect the decision -- pass/fail, which error fired
+-- without going through Rich-rendered prose.
+"""
+
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 
 import typer
 
 from ..exceptions import ManiacError
+from ..models import ComparisonResult, EvaluationResult
 from . import app, console, default_cfg
 from .options import ModelOption
 from .render import _render_comparison, _render_eval_table
+
+
+def _resolve_manpage_and_context(
+    tool: str, manpage_file: Path | None, context_file: Path | None
+) -> tuple[Path, Path]:
+    manpage = (
+        manpage_file
+        if manpage_file is not None
+        else default_cfg.output_dir / f"{tool}.1.md"
+    )
+    context = (
+        context_file
+        if context_file is not None
+        else default_cfg.intermediate_dir / f"{tool}_context.md"
+    )
+    return manpage, context
+
+
+@dataclass
+class EvalOutcome:
+    """Result of computing `eval`: a scored result, or the reason it could not run."""
+
+    tool: str
+    result: EvaluationResult | None = None
+    error: str | None = None
+
+
+def compute_eval(
+    tool: str,
+    manpage_file: Path | None = None,
+    context_file: Path | None = None,
+    model: str | None = None,
+    min_score: int = 70,
+) -> EvalOutcome:
+    """Score a generated manpage against its extracted context. Never raises."""
+    target_manpage, target_context = _resolve_manpage_and_context(
+        tool, manpage_file, context_file
+    )
+
+    if not target_manpage.exists():
+        return EvalOutcome(tool=tool, error=f"Manpage not found at {target_manpage}")
+    if not target_context.exists():
+        return EvalOutcome(
+            tool=tool, error=f"Context file not found at {target_context}"
+        )
+
+    from ..evaluation.judge import evaluate_manpage
+
+    try:
+        result = evaluate_manpage(
+            tool_name=tool,
+            manpage_text=target_manpage.read_text(encoding="utf-8"),
+            context_text=target_context.read_text(encoding="utf-8"),
+            model=model,
+            pass_threshold=min_score,
+        )
+    except (OSError, RuntimeError, ManiacError) as e:
+        return EvalOutcome(tool=tool, error=str(e))
+    return EvalOutcome(tool=tool, result=result)
+
+
+def _render_eval_outcome(target_console: Any, outcome: EvalOutcome) -> None:
+    if outcome.error is not None:
+        target_console.print(f"[bold red]Error: {outcome.error}[/bold red]")
+        return
+
+    assert outcome.result is not None
+    _render_eval_table(target_console, outcome.tool, outcome.result)
+    if outcome.result.passed:
+        target_console.print(
+            f"\n[bold green]✓ Evaluation passed for {outcome.tool} "
+            f"with score {outcome.result.score}/100![/bold green]"
+        )
+    else:
+        target_console.print(
+            f"\n[bold red]Evaluation failed for {outcome.tool} "
+            f"(Score: {outcome.result.score}/100)[/bold red]"
+        )
 
 
 @app.command("eval")
@@ -33,61 +118,90 @@ def eval_cmd(
     ] = 70,
 ) -> None:
     """Evaluate quality of a generated manpage using deterministic checks and LLM-as-a-Judge."""
-    target_manpage = (
-        manpage_file
-        if manpage_file is not None
-        else default_cfg.output_dir / f"{tool}.1.md"
-    )
-    target_context = (
-        context_file
-        if context_file is not None
-        else default_cfg.intermediate_dir / f"{tool}_context.md"
+    with console.status(f"[bold green]Evaluating manpage for {tool}..."):
+        outcome = compute_eval(tool, manpage_file, context_file, model, min_score)
+
+    _render_eval_outcome(console, outcome)
+
+    if outcome.error is not None or (
+        outcome.result is not None and not outcome.result.passed
+    ):
+        raise typer.Exit(1)
+
+
+@dataclass
+class CompareOutcome:
+    """Result of computing `compare`: a head-to-head result, or the reason it could not run."""
+
+    tool: str
+    result: ComparisonResult | None = None
+    installed_path: Path | None = None
+    error: str | None = None
+
+
+def compute_compare(
+    tool: str,
+    manpage_file: Path | None = None,
+    context_file: Path | None = None,
+    model: str | None = None,
+    min_score: int = 70,
+) -> CompareOutcome:
+    """Judge a generated manpage against the one installed on this system. Never raises."""
+    target_manpage, target_context = _resolve_manpage_and_context(
+        tool, manpage_file, context_file
     )
 
     if not target_manpage.exists():
-        console.print(
-            f"[bold red]Error: Manpage not found at {target_manpage}[/bold red]"
+        return CompareOutcome(
+            tool=tool,
+            error=(
+                f"Generated manpage not found at {target_manpage}. "
+                f"Run 'maniac generate {tool}' first."
+            ),
         )
-        raise typer.Exit(1)
-
     if not target_context.exists():
-        console.print(
-            f"[bold red]Error: Context file not found at {target_context}[/bold red]"
+        return CompareOutcome(
+            tool=tool, error=f"Context file not found at {target_context}"
         )
-        raise typer.Exit(1)
 
-    manpage_text = target_manpage.read_text(encoding="utf-8")
-    context_text = target_context.read_text(encoding="utf-8")
+    from ..sources.manpages import find_installed_manpage_path, read_manpage_source
 
-    from ..evaluation.judge import evaluate_manpage
+    installed_path = find_installed_manpage_path("man", tool)
+    if installed_path is None:
+        return CompareOutcome(
+            tool=tool,
+            error=(
+                f"No manpage is currently installed for '{tool}' "
+                f"(`man -w {tool}` found nothing)."
+            ),
+        )
+
+    from ..evaluation.judge import compare_manpages
 
     try:
-        with console.status(f"[bold green]Evaluating manpage for {tool}..."):
-            result = evaluate_manpage(
-                tool_name=tool,
-                manpage_text=manpage_text,
-                context_text=context_text,
-                model=model,
-                pass_threshold=min_score,
-            )
-
-        _render_eval_table(console, tool, result)
-
-        if not result.passed:
-            console.print(
-                f"\n[bold red]Evaluation failed for {tool} (Score: {result.score}/100)[/bold red]"
-            )
-            raise typer.Exit(1)
-
-        console.print(
-            f"\n[bold green]✓ Evaluation passed for {tool} with score {result.score}/100![/bold green]"
+        result = compare_manpages(
+            tool_name=tool,
+            generated_text=target_manpage.read_text(encoding="utf-8"),
+            installed_text=read_manpage_source(installed_path),
+            context_text=target_context.read_text(encoding="utf-8"),
+            model=model,
+            pass_threshold=min_score,
         )
-
-    except typer.Exit:
-        raise
     except (OSError, RuntimeError, ManiacError) as e:
-        console.print(f"[bold red]Evaluation error for {tool}: {e}[/bold red]")
-        raise typer.Exit(1) from e
+        return CompareOutcome(tool=tool, error=str(e))
+    return CompareOutcome(tool=tool, result=result, installed_path=installed_path)
+
+
+def _render_compare_outcome(target_console: Any, outcome: CompareOutcome) -> None:
+    if outcome.error is not None:
+        target_console.print(f"[bold red]Error: {outcome.error}[/bold red]")
+        return
+
+    assert outcome.result is not None
+    assert outcome.installed_path is not None
+    _render_comparison(
+        target_console, outcome.tool, outcome.installed_path, outcome.result
+    )
 
 
 @app.command("compare")
@@ -112,62 +226,10 @@ def compare_cmd(
     ] = 70,
 ) -> None:
     """Compare the manpage already installed on this system against the one MANIAC would generate."""
-    target_manpage = (
-        manpage_file
-        if manpage_file is not None
-        else default_cfg.output_dir / f"{tool}.1.md"
-    )
-    target_context = (
-        context_file
-        if context_file is not None
-        else default_cfg.intermediate_dir / f"{tool}_context.md"
-    )
+    with console.status(f"[bold green]Comparing manpages for {tool}..."):
+        outcome = compute_compare(tool, manpage_file, context_file, model, min_score)
 
-    if not target_manpage.exists():
-        console.print(
-            f"[bold red]Error: Generated manpage not found at {target_manpage}. "
-            f"Run 'maniac generate {tool}' first.[/bold red]"
-        )
+    _render_compare_outcome(console, outcome)
+
+    if outcome.error is not None:
         raise typer.Exit(1)
-
-    if not target_context.exists():
-        console.print(
-            f"[bold red]Error: Context file not found at {target_context}[/bold red]"
-        )
-        raise typer.Exit(1)
-
-    from ..sources.manpages import find_installed_manpage_path, read_manpage_source
-
-    installed_path = find_installed_manpage_path("man", tool)
-    if installed_path is None:
-        console.print(
-            f"[bold red]Error: No manpage is currently installed for '{tool}' "
-            f"(`man -w {tool}` found nothing).[/bold red]"
-        )
-        raise typer.Exit(1)
-
-    generated_text = target_manpage.read_text(encoding="utf-8")
-    context_text = target_context.read_text(encoding="utf-8")
-
-    from ..evaluation.judge import compare_manpages
-
-    try:
-        installed_text = read_manpage_source(installed_path)
-
-        with console.status(f"[bold green]Comparing manpages for {tool}..."):
-            result = compare_manpages(
-                tool_name=tool,
-                generated_text=generated_text,
-                installed_text=installed_text,
-                context_text=context_text,
-                model=model,
-                pass_threshold=min_score,
-            )
-
-        _render_comparison(console, tool, installed_path, result)
-
-    except typer.Exit:
-        raise
-    except (OSError, RuntimeError, ManiacError) as e:
-        console.print(f"[bold red]Comparison error for {tool}: {e}[/bold red]")
-        raise typer.Exit(1) from e

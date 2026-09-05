@@ -15,28 +15,24 @@ runner = CliRunner()
 
 @pytest.fixture(autouse=True)
 def _plain_console(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Pin the CLI's lazy console to a colourless, fixed-width one for this module.
+    """Pin the CLI's lazy console to a colourless one for this module.
 
     H1: `Console()` picks up ambient `FORCE_COLOR`, injecting ANSI codes that
     split plain-substring assertions. Tests must not depend on the shell's
     environment, so pin it here rather than changing production colour
     behaviour.
 
-    TODO: remove this fixture once commands return a result structure that
-    tests assert against directly -- pinning console state is treating the
-    symptom of asserting on rendered prose. Trigger: ADR-0013's cli.py split.
-
-    The width is pinned for the same reason: without it Rich wraps to the
-    ambient terminal size and breaks long paths mid-word, so an assertion
-    like `str(foreign_path) in res.output` fails purely because pytest's
-    `--basetemp` happened to be deep enough to push the line over. That made
-    `test_cli_uninstall_foreign_kept` fail or pass by environment rather than
-    by behaviour.
+    No width pin: commands now compute a result structure that tests assert
+    against directly (see `compute_eval`, `compute_compare`, `compute_uninstall`,
+    `compute_list`), so no remaining assertion depends on how Rich wraps a
+    long dynamic value such as a path. A handful of rendering smoke tests
+    below only check short, fixed strings that cannot wrap at any terminal
+    width.
     """
     monkeypatch.setattr(
         cli_module.console,
         "_instance",
-        Console(force_terminal=False, no_color=True, width=400),
+        Console(force_terminal=False, no_color=True),
     )
 
 
@@ -179,6 +175,8 @@ def test_render_eval_table() -> None:
 
 
 def test_cli_list(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from maniac.cli.inventory import ManagedManpage, compute_list
+
     monkeypatch.setattr(
         "maniac.installer.list_installed_manpages",
         lambda cfg: [
@@ -191,34 +189,57 @@ def test_cli_list(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
             }
         ],
     )
+    assert compute_list() == [
+        ManagedManpage(
+            tool="mytool",
+            path=tmp_path / "mytool.1",
+            model="Flash",
+            date="2026-08-25",
+            has_backup=False,
+        )
+    ]
+
     res = runner.invoke(app, ["list"])
     assert res.exit_code == 0
     assert "MANIAC-Managed Manpages" in res.output
-    assert "mytool" in res.output
 
 
 def test_cli_list_empty(monkeypatch: pytest.MonkeyPatch) -> None:
+    from maniac.cli.inventory import compute_list
+
     monkeypatch.setattr("maniac.installer.list_installed_manpages", lambda cfg: [])
+    assert compute_list() == []
+
     res = runner.invoke(app, ["list"])
     assert res.exit_code == 0
     assert "No MANIAC-managed manpages found" in res.output
 
 
 def test_cli_uninstall(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from maniac.cli.inventory import compute_uninstall
+
     monkeypatch.setattr(
         "maniac.installer.uninstall_manpage",
         lambda tool, purge, config: UninstallResult(removed=[tmp_path / f"{tool}.1"]),
     )
+    outcome = compute_uninstall("mytool")
+    assert outcome.result == UninstallResult(removed=[tmp_path / "mytool.1"])
+
     res = runner.invoke(app, ["uninstall", "mytool"])
     assert res.exit_code == 0
     assert "Uninstalled manpage for mytool!" in res.output
 
 
 def test_cli_uninstall_not_found(monkeypatch: pytest.MonkeyPatch) -> None:
+    from maniac.cli.inventory import compute_uninstall
+
     monkeypatch.setattr(
         "maniac.installer.uninstall_manpage",
         lambda tool, purge, config: UninstallResult(),
     )
+    outcome = compute_uninstall("nonexistent")
+    assert outcome.result == UninstallResult()
+
     res = runner.invoke(app, ["uninstall", "nonexistent"])
     assert res.exit_code == 0
     assert "No installed manpage found for 'nonexistent'" in res.output
@@ -227,7 +248,14 @@ def test_cli_uninstall_not_found(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_cli_uninstall_foreign_kept(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """M2: a foreign page left in `man_dir` must not be reported as fully uninstalled."""
+    """M2: a foreign page left in `man_dir` must not be reported as fully uninstalled.
+
+    Asserts on the returned structure rather than rendered text -- the
+    foreign path is an arbitrary-length pytest tmp_path, and Rich would wrap
+    it unpredictably depending on the ambient terminal width.
+    """
+    from maniac.cli.inventory import compute_uninstall
+
     foreign_path = tmp_path / "man1" / "mytool.1"
     monkeypatch.setattr(
         "maniac.installer.uninstall_manpage",
@@ -235,11 +263,14 @@ def test_cli_uninstall_foreign_kept(
             removed=[tmp_path / f"{tool}.1"], foreign_kept=foreign_path
         ),
     )
+    outcome = compute_uninstall("mytool")
+    assert outcome.result.removed == [tmp_path / "mytool.1"]
+    assert outcome.result.foreign_kept == foreign_path
+
     res = runner.invoke(app, ["uninstall", "mytool"])
     assert res.exit_code == 0
     assert "Uninstalled manpage for mytool!" in res.output
     assert "Left non-MANIAC manpage in place" in res.output
-    assert str(foreign_path) in res.output
 
 
 def test_cli_list_missing_no_man(

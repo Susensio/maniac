@@ -622,7 +622,78 @@ def test_evaluate_manpage_deterministic_failure(
     assert any("Pandoc compilation failed" in d for d in result.defects)
 
 
-def test_cli_eval_success(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_compute_eval_success(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from maniac.cli.evaluate import compute_eval
+
+    manpage_path = tmp_path / "tool.1.md"
+    manpage_path.write_text(VALID_MANPAGE, encoding="utf-8")
+    context_path = tmp_path / "tool_context.md"
+    context_path.write_text("Context documentation", encoding="utf-8")
+
+    expected = EvaluationResult(
+        score=88,
+        passed=True,
+        rubric_breakdown={
+            "domain_ontology": 18,
+            "formatting": 18,
+            "subsystem_grouping": 17,
+            "environment_files_exit": 17,
+            "workflow_examples": 18,
+        },
+        defects=[],
+        summary="Solid manual.",
+    )
+    monkeypatch.setattr(
+        "maniac.evaluation.judge.evaluate_manpage", lambda **kw: expected
+    )
+
+    outcome = compute_eval("tool", manpage_path, context_path)
+    assert outcome.error is None
+    assert outcome.result is expected
+
+
+def test_compute_eval_failure(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from maniac.cli.evaluate import compute_eval
+
+    manpage_path = tmp_path / "tool.1.md"
+    manpage_path.write_text(VALID_MANPAGE, encoding="utf-8")
+    context_path = tmp_path / "tool_context.md"
+    context_path.write_text("Context documentation", encoding="utf-8")
+
+    expected = EvaluationResult(
+        score=55,
+        passed=False,
+        rubric_breakdown={
+            "domain_ontology": 10,
+            "formatting": 10,
+            "subsystem_grouping": 12,
+            "environment_files_exit": 11,
+            "workflow_examples": 12,
+        },
+        defects=["Missing detailed examples."],
+        summary="Needs improvement.",
+    )
+    monkeypatch.setattr(
+        "maniac.evaluation.judge.evaluate_manpage", lambda **kw: expected
+    )
+
+    outcome = compute_eval("tool", manpage_path, context_path)
+    assert outcome.error is None
+    assert outcome.result is expected
+    assert not outcome.result.passed
+
+
+def test_compute_eval_missing_files() -> None:
+    from maniac.cli.evaluate import compute_eval
+
+    outcome = compute_eval("nonexistent_binary_xyz_123")
+    assert outcome.result is None
+    assert outcome.error is not None
+    assert "not found" in outcome.error
+
+
+def test_cli_eval_smoke(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Rendering smoke test: the wiring from outcome to console output, exit code included."""
     manpage_path = tmp_path / "tool.1.md"
     manpage_path.write_text(VALID_MANPAGE, encoding="utf-8")
     context_path = tmp_path / "tool_context.md"
@@ -659,45 +730,6 @@ def test_cli_eval_success(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> No
     assert res.exit_code == 0
     assert "PASSED" in res.output
     assert "Quality Evaluation: tool (88/100)" in res.output
-
-
-def test_cli_eval_failure(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    manpage_path = tmp_path / "tool.1.md"
-    manpage_path.write_text(VALID_MANPAGE, encoding="utf-8")
-    context_path = tmp_path / "tool_context.md"
-    context_path.write_text("Context documentation", encoding="utf-8")
-
-    monkeypatch.setattr(
-        "maniac.evaluation.judge.evaluate_manpage",
-        lambda **kw: EvaluationResult(
-            score=55,
-            passed=False,
-            rubric_breakdown={
-                "domain_ontology": 10,
-                "formatting": 10,
-                "subsystem_grouping": 12,
-                "environment_files_exit": 11,
-                "workflow_examples": 12,
-            },
-            defects=["Missing detailed examples."],
-            summary="Needs improvement.",
-        ),
-    )
-
-    res = runner.invoke(
-        app,
-        [
-            "eval",
-            "tool",
-            "--manpage-file",
-            str(manpage_path),
-            "--context-file",
-            str(context_path),
-        ],
-    )
-    assert res.exit_code == 1
-    assert "FAILED" in res.output
-    assert "Missing detailed examples." in res.output
 
 
 def test_cli_eval_missing_files() -> None:
