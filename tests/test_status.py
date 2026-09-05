@@ -68,3 +68,38 @@ def test_compute_status_with_tools_named_but_absent_reports_nothing(
     monkeypatch.setattr("maniac.cli.status.collect_facts", list)
 
     assert compute_status(["nonexistent-tool"]) == []
+
+
+def test_compute_status_candidates_only_matches_real_dump_selection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Against ADR-0014's real numbers: selects gum/gh/pastel/just, not usage/tmux/bat/fish-lsp."""
+
+    def _source_backed(tool: str, word_count: int, tp_count: int) -> ManpageFacts:
+        return _facts(
+            tool=tool,
+            word_count=word_count,
+            tp_count=tp_count,
+            sources=[RepoSource(name=tool, target=f"org/{tool}", is_local=False)],
+        )
+
+    selected = [
+        _source_backed("gum", 3805, 986),
+        _source_backed("gh", 258, 33),
+        _source_backed("pastel", 283, 28),
+        _source_backed("just", 779, 69),
+    ]
+    not_selected = [
+        _source_backed("usage", 2227, 123),
+        _source_backed("tmux", 31902, 1017),
+        _source_backed("bat", 1919, 0),
+        _source_backed("fish-lsp", 826, 0),
+    ]
+
+    monkeypatch.setattr(
+        "maniac.cli.status.collect_facts", lambda: selected + not_selected
+    )
+    monkeypatch.setattr("maniac.cli.status.default_cfg.min_words_per_flag", 15)
+
+    rows = compute_status(candidates_only=True)
+    assert {row.facts.tool for row in rows} == {"gum", "gh", "pastel", "just"}

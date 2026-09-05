@@ -16,8 +16,9 @@ from typing import Annotated, Any
 import typer
 from rich.table import Table
 
+from ..candidates import CandidateSelection, select_candidate
 from ..classification import ManpageFacts, collect_facts
-from . import app, console
+from . import app, console, default_cfg
 from .render import _repo_cell
 
 
@@ -38,7 +39,9 @@ def _actionable(facts: ManpageFacts) -> bool:
     return bool(facts.sources) or facts.is_maniac_authored
 
 
-def compute_status(tools: list[str] | None = None) -> list[StatusRow]:
+def compute_status(
+    tools: list[str] | None = None, candidates_only: bool = False
+) -> list[StatusRow]:
     """Compute status rows from classification facts. Never recomputes classification.
 
     With no tool names, only actionable pages (see `_actionable`). With tool
@@ -46,6 +49,12 @@ def compute_status(tools: list[str] | None = None) -> list[StatusRow]:
     A named tool absent from the scan (no installed manpage at all) reports
     nothing -- classification facts only exist for pages the manpath scan
     can see.
+
+    `candidates_only` applies after that selection, per ADR-0014: it keeps
+    only pages `candidates.select_candidate` marks SELECTED against
+    `Config.min_words_per_flag`. A page with `NO_EVIDENCE` (unrecognised
+    dialect, or no countable flag entries) is never selected, however poor
+    it is -- under-claiming is the deliberate bias, not a bug here.
     """
     all_facts = collect_facts()
     if tools:
@@ -53,6 +62,15 @@ def compute_status(tools: list[str] | None = None) -> list[StatusRow]:
         matching = [facts for facts in all_facts if facts.tool in wanted]
     else:
         matching = [facts for facts in all_facts if _actionable(facts)]
+
+    if candidates_only:
+        threshold = default_cfg.min_words_per_flag
+        matching = [
+            facts
+            for facts in matching
+            if select_candidate(facts, threshold) is CandidateSelection.SELECTED
+        ]
+
     return [StatusRow(facts=facts) for facts in matching]
 
 
@@ -92,6 +110,13 @@ def status(
             help="Tools to report on. With none, every tool MANIAC could act on."
         ),
     ] = None,
+    candidates: Annotated[
+        bool,
+        typer.Option(
+            "--candidates",
+            help="Only pages MANIAC's internal heuristic flags as improvable.",
+        ),
+    ] = False,
 ) -> None:
     """Report tools MANIAC could act on, or exactly the tools named."""
-    _render_status(console, compute_status(tools))
+    _render_status(console, compute_status(tools, candidates_only=candidates))
