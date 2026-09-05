@@ -57,6 +57,29 @@ def test_repo_cell_links_known_repo_and_labels_unknown() -> None:
     assert unknown.plain == "Unknown"
 
 
+def test_repo_cell_aqua_backend_prefix_links_to_the_real_repo() -> None:
+    """M-repo-cell-aqua: a Mise `tool_alias` naming aqua leaks its prefix into `target`.
+
+    The link must point at the real GitHub repo, not
+    `https://github.com/aqua:sharkdp/pastel` -- the backend prefix
+    concatenated straight into the URL.
+    """
+    cell = _repo_cell(
+        RepoSource(name="pastel", target="aqua:sharkdp/pastel", is_local=False)
+    )
+
+    assert cell.plain == "aqua:sharkdp/pastel"
+    assert cell.style.link == "https://github.com/sharkdp/pastel"
+
+
+def test_repo_cell_non_github_backend_prefix_renders_as_plain_text() -> None:
+    """npm/pipx/cargo package names have no fixed relationship to a GitHub path."""
+    cell = _repo_cell(RepoSource(name="eslint", target="npm:eslint", is_local=False))
+
+    assert cell.plain == "npm:eslint"
+    assert cell.style == "yellow"
+
+
 def test_cli_source_crawl(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         "maniac.sources.crawler.find_subcommands",

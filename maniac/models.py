@@ -1,24 +1,51 @@
 """Data transfer objects for maniac."""
 
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
+
+# A Mise config's `tool_alias` can name any backend ("aqua:", "npm:", "pipx:",
+# "cargo:", ...), and only "github:" is stripped before it reaches `target`
+# (see sources/discovery.py's `_check_mise_toml`). Matches a leading
+# `backend:` so the rest can be told apart from a bare "owner/repo".
+_BACKEND_PREFIX = re.compile(r"^([a-zA-Z][\w-]*):(.+)$")
 
 
 @dataclass
 class RepoSource:
     name: str
-    target: str  # "owner/repo" or "LOCAL:/path" or "https://..."
+    target: str  # "owner/repo", "LOCAL:/path", "https://...", or "backend:identifier"
     is_local: bool
     local_path: Path | None = None
 
     @property
     def clone_url(self) -> str | None:
+        """GitHub clone URL for a bare "owner/repo" shorthand, or None if not resolvable.
+
+        Aqua's package identifier is itself an "owner/repo" pair, so an
+        "aqua:" prefix is stripped and linked; every other backend
+        ("npm:", "pipx:", "cargo:", ...) names a registry package with no
+        fixed relationship to a GitHub path, so guessing a link there would
+        point at the wrong repository rather than none.
+        """
         if self.is_local:
             return None
         if self.target.startswith(("http://", "https://")):
             return self.target
-        if "/" in self.target:
-            return f"https://github.com/{self.target}.git"
+
+        target = self.target
+        prefix_match = _BACKEND_PREFIX.match(target)
+        if prefix_match:
+            backend, rest = prefix_match.group(1), prefix_match.group(2)
+            if backend != "aqua":
+                return None
+            segments = rest.split("/")
+            if len(segments) < 2:
+                return None
+            target = "/".join(segments[:2])
+
+        if "/" in target:
+            return f"https://github.com/{target}.git"
         return None
 
 
