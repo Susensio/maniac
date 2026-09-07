@@ -91,14 +91,19 @@ Verified for real on the development system: `maniac status --candidates` select
 
 ## Verification performed
 
-`just check` (Ruff format, Ruff lint, `ty`, pytest) passes with 238 tests, exit 0.
+Ruff lint, `ty`, and pytest (250 tests) all pass, exit 0.
+`ruff format --check` fails on one pre-existing, unrelated file: `docs/ROADMAP.md`'s embedded Python code fence does not match `ruff format`'s own output (confirmed on a clean `master` via `git stash`, before Stage 1 landed), so `just check` cannot currently exit 0 as a whole until that fence is reformatted or excluded.
 
 ## Direction set 2026-09-07 (ADR-0015, ADR-0016)
 
-Two decisions were taken and nothing was implemented against them yet; `docs/ROADMAP.md` sequences the work in seven stages.
+Two decisions were taken; `docs/ROADMAP.md` sequences the work in seven stages, of which Stage 1 has landed.
 
 ADR-0015 replaces symlink-prefix matching with a provider per installer, each answering detection, source resolution and local documentation as three separate methods, and introduces `Installation` as the type every other layer consumes.
 Name-only registry matching is removed everywhere rather than left available to explicit requests, closing the gap where `discover_repo("envsubst")` returned `a8m/envsubst` and `generate` would have installed a page describing an unrelated program.
+
+Stage 1 landed: the frozen, slotted `Installation` dataclass sits in `maniac/models.py` next to the existing DTOs; the `Provider` protocol is `maniac/sources/providers/base.py`; `ProviderRegistry` plus the module-level singleton `registry` that owns the ordered provider list is `maniac/sources/providers/registry.py`, both re-exported from `sources/providers/__init__.py`.
+Nothing calls any of it yet and the registry is empty of concrete providers by construction -- Stage 2 ports mise, uv tools and `~/.local/lib` behind the protocol and wires `discovery.py` to loop over `registry`.
+Unit tests over `Installation` alone live in `tests/test_installation.py`; `tests/test_provider_registry.py` covers registration and iteration order with a fake provider, since no concrete one exists yet.
 
 ADR-0016 puts authoritative pages ahead of synthesis in a fixed order -- install root, then repository or online with the version matched, then the LLM -- and renames `generate` to `install`, making it the inverse of the previously orphaned `uninstall`, with `--generate` and `--no-generate` selecting the tier.
 It supersedes ADR-0014: judging whether an existing page is poor enough to replace leaves the current scope, taking `--candidates` and `min_words_per_flag` with it.

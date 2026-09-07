@@ -49,6 +49,20 @@ class RepoSource:
         return None
 
 
+@dataclass(frozen=True, slots=True)
+class Installation:
+    """A binary as a provider (ADR-0015) detected it: where it lives and who installed it."""
+
+    binary: str  # "hx"
+    bin_path: Path  # ~/.local/bin/hx, the symlink or real file
+    real_path: Path  # what it resolves to
+    provider: str  # "mise"
+    package: str  # identity in the provider's namespace
+    version: str | None  # "25.01"
+    root: Path  # install root; docs may live under it
+    parent: "Installation | None" = None  # mise -> its backend
+
+
 @dataclass
 class DocFile:
     rel_path: str
