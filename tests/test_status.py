@@ -9,7 +9,7 @@ from rich.console import Console
 from typer.testing import CliRunner
 
 import maniac.cli as cli_module
-from maniac.classification import ManpageFacts
+from maniac.classification import ManpageFacts, absent_facts
 from maniac.cli import app
 from maniac.cli.status import StatusRow, _render_status, compute_status
 from maniac.models import RepoSource
@@ -69,12 +69,69 @@ def test_compute_status_with_tools_is_unfiltered(
     assert rows == [StatusRow(facts=unreachable)]
 
 
-def test_compute_status_with_tools_named_but_absent_reports_nothing(
+def test_compute_status_named_tool_with_no_page_yields_one_absence_row(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """The row ADR-0013 promised: `maniac status uv` with no uv(1) installed."""
+    source = RepoSource(name="uv", target="astral-sh/uv", is_local=False)
     monkeypatch.setattr("maniac.cli.status.collect_facts", list)
+    monkeypatch.setattr(
+        "maniac.classification.discover_candidate_source", lambda tool: source
+    )
 
-    assert compute_status(["nonexistent-tool"]) == []
+    rows = compute_status(["uv"])
+
+    assert len(rows) == 1
+    facts = rows[0].facts
+    assert facts.tool == "uv"
+    assert facts.exists is False
+    assert facts.sources == [source]
+    assert (facts.word_count, facts.tp_count, facts.sections) == (0, 0, [])
+
+
+def test_compute_status_absence_row_only_for_the_named_tools_without_facts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    installed = _facts(tool="gum")
+    monkeypatch.setattr("maniac.cli.status.collect_facts", lambda: [installed])
+    monkeypatch.setattr(
+        "maniac.classification.discover_candidate_source", lambda tool: None
+    )
+
+    rows = compute_status(["gum", "uv", "uv"])
+
+    assert [(row.facts.tool, row.facts.exists) for row in rows] == [
+        ("gum", True),
+        ("uv", False),
+    ]
+
+
+def test_compute_status_no_args_never_invents_an_absence_row(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No enumeration of uninstalled tools: the no-argument listing is the scan, only."""
+    monkeypatch.setattr("maniac.cli.status.collect_facts", list)
+    monkeypatch.setattr(
+        "maniac.classification.discover_candidate_source",
+        lambda tool: pytest.fail("no-argument listing must not resolve sources"),
+    )
+
+    assert compute_status() == []
+
+
+def test_compute_status_candidates_only_keeps_the_absence_row(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A missing page has nothing to lose from generation, so `--candidates` keeps it."""
+    monkeypatch.setattr("maniac.cli.status.collect_facts", list)
+    monkeypatch.setattr(
+        "maniac.classification.discover_candidate_source", lambda tool: None
+    )
+    monkeypatch.setattr("maniac.cli.status.default_cfg.min_words_per_flag", 15)
+
+    rows = compute_status(["uv"], candidates_only=True)
+
+    assert [row.facts.tool for row in rows] == ["uv"]
 
 
 def test_compute_status_candidates_only_matches_real_dump_selection(
@@ -121,6 +178,44 @@ def test_render_status_tty_shows_a_table() -> None:
     output = buf.getvalue()
     assert "Manpage Status" in output
     assert "gum" in output
+
+
+def test_render_status_absent_page_renders_dashes_not_zeros(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A measured zero and an unmeasured absence must not look alike in the table."""
+    monkeypatch.setattr(
+        "maniac.classification.discover_candidate_source", lambda tool: None
+    )
+    buf = io.StringIO()
+    test_console = Console(file=buf, force_terminal=True, no_color=True, width=80)
+
+    _render_status(
+        test_console,
+        [StatusRow(facts=absent_facts("uv")), StatusRow(facts=_facts(tool="gum"))],
+    )
+
+    lines = buf.getvalue().splitlines()
+    absent_line = next(line for line in lines if "uv" in line)
+    measured_line = next(line for line in lines if "gum" in line)
+    assert "0" not in absent_line
+    assert absent_line.count("-") >= 3
+    assert measured_line.count("0") >= 2
+
+
+def test_render_status_absent_page_prints_its_name_bare(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`maniac status uv --candidates | xargs maniac generate` needs the name, alone."""
+    monkeypatch.setattr(
+        "maniac.classification.discover_candidate_source", lambda tool: None
+    )
+    buf = io.StringIO()
+    test_console = Console(file=buf, force_terminal=False)
+
+    _render_status(test_console, [StatusRow(facts=absent_facts("uv"))])
+
+    assert capsys.readouterr().out == "uv\n"
 
 
 def test_render_status_non_tty_prints_bare_names(

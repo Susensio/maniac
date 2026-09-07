@@ -35,6 +35,12 @@ from .sources.manpages import (
 
 CACHE_FILENAME = "classification.json"
 
+# Stand-in `path` for a tool with no installed page. Keeps `ManpageFacts.path`
+# non-optional, so the cache round-trip needs no None case; absence rows are
+# never cached, since the cache key is (path, mtime, size) and an absent page
+# has none of the three.
+ABSENT_PATH = Path("<absent>")
+
 # Bump on any change to ManpageFacts's fields (add, remove, rename, retype).
 # A mismatch discards the whole cache instead of crashing on stale rows.
 CACHE_SCHEMA_VERSION = 3
@@ -186,6 +192,31 @@ def _classify_page(page: HelpDerivedManpage) -> ManpageFacts:
         tp_count=count_tp_entries(content, dialect),
         sections=sections,
         has_examples_section=has_examples_section(sections),
+        sources=[source] if source else [],
+    )
+
+
+def absent_facts(tool: str) -> ManpageFacts:
+    """Facts for a named tool with no installed page: empty everywhere but the source.
+
+    Source resolution goes through the same `discover_candidate_source` as
+    `_classify_page`, which is what makes the row worth printing -- it names
+    the source MANIAC would generate the missing page from. Nothing here is
+    measured, so every observation is the zero value rather than a claim.
+    """
+    source = discover_candidate_source(tool)
+    return ManpageFacts(
+        tool=tool,
+        section="",
+        path=ABSENT_PATH,
+        exists=False,
+        is_maniac_authored=False,
+        generator=None,
+        dialect=Dialect.UNKNOWN,
+        word_count=0,
+        tp_count=0,
+        sections=[],
+        has_examples_section=False,
         sources=[source] if source else [],
     )
 

@@ -17,7 +17,7 @@ import typer
 from rich.table import Table
 
 from ..candidates import CandidateSelection, select_candidate
-from ..classification import ManpageFacts, collect_facts
+from ..classification import ManpageFacts, absent_facts, collect_facts
 from . import app, console, default_cfg
 from .render import _repo_cell
 
@@ -45,10 +45,11 @@ def compute_status(
     """Compute status rows from classification facts. Never recomputes classification.
 
     With no tool names, only actionable pages (see `_actionable`). With tool
-    names, every matching page found in the classification scan, unfiltered.
-    A named tool absent from the scan (no installed manpage at all) reports
-    nothing -- classification facts only exist for pages the manpath scan
-    can see.
+    names, every matching page found in the classification scan, unfiltered,
+    plus one absence row per named tool the scan found no page for -- the
+    common case MANIAC exists to serve. Absence rows come from naming a tool
+    and nothing else: there is no enumeration of uninstalled tools, and no
+    check that the binary exists, per ADR-0013.
 
     `candidates_only` applies after that selection, per ADR-0014: it keeps
     only pages `candidates.select_candidate` marks SELECTED against
@@ -58,8 +59,10 @@ def compute_status(
     """
     all_facts = collect_facts()
     if tools:
-        wanted = set(tools)
+        wanted = dict.fromkeys(tools)
         matching = [facts for facts in all_facts if facts.tool in wanted]
+        found = {facts.tool for facts in matching}
+        matching += [absent_facts(tool) for tool in wanted if tool not in found]
     else:
         matching = [facts for facts in all_facts if _actionable(facts)]
 
@@ -80,6 +83,14 @@ def _bare_names(rows: list[StatusRow]) -> list[str]:
     for row in rows:
         seen.setdefault(row.facts.tool, None)
     return list(seen)
+
+
+def _observed(facts: ManpageFacts, value: object) -> str:
+    """Rendered observation, or `-` where there was no page to measure.
+
+    A measured zero and an unmeasured absence must not look alike.
+    """
+    return str(value) if facts.exists else "-"
 
 
 def _render_status(
@@ -114,9 +125,9 @@ def _render_status(
         source_cell = _repo_cell(facts.sources[0]) if facts.sources else "-"
         table.add_row(
             facts.tool,
-            facts.section,
-            str(facts.word_count),
-            str(facts.tp_count),
+            _observed(facts, facts.section),
+            _observed(facts, facts.word_count),
+            _observed(facts, facts.tp_count),
             "MANIAC" if facts.is_maniac_authored else "vendor",
             source_cell,
         )

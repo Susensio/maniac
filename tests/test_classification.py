@@ -422,3 +422,26 @@ def test_dump_prints_one_row_per_tool_with_every_fact(monkeypatch) -> None:
     assert "dialect=mdoc" in result.output
     assert "tp_count=986" in result.output
     assert "sources=none" in result.output
+
+
+def test_absent_facts_reports_the_source_it_would_generate_from(monkeypatch) -> None:
+    """A named tool with no installed page: no measurements, but a usable source."""
+    source = RepoSource(name="uv", target="astral-sh/uv", is_local=False)
+    monkeypatch.setattr(
+        classification, "discover_candidate_source", lambda name: source
+    )
+
+    assert classification.absent_facts("uv") == ManpageFacts(
+        tool="uv",
+        section="",
+        path=classification.ABSENT_PATH,
+        exists=False,
+        is_maniac_authored=False,
+        generator=None,
+        dialect=Dialect.UNKNOWN,
+        word_count=0,
+        tp_count=0,
+        sections=[],
+        has_examples_section=False,
+        sources=[source],
+    )
