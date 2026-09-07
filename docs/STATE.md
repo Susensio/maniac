@@ -38,16 +38,18 @@ Evidence from a real run on the development system: 5504 pages classified; gener
 
 ## Repo-shipped manpage detection
 
-`manpages.find_repo_manpage(repo_dir, binary_name)` globs a repo's root and its `man`/`doc`/`docs` trees for `<bin>.[1-9]` then `<bin>-*.[1-9]` (mirroring the glob `~/.config/mise/tasks/system-install` uses), rejecting help2man-generated hits.
+`manpages.find_repo_manpage(repo_dir, binary_name)` globs a repo's root and its `man`/`doc`/`docs`/`share/man` trees for `<bin>.[1-9]` then `<bin>-*.[1-9]` (mirroring the glob `~/.config/mise/tasks/system-install` uses), each pattern expanded across `_COMPRESSION_SUFFIXES` (`""`, `.gz`, `.bz2`, `.xz`, `.zst`), rejecting help2man-generated hits.
+`REPO_MANPAGE_DIRS` holds path-prefix tuples rather than top-level names, so `share/man/man1/` is reached while an unrelated `vendor/man/` still is not.
 An exact `<bin>.<section>` match always wins over a `-*` subcommand variant -- naive lexical sorting returns `fzf-tmux.1` before `fzf.1` since `-` sorts before `.`.
 `docs.discover_repo_manpage` resolves (cloning if needed) through the same cache path `fetch_and_extract_docs` uses, via `docs.resolve_repo_dir`, then delegates to `find_repo_manpage`.
 
 Confirmed against real repos: finds `fzf.1` at `junegunn/fzf` and `tmux.1` at the root of `tmux/tmux`.
 Cannot find a page for `eza-community/eza` or `sharkdp/bat`, whose manpages are release-time-generated assets never committed to the tree; see `docs/BACKLOG.md` for that gap and the separate `tmux`/`tmux-builds` docs-repo mismatch this testing surfaced.
 
-Not wired into any command yet -- `status` and `run_pipeline` both still treat every candidate as needing an LLM-generated page.
-Stage 5 of `docs/ROADMAP.md` claims this work, and two latent defects have to be fixed as part of it: the glob `<bin>.[1-9]` does not match a compressed page such as `pandoc.1.gz`, and the search covers a repository root plus `man`/`doc`/`docs` only, so it never reaches `share/man/man<N>/`.
-Both are invisible today because nothing calls the function.
+The two latent defects Stage 5 named as prerequisites are fixed: a compressed page such as `pandoc.1.gz` now matches, and the search reaches `share/man/man<N>/`.
+Both were invisible because nothing calls the function, which is still true -- `status` and `run_pipeline` both treat every candidate as needing an LLM-generated page, and wiring `local_docs()` to install roots is the rest of Stage 5.
+One gap remains open, recorded in `docs/BACKLOG.md`: `_opener_for` has no zstd branch, so a `.zst` page now matches by filename but cannot be read, and the `is_help2man_manpage` gate fails open on it.
+No such page has been observed on the development system.
 
 ## Installed-vs-generated manpage comparison
 
@@ -91,8 +93,9 @@ Verified for real on the development system: `maniac status --candidates` select
 
 ## Verification performed
 
-Ruff lint, `ty`, and pytest (250 tests) all pass, exit 0.
-`ruff format --check` fails on one pre-existing, unrelated file: `docs/ROADMAP.md`'s embedded Python code fence does not match `ruff format`'s own output (confirmed on a clean `master` via `git stash`, before Stage 1 landed), so `just check` cannot currently exit 0 as a whole until that fence is reformatted or excluded.
+`just check` (Ruff format, Ruff lint, `ty`, pytest) passes with 250 tests, exit 0.
+`ruff format` reaches Python code fences inside markdown, so `docs/ROADMAP.md`'s Stage 1 fence had to be reformatted to its output; the hand-aligned field comments in the roadmap are gone as a result.
+That failure predated this work -- confirmed against `f518a8a` -- meaning `just check` was already red on `master` and no stage had actually landed green under it.
 
 ## Direction set 2026-09-07 (ADR-0015, ADR-0016)
 
