@@ -8,6 +8,8 @@ A model is now a literal LiteLLM identifier; there is no translation layer.
 User settings live in `$XDG_CONFIG_HOME/maniac/config.toml` with optional keys `provider`, `model`, and `reasoning_effort`; `.env` continues to hold credentials.
 A leftover `config.yaml` with no `config.toml` present raises an error naming the format change.
 `pyyaml` was dropped as a dependency.
+`Config.work_base_dir` and the `work_base_dir` parameter on `run_llm_synthesis` and `evaluation/judge.py`'s four functions are gone too -- only the removed agy backend ever wanted a scratch directory, and nothing had created, written or cleaned `$XDG_CACHE_HOME/maniac/tmp` since.
+The field was constructor-only: `_load_config_file` is an allowlist copying just `provider`, `model`, `reasoning_effort` and `[classification].min_words_per_flag`, so `work_base_dir` was never settable from `config.toml` and no existing user config changes meaning.
 
 Model resolution follows one chain: CLI flag, then `config.toml` settings, then environment (`MANIAC_MODEL`), then the first configured provider whose API key is present, then that provider's default model.
 Four resolution decisions not settled by ADR-0011: `model` in `config.toml` outranks `provider` there; `reasoning_effort` precedence mirrors the model chain; no `MANIAC_PROVIDER` env var exists; model validation strips the provider prefix before checking the registry.
