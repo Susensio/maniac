@@ -67,7 +67,14 @@ The `_plain_console` fixture's `width=400` pin and its `TODO:` are gone with it 
 
 `status [TOOL...] [--candidates]` replaces `list` and `list-missing`.
 The threshold `--candidates` selects on is `[classification] min_words_per_flag` in `maniac/defaults.toml`, overridable in the user's `config.toml`; ADR-0014 records why it is configuration rather than a command-line option.
-With no arguments it reads `classification.collect_facts()` (never recomputing classification) and keeps pages with a resolvable source or that MANIAC already manages; with tool names it reports exactly those, unfiltered -- classification facts only exist for pages the manpath scan can see, so a named tool with no installed page at all reports nothing, a gap left open rather than reimplementing a bin-dir scan ADR-0013 deliberately removed.
+With no arguments it reads `classification.collect_facts()` (never recomputing classification) and keeps pages with a resolvable source or that MANIAC already manages; with tool names it reports exactly those, unfiltered.
+
+A named tool the manpath scan never saw now reports an absence row rather than nothing -- `maniac status uv` was silent, which is the common case MANIAC exists to serve.
+`classification.absent_facts(tool)` builds it: source resolved through the same `discover_candidate_source` `_classify_page` uses, so the row still shows what MANIAC would generate from, and every measured fact left at its zero or empty value.
+`ManpageFacts.path` stays a non-optional `Path`, filled with an `ABSENT_PATH = Path("<absent>")` sentinel; widening it to `Path | None` would have forced a `None` branch through `_facts_to_row`/`_row_to_facts` for a value that can never reach the cache, and `Path()` was rejected because it stringifies to `.` and would read as the cwd in `python -m maniac.classification dump`.
+Absence rows are built outside `collect_facts` and never cached -- the cache is keyed on `(path, mtime, size)` and an absent page has none of the three -- so `CACHE_SCHEMA_VERSION` is unchanged.
+Three decisions this closed: only named arguments produce absence rows, since enumerating uninstalled tools would mean reinstating the bin-dir scan ADR-0013 removed; a named tool yields an absence row without checking whether its binary exists, for the same reason; and the table renders `-` for Section, Words and Flag entries on an absent page (`_observed`), never `0`, so an unmeasured absence cannot be misread as a measured zero.
+`--candidates` needed no change: `candidates.select_candidate` already returns `SELECTED` for `not facts.exists`.
 `--candidates` filters further to `candidates.select_candidate(...) is SELECTED` against `Config.min_words_per_flag`, never a CLI-exposed threshold, per ADR-0014.
 Columns are observations only (word count, flag-entry count, ownership, source), never a verdict.
 Redirected to anything but a terminal, `status` prints bare tool names -- one per line, deduplicated across sections, via `print()` rather than the Rich console -- which is what makes `maniac status --candidates | xargs maniac generate` and `maniac generate $(maniac status --candidates)` work; `--names` forces the same output on a real terminal.
@@ -76,7 +83,8 @@ Redirected to anything but a terminal, `status` prints bare tool names -- one pe
 `generate` with zero tool names exits 0 quietly rather than raising Typer's missing-argument error, since a `$(maniac status --candidates)` expansion can legitimately be empty.
 
 Verified for real on the development system: `maniac status --candidates` selects `gum`, `gh`, `pastel`, `just` and excludes `usage`, `aichat`, `tmux`, `bat`, `fish-lsp`, matching ADR-0014's numbers; `maniac status --candidates | cat` prints the four names bare, one per line.
+`maniac status uv hx bat` renders `uv` and `hx` with `-` in Section/Words/Flag entries and live sources (`astral-sh/uv`, `helix-editor/helix`) while `bat` keeps its measured `1919`/`0`; `maniac status uv hx --candidates | cat` prints `uv` and `hx`, so the pipe into `xargs maniac generate` reaches tools with no page at all.
 
 ## Verification performed
 
-`just check` (Ruff format, Ruff lint, `ty`, pytest) passes with 232 tests, exit 0.
+`just check` (Ruff format, Ruff lint, `ty`, pytest) passes with 238 tests, exit 0.
