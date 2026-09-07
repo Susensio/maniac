@@ -13,19 +13,20 @@ Add `Installation` and the `Provider` protocol. Nothing calls them yet.
 ```python
 @dataclass(frozen=True, slots=True)
 class Installation:
-    binary: str                  # "hx"
-    bin_path: Path               # ~/.local/bin/hx, the symlink or real file
-    real_path: Path              # what it resolves to
-    provider: str                # "mise"
-    package: str                 # identity in the provider's namespace
-    version: str | None          # "25.01"
-    root: Path                   # install root; docs may live under it
-    parent: "Installation | None" = None    # mise -> its backend
+    binary: str  # "hx"
+    bin_path: Path  # ~/.local/bin/hx, the symlink or real file
+    real_path: Path  # what it resolves to
+    provider: str  # "mise"
+    package: str  # identity in the provider's namespace
+    version: str | None  # "25.01"
+    root: Path  # install root; docs may live under it
+    parent: "Installation | None" = None  # mise -> its backend
 ```
 
 ```python
 class Provider(Protocol):
     name: str
+
     def detect(self, bin_path: Path) -> Installation | None: ...
     def resolve_source(self, inst: Installation) -> RepoSource | None: ...
     def local_docs(self, inst: Installation) -> list[Path]: ...
