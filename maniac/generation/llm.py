@@ -1,6 +1,5 @@
 """LLM synthesis execution via LiteLLM."""
 
-from pathlib import Path
 from typing import Protocol, cast
 
 from ..config import Config
@@ -25,17 +24,11 @@ def run_llm_synthesis(
     tool_name: str,
     model: str | None = None,
     reasoning_effort: str | None = None,
-    work_base_dir: str | Path | None = None,
     timeout: int | None = None,
     clean_header: bool = True,
     config: Config | None = None,
 ) -> str:
-    """Generate a response through LiteLLM with configured credentials.
-
-    `work_base_dir` is accepted but unused: it only ever fed the removed
-    agy-subprocess backend's temp workspace. Kept so evaluation/judge.py's
-    call sites don't need to change.
-    """
+    """Generate a response through LiteLLM with configured credentials."""
     cfg = config or Config()
     effective_timeout = timeout if timeout is not None else cfg.timeout_llm
     selected_model = cfg.resolve_model(model)

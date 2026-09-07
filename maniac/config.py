@@ -160,7 +160,6 @@ class Config:
 
     config_dir: Path = field(default_factory=lambda: _CONFIG_DIR)
     cache_dir: Path = field(default_factory=lambda: _XDG_CACHE / "maniac" / "repos")
-    work_base_dir: Path = field(default_factory=lambda: _XDG_CACHE / "maniac" / "tmp")
     output_dir: Path = field(default_factory=lambda: _XDG_DATA / "maniac" / "manpages")
     man_dir: Path = field(default_factory=lambda: _XDG_DATA / "man" / "man1")
     intermediate_dir: Path = field(

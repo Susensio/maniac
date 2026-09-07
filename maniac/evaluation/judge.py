@@ -2,7 +2,6 @@ import json
 import re
 import shutil
 import subprocess
-from pathlib import Path
 from typing import Any
 
 import json_repair
@@ -488,13 +487,9 @@ def run_llm_judge(
     context_text: str,
     model: str | None = None,
     pass_threshold: int = 70,
-    work_base_dir: str | Path | None = None,
     cov: CoverageStats | None = None,
 ) -> EvaluationResult:
     """Run LLM-as-a-Judge quality evaluation against reference context."""
-    target_work_dir = (
-        Path(work_base_dir) if work_base_dir is not None else Config().work_base_dir
-    )
     prompt = build_evaluation_prompt(
         tool_name,
         manpage_text,
@@ -506,7 +501,6 @@ def run_llm_judge(
         prompt=prompt,
         tool_name=tool_name,
         model=model,
-        work_base_dir=target_work_dir,
         clean_header=False,
     )
     try:
@@ -538,7 +532,6 @@ def evaluate_manpage(
     context_text: str,
     model: str | None = None,
     pass_threshold: int = 70,
-    work_base_dir: str | Path | None = None,
 ) -> EvaluationResult:
     """Run deterministic checks and LLM-as-a-Judge quality evaluation."""
     cov = compute_coverage(manpage_text, context_text) if context_text else None
@@ -555,7 +548,6 @@ def evaluate_manpage(
         context_text=context_text,
         model=model,
         pass_threshold=pass_threshold,
-        work_base_dir=work_base_dir,
         cov=cov,
     )
 
@@ -645,12 +637,8 @@ def run_comparison_judge(
     generated_text: str,
     context_text: str,
     model: str | None = None,
-    work_base_dir: str | Path | None = None,
 ) -> dict[str, Any]:
     """Run LLM-as-a-Judge head-to-head comparison between installed and generated manpages."""
-    target_work_dir = (
-        Path(work_base_dir) if work_base_dir is not None else Config().work_base_dir
-    )
     prompt = build_comparison_prompt(
         tool_name, installed_text, generated_text, context_text
     )
@@ -658,7 +646,6 @@ def run_comparison_judge(
         prompt=prompt,
         tool_name=tool_name,
         model=model,
-        work_base_dir=target_work_dir,
         clean_header=False,
     )
     try:
@@ -681,7 +668,6 @@ def compare_manpages(
     context_text: str,
     model: str | None = None,
     pass_threshold: int = 70,
-    work_base_dir: str | Path | None = None,
 ) -> ComparisonResult:
     """Score an installed manpage and MANIAC's generated one against the same rubric,
     then judge them head-to-head for a prose comparison.
@@ -696,7 +682,6 @@ def compare_manpages(
         context_text=context_text,
         model=model,
         pass_threshold=pass_threshold,
-        work_base_dir=work_base_dir,
     )
     installed_result = run_llm_judge(
         tool_name=tool_name,
@@ -704,7 +689,6 @@ def compare_manpages(
         context_text=context_text,
         model=model,
         pass_threshold=pass_threshold,
-        work_base_dir=work_base_dir,
     )
     comparison = run_comparison_judge(
         tool_name=tool_name,
@@ -712,7 +696,6 @@ def compare_manpages(
         generated_text=generated_text,
         context_text=context_text,
         model=model,
-        work_base_dir=work_base_dir,
     )
 
     return ComparisonResult(
