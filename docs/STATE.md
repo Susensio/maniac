@@ -45,7 +45,9 @@ An exact `<bin>.<section>` match always wins over a `-*` subcommand variant -- n
 Confirmed against real repos: finds `fzf.1` at `junegunn/fzf` and `tmux.1` at the root of `tmux/tmux`.
 Cannot find a page for `eza-community/eza` or `sharkdp/bat`, whose manpages are release-time-generated assets never committed to the tree; see `docs/BACKLOG.md` for that gap and the separate `tmux`/`tmux-builds` docs-repo mismatch this testing surfaced.
 
-Not wired into any command yet -- `status` and `run_pipeline` both still treat every candidate as needing an LLM-generated page; see `docs/BACKLOG.md`.
+Not wired into any command yet -- `status` and `run_pipeline` both still treat every candidate as needing an LLM-generated page.
+Stage 5 of `docs/ROADMAP.md` claims this work, and two latent defects have to be fixed as part of it: the glob `<bin>.[1-9]` does not match a compressed page such as `pandoc.1.gz`, and the search covers a repository root plus `man`/`doc`/`docs` only, so it never reaches `share/man/man<N>/`.
+Both are invisible today because nothing calls the function.
 
 ## Installed-vs-generated manpage comparison
 
@@ -90,3 +92,17 @@ Verified for real on the development system: `maniac status --candidates` select
 ## Verification performed
 
 `just check` (Ruff format, Ruff lint, `ty`, pytest) passes with 238 tests, exit 0.
+
+## Direction set 2026-09-07 (ADR-0015, ADR-0016)
+
+Two decisions were taken and nothing was implemented against them yet; `docs/ROADMAP.md` sequences the work in seven stages.
+
+ADR-0015 replaces symlink-prefix matching with a provider per installer, each answering detection, source resolution and local documentation as three separate methods, and introduces `Installation` as the type every other layer consumes.
+Name-only registry matching is removed everywhere rather than left available to explicit requests, closing the gap where `discover_repo("envsubst")` returned `a8m/envsubst` and `generate` would have installed a page describing an unrelated program.
+
+ADR-0016 puts authoritative pages ahead of synthesis in a fixed order -- install root, then repository or online with the version matched, then the LLM -- and renames `generate` to `install`, making it the inverse of the previously orphaned `uninstall`, with `--generate` and `--no-generate` selecting the tier.
+It supersedes ADR-0014: judging whether an existing page is poor enough to replace leaves the current scope, taking `--candidates` and `min_words_per_flag` with it.
+
+Evidence behind ADR-0016, from the development system: `pandoc` ships `pandoc.1.gz`, `pandoc-lua.1.gz` and `pandoc-server.1.gz` in its mise install root while `man pandoc` reports no manual entry; `fzf`, `just`, `zoxide`, `pastel` and `gh` ship pages too (`gh` ships 220).
+Evidence behind ADR-0015: 588 PATH symlinks resolve in 1.82s against 1.96s to classify 5504 manpages, over a fixed 0.84s of interpreter and import startup -- so inverting enumeration buys capability, not speed, and the speed argument should not be made again.
+`CARGO_HOME` is `~/.local/share/cargo` here, not `~/.cargo`, and holds no `.crates2.json`, so no cargo-installed crate exists to detect yet.

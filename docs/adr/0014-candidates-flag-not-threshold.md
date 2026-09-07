@@ -1,6 +1,6 @@
 # ADR-0014: Select candidates with a boolean flag instead of exposing the heuristic or naming a page state
 
-Status: Accepted
+Status: Superseded by [ADR-0016](0016-authoritative-manpages-first.md)
 Date: 2026-09-05
 
 ## Context
