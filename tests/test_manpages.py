@@ -254,6 +254,25 @@ def test_find_repo_manpage_matches_at_repo_root(tmp_path: Path) -> None:
     assert find_repo_manpage(tmp_path, "tool") == manpage
 
 
+def test_find_repo_manpage_matches_compressed_page(tmp_path: Path) -> None:
+    doc_dir = tmp_path / "doc"
+    doc_dir.mkdir()
+    manpage = doc_dir / "pandoc.1.gz"
+    with gzip.open(manpage, "wt", encoding="utf-8") as file:
+        file.write(".TH PANDOC 1\n")
+
+    assert find_repo_manpage(tmp_path, "pandoc") == manpage
+
+
+def test_find_repo_manpage_reaches_share_man(tmp_path: Path) -> None:
+    man1_dir = tmp_path / "share" / "man" / "man1"
+    man1_dir.mkdir(parents=True)
+    manpage = man1_dir / "tool.1"
+    manpage.write_text(".TH TOOL 1\n", encoding="utf-8")
+
+    assert find_repo_manpage(tmp_path, "tool") == manpage
+
+
 def test_find_repo_manpage_skips_help2man_generated_pages(tmp_path: Path) -> None:
     doc_dir = tmp_path / "doc"
     doc_dir.mkdir()
