@@ -37,6 +37,7 @@ def test_clean_git_url() -> None:
     assert (
         _clean_git_url("https://github.com/helix-editor/helix") == "helix-editor/helix"
     )
+    assert _clean_git_url("https://github.com/d4nj1/TLPUI/") == "d4nj1/TLPUI"
 
 
 def test_extract_mise_tool_id() -> None:

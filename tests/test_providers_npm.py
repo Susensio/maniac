@@ -102,6 +102,23 @@ def test_resolve_source_reads_the_github_shorthand(tmp_path: Path) -> None:
     assert source == RepoSource(name="tool", target="owner/tool", is_local=False)
 
 
+def test_resolve_source_accepts_a_slash_terminated_repository_url(
+    tmp_path: Path,
+) -> None:
+    bin_path, _root = _make_npm_global(
+        tmp_path,
+        "tool",
+        "tool",
+        {"name": "tool", "repository": "https://github.com/owner/tool/"},
+    )
+    inst = npm.NpmProvider().detect(bin_path)
+    assert inst is not None
+
+    source = npm.NpmProvider().resolve_source(inst)
+
+    assert source == RepoSource(name="tool", target="owner/tool", is_local=False)
+
+
 def test_resolve_source_returns_none_with_no_repository_field(tmp_path: Path) -> None:
     bin_path, _root = _make_npm_global(
         tmp_path, "tool", "tool", {"name": "tool", "version": "1.0.0"}

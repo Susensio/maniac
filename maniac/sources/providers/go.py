@@ -64,12 +64,18 @@ class GoProvider:
 
 
 def _resolve_gobin() -> Path:
-    """`$GOBIN`, then `$GOPATH/bin`, then `~/go/bin` -- go's own resolution order."""
+    """`$GOBIN`, then `$GOPATH/bin`, then `~/go/bin` -- go's own resolution order.
+
+    `GOPATH` may list several `os.pathsep`-separated directories; `go install`
+    only ever uses the first one's `bin`.
+    """
     gobin = os.environ.get("GOBIN")
     if gobin:
         return Path(gobin).expanduser()
     gopath = os.environ.get("GOPATH")
-    base = Path(gopath).expanduser() if gopath else Path.home() / "go"
+    base = (
+        Path(gopath.split(os.pathsep)[0]).expanduser() if gopath else Path.home() / "go"
+    )
     return base / "bin"
 
 

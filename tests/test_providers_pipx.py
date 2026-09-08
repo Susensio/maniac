@@ -118,6 +118,32 @@ def test_resolve_source_reads_a_repository_project_url(tmp_path, monkeypatch) ->
     assert source == RepoSource(name="tlpui", target="d4nj1/TLPUI", is_local=False)
 
 
+def test_resolve_source_prefers_a_repository_label_over_an_earlier_github_link(
+    tmp_path, monkeypatch
+) -> None:
+    """A GitHub-hosted docs mirror listed before the real repository must not
+    win just because it comes first -- the `Repository` label wins."""
+    bin_path, _root = _make_pipx_venv(
+        tmp_path,
+        "tlp-ui",
+        "tlpui",
+        dist_info_name="tlp_ui-1.10.1.dist-info",
+        metadata_name="tlp-ui",
+        version="1.10.1",
+        extra=(
+            "Project-URL: Documentation, https://github.com/readthedocs/tlp-ui-docs\n"
+            "Project-URL: Repository, https://github.com/d4nj1/TLPUI\n"
+        ),
+    )
+    provider = _provider(tmp_path, monkeypatch)
+    inst = provider.detect(bin_path)
+    assert inst is not None
+
+    source = provider.resolve_source(inst)
+
+    assert source == RepoSource(name="tlpui", target="d4nj1/TLPUI", is_local=False)
+
+
 def test_resolve_source_returns_none_with_no_github_url(tmp_path, monkeypatch) -> None:
     bin_path, _root = _make_pipx_venv(tmp_path, "howdoi", "howdoi", version="2.0.20")
     provider = _provider(tmp_path, monkeypatch)

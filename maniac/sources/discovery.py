@@ -252,7 +252,7 @@ def _mise_entry_repo(entry: dict[str, object]) -> str | None:
 
 def _clean_git_url(url: str) -> str:
     url = url.strip()
-    match = re.search(r"github\.com[/:]([\w.-]+/[\w.-]+?)(?:\.git)?$", url)
+    match = re.search(r"github\.com[/:]([\w.-]+/[\w.-]+?)(?:\.git)?/?$", url)
     if match:
         return match.group(1)
     return url

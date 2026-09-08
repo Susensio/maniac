@@ -5,6 +5,7 @@ rather than shelled out to in tests -- mirrors `test_providers_mise.py`
 monkeypatching `mise.discovery._resolve_from_mise`.
 """
 
+import os
 from pathlib import Path
 
 from maniac.models import RepoSource
@@ -62,6 +63,26 @@ def test_detect_honors_gobin_when_set(tmp_path, monkeypatch) -> None:
 
     assert inst is not None
     assert inst.root == gobin
+
+
+def test_detect_uses_only_the_first_gopath_entry(tmp_path, monkeypatch) -> None:
+    """`GOPATH` may list several `os.pathsep`-separated directories; `go
+    install` only ever uses the first one's `bin`."""
+    monkeypatch.delenv("GOBIN", raising=False)
+    first = tmp_path / "work"
+    second = tmp_path / "shared"
+    monkeypatch.setenv("GOPATH", f"{first}{os.pathsep}{second}")
+    bin_path = _make_go_bin(first / "bin", "tool")
+    monkeypatch.setattr(
+        go,
+        "_read_module_info",
+        lambda path: ("example.com/tool", "example.com/tool", "v1.0.0"),
+    )
+
+    inst = go.GoProvider().detect(bin_path)
+
+    assert inst is not None
+    assert inst.root == first / "bin"
 
 
 def test_detect_rejects_a_binary_outside_gobin(tmp_path, monkeypatch) -> None:

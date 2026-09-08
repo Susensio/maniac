@@ -98,20 +98,32 @@ def _normalize(name: str) -> str:
     return name.lower().replace("_", "-").replace(".", "-")
 
 
+_REPO_LABELS = ("repository", "source", "source code", "github")
+
+
 def _repo_from_metadata(metadata: email.message.Message) -> str | None:
     """Read an explicit GitHub link from `Project-URL`/`Home-page`, never guessed.
 
-    `Project-URL` entries are "Label, URL" pairs; a label naming the
-    repository or source wins over an unlabelled `Home-page` guess.
+    `Project-URL` entries are "Label, URL" pairs, and a package lists several
+    -- documentation, homepage, repository, ... A label naming the repository
+    or source wins over any other GitHub-looking entry (e.g. a docs mirror
+    hosted on GitHub too), which in turn wins over an unlabelled `Home-page`.
     """
+    fallback: str | None = None
     for raw in metadata.get_all("Project-URL") or []:
-        _label, _, url = raw.partition(",")
+        label, _, url = raw.partition(",")
         url = url.strip()
         if not url:
             continue
         cleaned = discovery._clean_git_url(url)
-        if cleaned != url:
+        if cleaned == url:
+            continue
+        if label.strip().lower() in _REPO_LABELS:
             return cleaned
+        if fallback is None:
+            fallback = cleaned
+    if fallback:
+        return fallback
     home_page = metadata.get("Home-page")
     if home_page:
         cleaned = discovery._clean_git_url(home_page)
