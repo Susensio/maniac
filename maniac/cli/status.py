@@ -2,9 +2,9 @@
 
 | state | action | cost |
 |---|---|---|
-| ships a page, not installed | install it | zero |
-| no page anywhere | synthesize | LLM |
-| MANIAC-managed | inventory | - |
+| available | install it | zero |
+| missing | synthesize | LLM |
+| managed | inventory | - |
 
 Enumeration inverts from scanning the manpath (ADR-0013/0014) to walking
 providers (ADR-0016 Stage 7, `discovery.enumerate_installations`): the unit
@@ -23,11 +23,13 @@ only to collapse their rows visually in the table; the bare-name pipe
 below always names binaries, one per line, never a package.
 """
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, Annotated, Any
 
 import typer
+from rich.progress import Progress
 from rich.table import Table
 
 from .. import manifest
@@ -41,18 +43,62 @@ if TYPE_CHECKING:
     from ..sources.providers.base import Provider
 
 
+class _ProgressReporter:
+    """One combined progress bar across `status`'s two phases.
+
+    `discovery.enumerate_installations`'s `$PATH` walk and
+    `compute_status`'s per-row `_state_for` loop both report into this
+    through `on_phase_start`/`on_scan`, sharing one task and one combined
+    total so the user sees a single bar for the whole command rather than a
+    sequence of two. `transient=True` clears it before the final table
+    prints.
+    """
+
+    def __init__(self, target_console: Any) -> None:
+        self._total = 0
+        self._done = 0
+        # `Live.start` does `with self.console:` -- a dunder lookup that
+        # bypasses `cli._LazyConsole.__getattr__` entirely, so `Progress`
+        # needs the real `rich.console.Console` underneath it, not the lazy
+        # wrapper. Any forwarded attribute access forces it into existence.
+        _ = target_console.is_terminal
+        resolved_console = getattr(target_console, "_instance", target_console)
+        self._progress = Progress(console=resolved_console, transient=True)
+        self._progress.start()
+        self._task_id = self._progress.add_task("Scanning...", total=None)
+
+    def on_phase_start(self, total: int) -> None:
+        self._total += total
+        self._progress.update(self._task_id, total=self._total)
+
+    def on_scan(self) -> None:
+        self._done += 1
+        self._progress.update(self._task_id, completed=self._done)
+
+    def stop(self) -> None:
+        self._progress.stop()
+
+
 class ActionState(Enum):
     """Which of ADR-0016's three buckets a binary falls in."""
 
-    SHIPS_UNINSTALLED = "ships a page, not installed"
-    NO_PAGE = "no page anywhere"
-    MANAGED = "MANIAC-managed"
+    SHIPS_UNINSTALLED = "available"
+    NO_PAGE = "missing"
+    MANAGED = "managed"
 
 
 _ACTION_AND_COST: dict[ActionState, tuple[str, str]] = {
     ActionState.SHIPS_UNINSTALLED: ("install it", "zero"),
     ActionState.NO_PAGE: ("synthesize", "LLM"),
     ActionState.MANAGED: ("inventory", "-"),
+}
+
+# Traffic-light by action cost (`_ACTION_AND_COST`): yellow needs a free
+# install, red needs an LLM, green needs nothing.
+_STATE_COLOR: dict[ActionState, str] = {
+    ActionState.SHIPS_UNINSTALLED: "yellow",
+    ActionState.NO_PAGE: "red",
+    ActionState.MANAGED: "green",
 }
 
 
@@ -93,7 +139,13 @@ def _state_for(
 
 
 def compute_status(
-    tools: list[str] | None = None, config: Config | None = None
+    tools: list[str] | None = None,
+    config: Config | None = None,
+    *,
+    on_discovery_start: Callable[[int], None] | None = None,
+    on_discovery_scan: Callable[[], None] | None = None,
+    on_row_start: Callable[[int], None] | None = None,
+    on_row_scan: Callable[[], None] | None = None,
 ) -> list[StatusRow]:
     """One row per binary: every provider-detected installation, or exactly the named tools.
 
@@ -102,12 +154,23 @@ def compute_status(
     scanned. With names, resolves exactly those, unfiltered; a name no
     provider claims still gets a row (`NO_PAGE`, unless MANIAC already
     manages a page for it) rather than nothing, per ADR-0013.
+
+    The four `on_*` callbacks, all `None` by default, are purely additive
+    instrumentation for a caller with a console in scope (the CLI command);
+    every other caller, including tests, omits them and sees no behaviour
+    change. `on_discovery_*` passes straight through to
+    `discovery.enumerate_installations` (skipped entirely on the `tools`
+    path, which never calls it); `on_row_*` wraps this function's own
+    per-row `_state_for` loop, whichever path runs it.
     """
     cfg = config or default_cfg
 
     if tools:
+        unique_tools = list(dict.fromkeys(tools))
+        if on_row_start is not None:
+            on_row_start(len(unique_tools))
         rows: list[StatusRow] = []
-        for tool in dict.fromkeys(tools):
+        for tool in unique_tools:
             found = discovery.find_installation(tool)
             provider, inst = found if found else (None, None)
             rows.append(
@@ -118,17 +181,28 @@ def compute_status(
                     state=_state_for(provider, inst, tool, cfg),
                 )
             )
+            if on_row_scan is not None:
+                on_row_scan()
         return rows
 
-    return [
-        StatusRow(
-            tool=inst.binary,
-            package=inst.package,
-            provider=provider.name,
-            state=_state_for(provider, inst, inst.binary, cfg),
+    installations = discovery.enumerate_installations(
+        on_start=on_discovery_start, on_scan=on_discovery_scan
+    )
+    if on_row_start is not None:
+        on_row_start(len(installations))
+    rows = []
+    for provider, inst in installations:
+        rows.append(
+            StatusRow(
+                tool=inst.binary,
+                package=inst.package,
+                provider=provider.name,
+                state=_state_for(provider, inst, inst.binary, cfg),
+            )
         )
-        for provider, inst in discovery.enumerate_installations()
-    ]
+        if on_row_scan is not None:
+            on_row_scan()
+    return rows
 
 
 def _bare_names(rows: list[StatusRow]) -> list[str]:
@@ -195,7 +269,9 @@ def _render_status(
     table.add_column("State")
 
     for label, state in _grouped_for_display(rows):
-        table.add_row(label, state.value)
+        table.add_row(
+            label, f"[{_STATE_COLOR[state]}]{state.value}[/{_STATE_COLOR[state]}]"
+        )
 
     target_console.print(table)
 
@@ -216,6 +292,18 @@ def status(
         ),
     ] = False,
 ) -> None:
-    """Report each binary's state: ships a page not installed, no page anywhere, or MANIAC-managed."""
-    rows = compute_status(tools)
+    """Report each binary's state: available, missing, or managed."""
+    interactive = not names and console.is_terminal
+    reporter = _ProgressReporter(console) if interactive else None
+    try:
+        rows = compute_status(
+            tools,
+            on_discovery_start=reporter.on_phase_start if reporter else None,
+            on_discovery_scan=reporter.on_scan if reporter else None,
+            on_row_start=reporter.on_phase_start if reporter else None,
+            on_row_scan=reporter.on_scan if reporter else None,
+        )
+    finally:
+        if reporter is not None:
+            reporter.stop()
     _render_status(console, rows, names=names)

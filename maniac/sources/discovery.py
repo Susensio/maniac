@@ -6,6 +6,7 @@ import re
 import shutil
 import tarfile
 import tomllib
+from collections.abc import Callable
 from functools import cache
 from pathlib import Path
 from time import time
@@ -82,7 +83,10 @@ def find_installation(
     return _detect_via_registry(bin_path)
 
 
-def enumerate_installations() -> "list[tuple[Provider, Installation]]":
+def enumerate_installations(
+    on_start: Callable[[int], None] | None = None,
+    on_scan: Callable[[], None] | None = None,
+) -> "list[tuple[Provider, Installation]]":
     """Walk `$PATH` once per unique binary name, resolved through the provider registry.
 
     `status`'s enumeration (ADR-0016 Stage 7) inverts from scanning the
@@ -92,6 +96,12 @@ def enumerate_installations() -> "list[tuple[Provider, Installation]]":
     is resolved once, at its first `$PATH` occurrence, since that is the
     binary that actually runs when two providers claim the same name
     (ADR-0016's tie-break).
+
+    `on_start`/`on_scan`, both `None` by default, mirror
+    `manpages.find_help_derived_manpages`'s instrumentation: `on_start` fires
+    once with the candidate count, right after the directory scan and before
+    the per-candidate `_detect_via_registry` loop that dominates the cost;
+    `on_scan` fires once per candidate processed in that loop.
     """
     seen: dict[str, Path] = {}
     for entry in os.environ.get("PATH", "").split(os.pathsep):
@@ -111,9 +121,17 @@ def enumerate_installations() -> "list[tuple[Provider, Installation]]":
                 continue
             seen[child.name] = Path(child.path)
 
-    found = [
-        claim for claim in (_detect_via_registry(p) for p in seen.values()) if claim
-    ]
+    if on_start is not None:
+        on_start(len(seen))
+
+    found: list[tuple[Provider, Installation]] = []
+    for bin_path in seen.values():
+        claim = _detect_via_registry(bin_path)
+        if claim is not None:
+            found.append(claim)
+        if on_scan is not None:
+            on_scan()
+
     return sorted(found, key=lambda item: item[1].binary)
 
 

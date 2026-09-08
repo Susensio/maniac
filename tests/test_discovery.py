@@ -222,6 +222,52 @@ def test_enumerate_installations_skips_non_executable_files(
     assert enumerate_installations() == []
 
 
+def test_enumerate_installations_on_start_and_on_scan_are_optional_and_no_op_by_default(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """Existing callers omitting the callbacks see unchanged behaviour."""
+    claimed = tmp_path / "claimed"
+    claimed.touch(mode=0o755)
+    monkeypatch.setenv("PATH", str(tmp_path))
+    monkeypatch.setattr(
+        discovery,
+        "_detect_via_registry",
+        lambda p: ("fake-provider", _fake_installation(p.name)),
+    )
+
+    found = enumerate_installations()
+
+    assert [inst.binary for _, inst in found] == ["claimed"]
+
+
+def test_enumerate_installations_reports_candidate_count_then_one_scan_per_candidate(
+    monkeypatch, tmp_path: Path
+) -> None:
+    for name in ("one", "two", "three"):
+        (tmp_path / name).touch(mode=0o755)
+    monkeypatch.setenv("PATH", str(tmp_path))
+    monkeypatch.setattr(
+        discovery,
+        "_detect_via_registry",
+        lambda p: ("fake-provider", _fake_installation(p.name)),
+    )
+
+    starts: list[int] = []
+    scans = 0
+
+    def on_start(total: int) -> None:
+        starts.append(total)
+
+    def on_scan() -> None:
+        nonlocal scans
+        scans += 1
+
+    enumerate_installations(on_start=on_start, on_scan=on_scan)
+
+    assert starts == [3]
+    assert scans == 3
+
+
 def test_resolve_from_mise_checks_all_local_config_before_registry(
     monkeypatch, tmp_path: Path
 ) -> None:
