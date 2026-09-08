@@ -64,13 +64,6 @@ def install(
             ),
         ),
     ] = False,
-    install: Annotated[
-        bool,
-        typer.Option(
-            "--install/--no-install",
-            help="Copy the resulting page into ~/.local/share/man/man1.",
-        ),
-    ] = True,
     force: ForceOption = False,
     dry_run: DryRunOption = False,
 ) -> None:
@@ -104,7 +97,6 @@ def install(
                     model=model,
                     generate_only=generate,
                     no_generate=no_generate,
-                    install=install,
                     force=force,
                     dry_run=dry_run,
                 )

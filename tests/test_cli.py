@@ -132,10 +132,10 @@ def test_cli_install_dry_run(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) ->
     assert "synthesized from --help" in result.output
 
 
-def test_cli_install_installs_by_default(
+def test_cli_install_always_installs(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """M-inverted-install: `install` installs unless told `--no-install`."""
+    """`install` has no `--no-install`: the command's own name is the answer."""
     from maniac.models import PipelineResult
 
     observed: dict[str, object] = {}
@@ -161,9 +161,11 @@ def test_cli_install_installs_by_default(
     assert res.exit_code == 0
     assert observed == {"install": True}
 
+
+def test_cli_install_rejects_the_removed_no_install_flag() -> None:
+    """M-inverted-install: `--no-install` contradicted the command's own verb; dropped outright."""
     res = runner.invoke(app, ["install", "mytool", "--no-install"])
-    assert res.exit_code == 0
-    assert observed == {"install": False}
+    assert res.exit_code == 2
 
 
 def test_cli_install_zero_tools_exits_quietly(

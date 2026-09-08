@@ -58,7 +58,6 @@ def run_install(
     reasoning_effort: str | None = None,
     generate_only: bool = False,
     no_generate: bool = False,
-    install: bool = True,
     force: bool = False,
     dry_run: bool = False,
     config: Config | None = None,
@@ -78,7 +77,7 @@ def run_install(
         found = discovery.find_installation(tool_name, bin_dir=bin_dir)
         if found is not None:
             provider, inst = found
-            outcome = _try_install_root(provider, inst, install=install, force=force)
+            outcome = _try_install_root(provider, inst, force=force)
             if outcome is not None:
                 return outcome
             outcome = _try_repository(
@@ -86,7 +85,6 @@ def run_install(
                 inst,
                 cache_dir_path=cache_dir_path,
                 cfg=cfg,
-                install=install,
                 force=force,
             )
             if outcome is not None:
@@ -112,7 +110,7 @@ def run_install(
         prompt_file=prompt_file,
         model=model,
         reasoning_effort=reasoning_effort,
-        install=install,
+        install=True,
         force=force,
         dry_run=dry_run,
         config=cfg,
@@ -134,14 +132,14 @@ def run_install(
 
 
 def _try_install_root(
-    provider: Provider, inst: Installation, *, install: bool, force: bool
+    provider: Provider, inst: Installation, *, force: bool
 ) -> InstallOutcome | None:
     """Tier 1: a page already inside the install root, the installed version by construction."""
     page = select_primary_manpage(provider.local_docs(inst), inst.binary)
     if page is None:
         return None
 
-    installed_path = install_manpage(page, force=force) if install else None
+    installed_path = install_manpage(page, force=force)
     detail = "upstream manpage from install root"
     if inst.version:
         detail += f" ({inst.version})"
@@ -161,7 +159,6 @@ def _try_repository(
     *,
     cache_dir_path: Path,
     cfg: Config,
-    install: bool,
     force: bool,
 ) -> InstallOutcome | None:
     """Tier 2: a hand-authored page fetched from the resolved repository at the matching tag.
@@ -194,7 +191,7 @@ def _try_repository(
         )
         return None
 
-    installed_path = install_manpage(page, force=force) if install else None
+    installed_path = install_manpage(page, force=force)
     detail = f"upstream manpage from repository ({inst.version})   [no synthesis]"
     return InstallOutcome(
         tool=inst.binary,
