@@ -11,6 +11,7 @@ from pathlib import Path
 from ...logging import logger
 from ...models import Installation, RepoSource
 from ..manpages import find_install_root_manpages
+from ..pathcache import resolve_cached
 
 
 class CargoProvider:
@@ -28,7 +29,7 @@ class CargoProvider:
             return None
         cargo_home = Path(cargo_home_env).expanduser().resolve()
         cargo_bin = cargo_home / "bin"
-        resolved = bin_path.resolve()
+        resolved = resolve_cached(bin_path)
         if resolved.parent != cargo_bin:
             return None
         crate = _find_crate(cargo_home, resolved.name)

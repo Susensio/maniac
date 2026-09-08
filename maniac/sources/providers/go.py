@@ -12,6 +12,7 @@ from pathlib import Path
 from ...logging import logger
 from ...models import Installation, RepoSource
 from ..manpages import find_install_root_manpages
+from ..pathcache import resolve_cached
 
 
 class GoProvider:
@@ -23,9 +24,9 @@ class GoProvider:
 
     def detect(self, bin_path: Path) -> Installation | None:
         gobin = _resolve_gobin()
-        resolved = bin_path.resolve()
+        resolved = resolve_cached(bin_path)
         try:
-            if resolved.parent != gobin.resolve():
+            if resolved.parent != resolve_cached(gobin):
                 return None
         except OSError:
             return None

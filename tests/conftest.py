@@ -3,6 +3,17 @@ from pathlib import Path
 import pytest
 
 import maniac.config as config_module
+from maniac.sources.pathcache import resolve_cached
+
+
+@pytest.fixture(autouse=True)
+def _clear_resolve_cache() -> None:
+    """`resolve_cached` is process-lifetime; a test-lifetime cache would leak
+    a resolution across tests if two ever produced the same `Path` string
+    for different underlying filesystem state (unlikely given `tmp_path` is
+    unique per test, but cheap to rule out).
+    """
+    resolve_cached.cache_clear()
 
 
 @pytest.fixture(autouse=True)

@@ -8,6 +8,7 @@ from ...logging import logger
 from ...models import Installation, RepoSource
 from .. import discovery
 from ..manpages import find_install_root_manpages
+from ..pathcache import resolve_cached
 
 
 class PipxProvider:
@@ -19,7 +20,8 @@ class PipxProvider:
     name = "pipx"
 
     def detect(self, bin_path: Path) -> Installation | None:
-        resolved_str = str(bin_path.resolve())
+        resolved = resolve_cached(bin_path)
+        resolved_str = str(resolved)
         for home in _pipx_home_candidates():
             marker = f"{home}/venvs/"
             if marker not in resolved_str:
@@ -34,7 +36,7 @@ class PipxProvider:
             return Installation(
                 binary=bin_path.name,
                 bin_path=bin_path,
-                real_path=Path(resolved_str),
+                real_path=resolved,
                 provider=self.name,
                 package=package,
                 version=version,

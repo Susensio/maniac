@@ -6,6 +6,7 @@ from pathlib import Path
 from ...logging import logger
 from ...models import Installation, RepoSource
 from ..manpages import find_install_root_manpages
+from ..pathcache import resolve_cached
 
 _TOOLS_MARKER = "/.local/share/uv/tools/"
 
@@ -19,7 +20,7 @@ class UvProvider:
     name = "uv"
 
     def detect(self, bin_path: Path) -> Installation | None:
-        resolved = bin_path.resolve()
+        resolved = resolve_cached(bin_path)
         resolved_str = str(resolved)
         if _TOOLS_MARKER not in resolved_str:
             return None

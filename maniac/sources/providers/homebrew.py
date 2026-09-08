@@ -13,6 +13,7 @@ from ...logging import logger
 from ...models import Installation, RepoSource
 from .. import discovery
 from ..manpages import find_install_root_manpages
+from ..pathcache import resolve_cached
 
 _CELLAR_MARKER = "/Cellar/"
 
@@ -26,7 +27,8 @@ class HomebrewProvider:
     name = "homebrew"
 
     def detect(self, bin_path: Path) -> Installation | None:
-        resolved_str = str(bin_path.resolve())
+        resolved = resolve_cached(bin_path)
+        resolved_str = str(resolved)
         if _CELLAR_MARKER not in resolved_str:
             return None
         prefix, _, tail = resolved_str.partition(_CELLAR_MARKER)
@@ -38,7 +40,7 @@ class HomebrewProvider:
         return Installation(
             binary=bin_path.name,
             bin_path=bin_path,
-            real_path=Path(resolved_str),
+            real_path=resolved,
             provider=self.name,
             package=package,
             version=version,
