@@ -47,16 +47,6 @@ def test_extract_mise_tool_id() -> None:
     assert _extract_mise_tool_id(p_non_mise) is None
 
 
-def test_resolve_from_mise_prefixed() -> None:
-    assert (
-        _resolve_from_mise("github-todotxt-todo.txt-cli", "todo.sh")
-        == "todotxt/todo.txt-cli"
-    )
-    assert (
-        _resolve_from_mise("cargo-https-github-com-sharkdp-bat", "bat") == "sharkdp/bat"
-    )
-
-
 def test_check_mise_toml_tool_alias(tmp_path: Path) -> None:
     cfg = tmp_path / "config.toml"
     cfg.write_text(
@@ -107,17 +97,26 @@ def test_discover_repo_fallback(monkeypatch, tmp_path: Path) -> None:
     assert source.target == "nonexistent_unknown_tool"
 
 
-def test_discover_repo_uses_official_registry(monkeypatch, tmp_path: Path) -> None:
+def test_discover_repo_does_not_use_the_registry_without_an_installation(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """ADR-0015's ruling on Stage 2's gap: name-only registry matching is gone
+    everywhere, not only from `discover_candidate_source`. A binary with no
+    detected installation stays unresolved even where the registry would
+    have matched it by bare name -- this is `discover_repo("envsubst")`
+    ceasing to return "a8m/envsubst".
+    """
+    monkeypatch.setattr(discovery.shutil, "which", lambda name: None)
     monkeypatch.setattr(
         discovery,
         "_load_mise_registry",
-        lambda: {"rg": "BurntSushi/ripgrep"},
+        lambda: {"envsubst": "a8m/envsubst"},
     )
 
-    source = discover_repo("rg", bin_dir=tmp_path)
+    source = discover_repo("envsubst", bin_dir=tmp_path)
 
-    assert source.name == "rg"
-    assert source.target == "BurntSushi/ripgrep"
+    assert source.name == "envsubst"
+    assert source.target == "envsubst"
 
 
 def test_discover_candidate_source_does_not_guess_from_a_system_binary(
@@ -131,7 +130,7 @@ def test_discover_candidate_source_does_not_guess_from_a_system_binary(
     assert discover_candidate_source("fmt") is None
 
 
-def test_discover_candidate_source_does_not_use_an_executable_name_registry_match(
+def test_discover_candidate_source_delegates_to_the_provider_registry(
     monkeypatch, tmp_path: Path
 ) -> None:
     target = tmp_path / "target"
@@ -141,12 +140,9 @@ def test_discover_candidate_source_does_not_use_an_executable_name_registry_matc
     monkeypatch.setattr(discovery.shutil, "which", lambda name: str(binary))
     observed: dict[str, object] = {}
 
-    def resolve(
-        name: str, path: Path, *, allow_binary_registry_match: bool
-    ) -> RepoSource:
+    def resolve(name: str, path: Path) -> RepoSource:
         observed["name"] = name
         observed["path"] = path
-        observed["allow_binary_registry_match"] = allow_binary_registry_match
         return RepoSource(name=name, target="owner/tool", is_local=False)
 
     monkeypatch.setattr(discovery, "_resolve_symlink_target", resolve)
@@ -154,11 +150,7 @@ def test_discover_candidate_source_does_not_use_an_executable_name_registry_matc
     source = discover_candidate_source("candidate")
     assert source is not None
     assert source.target == "owner/tool"
-    assert observed == {
-        "name": "candidate",
-        "path": binary,
-        "allow_binary_registry_match": False,
-    }
+    assert observed == {"name": "candidate", "path": binary}
 
 
 def test_resolve_from_mise_checks_all_local_config_before_registry(

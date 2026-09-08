@@ -32,18 +32,15 @@ def discover_repo(binary_name: str, bin_dir: str | Path | None = None) -> RepoSo
         if which_path:
             bin_path = Path(which_path)
 
-    # 1. Resolve through symlink inspection if applicable
+    # Resolve through symlink inspection if applicable; a binary with no
+    # provider claiming it is unresolvable (ADR-0015) rather than a guess
+    # from its bare name against the Mise registry.
     if bin_path.is_symlink():
         source = _resolve_symlink_target(binary_name, bin_path)
         if source:
             return source
 
-    # 2. Query optional Mise configuration and the cached official registry
-    repo_from_mise = _resolve_from_mise(binary_name, binary_name)
-    if repo_from_mise:
-        return RepoSource(name=binary_name, target=repo_from_mise, is_local=False)
-
-    # 3. Fallback default
+    # Fallback default
     return RepoSource(name=binary_name, target=binary_name, is_local=False)
 
 
@@ -55,14 +52,10 @@ def discover_candidate_source(binary_name: str) -> RepoSource | None:
     bin_path = Path(which_path)
     if not bin_path.is_symlink():
         return None
-    return _resolve_symlink_target(
-        binary_name, bin_path, allow_binary_registry_match=False
-    )
+    return _resolve_symlink_target(binary_name, bin_path)
 
 
-def _resolve_symlink_target(
-    binary_name: str, bin_path: Path, *, allow_binary_registry_match: bool = True
-) -> RepoSource | None:
+def _resolve_symlink_target(binary_name: str, bin_path: Path) -> RepoSource | None:
     """Loop over registered providers (ADR-0015) for the one that claims this path."""
     from .providers import registry  # deferred: providers import this module themselves
 
@@ -70,20 +63,6 @@ def _resolve_symlink_target(
         inst = provider.detect(bin_path)
         if inst is None:
             continue
-        if inst.provider == "mise":
-            # allow_binary_registry_match has no home on the Provider protocol
-            # yet (Stage 3 replaces this prefix-guessing outright); thread it
-            # here instead of through MiseProvider.resolve_source.
-            repo = _resolve_from_mise(
-                inst.package,
-                binary_name,
-                allow_binary_registry_match=allow_binary_registry_match,
-            )
-            return (
-                RepoSource(name=binary_name, target=repo, is_local=False)
-                if repo
-                else None
-            )
         return provider.resolve_source(inst)
     return None
 
@@ -120,10 +99,15 @@ def _check_mise_toml(cfg_path: Path, tool_id: str, binary_name: str) -> str | No
     return None
 
 
-def _resolve_from_mise(
-    tool_id: str, binary_name: str, *, allow_binary_registry_match: bool = True
-) -> str | None:
-    """Infer a repository from Mise configuration files and registry data."""
+def _resolve_from_mise(tool_id: str, binary_name: str) -> str | None:
+    """Infer a repository from Mise configuration files, then the registry.
+
+    `tool_id` is looked up as-is -- no fallback to `binary_name` in the
+    registry query. Both must be installation-derived (ADR-0008): the caller
+    is `MiseProvider.resolve_source`, keying on the install directory name
+    it detected, never a bare command-line name with no installation behind
+    it (ADR-0015's ruling on Stage 2's gap).
+    """
     xdg_config = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
     mise_cfg_dir = xdg_config / "mise"
     if mise_cfg_dir.exists():
@@ -132,29 +116,7 @@ def _resolve_from_mise(
             if found:
                 return found
 
-    if tool_id.startswith("github-"):
-        parts = tool_id[7:].split("-", 1)
-        if len(parts) == 2:
-            return f"{parts[0]}/{parts[1]}"
-
-    if tool_id.startswith("pipx-"):
-        pkg = tool_id[5:]
-        return _query_mise_registry(pkg) or pkg
-
-    if tool_id.startswith("npm-"):
-        pkg = tool_id[4:]
-        return _query_mise_registry(pkg) or pkg
-
-    if tool_id.startswith("cargo-https-github-com-"):
-        clean = tool_id.replace("cargo-https-github-com-", "")
-        parts = clean.split("-", 1)
-        if len(parts) == 2:
-            return f"{parts[0]}/{parts[1]}"
-
-    repo = _query_mise_registry(tool_id)
-    if repo or not allow_binary_registry_match:
-        return repo
-    return _query_mise_registry(binary_name)
+    return _query_mise_registry(tool_id)
 
 
 def _match_mise_filter_bins(tool_val: object, binary_name: str) -> bool:
