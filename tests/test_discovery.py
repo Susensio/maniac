@@ -4,9 +4,10 @@ from pathlib import Path
 from typing import Self
 from urllib.request import Request
 
+import pytest
 import zstandard
 
-from maniac.models import RepoSource
+from maniac.models import Installation, RepoSource
 from maniac.sources import discovery
 from maniac.sources.discovery import (
     _check_mise_toml,
@@ -18,6 +19,7 @@ from maniac.sources.discovery import (
     _resolve_from_mise,
     discover_candidate_source,
     discover_repo,
+    enumerate_installations,
 )
 
 
@@ -148,6 +150,76 @@ def test_discover_candidate_source_delegates_to_the_provider_registry(
     assert source is not None
     assert source.target == "owner/tool"
     assert observed == {"name": "candidate", "path": binary}
+
+
+def _fake_installation(binary: str) -> Installation:
+    return Installation(
+        binary=binary,
+        bin_path=Path(f"/bin/{binary}"),
+        real_path=Path(f"/bin/{binary}"),
+        provider="fake",
+        package=binary,
+        version=None,
+        root=Path("/root"),
+    )
+
+
+def test_enumerate_installations_walks_path_and_keeps_only_claimed_binaries(
+    monkeypatch, tmp_path: Path
+) -> None:
+    claimed = tmp_path / "claimed"
+    claimed.touch(mode=0o755)
+    unclaimed = tmp_path / "unclaimed"
+    unclaimed.touch(mode=0o755)
+    monkeypatch.setenv("PATH", str(tmp_path))
+
+    def fake_detect(bin_path: Path):
+        if bin_path.name == "claimed":
+            return ("fake-provider", _fake_installation("claimed"))
+        return None
+
+    monkeypatch.setattr(discovery, "_detect_via_registry", fake_detect)
+
+    found = enumerate_installations()
+
+    assert [inst.binary for _, inst in found] == ["claimed"]
+
+
+def test_enumerate_installations_resolves_a_name_once_at_its_first_path_entry(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """ADR-0016's tie-break: two providers claiming one name, the first `$PATH` wins."""
+    first_dir = tmp_path / "first"
+    second_dir = tmp_path / "second"
+    first_dir.mkdir()
+    second_dir.mkdir()
+    (first_dir / "tool").touch(mode=0o755)
+    (second_dir / "tool").touch(mode=0o755)
+    monkeypatch.setenv("PATH", f"{first_dir}:{second_dir}")
+
+    seen_paths: list[Path] = []
+
+    def fake_detect(bin_path: Path):
+        seen_paths.append(bin_path)
+        return ("fake-provider", _fake_installation("tool"))
+
+    monkeypatch.setattr(discovery, "_detect_via_registry", fake_detect)
+
+    enumerate_installations()
+
+    assert seen_paths == [first_dir / "tool"]
+
+
+def test_enumerate_installations_skips_non_executable_files(
+    monkeypatch, tmp_path: Path
+) -> None:
+    (tmp_path / "not_executable").touch(mode=0o644)
+    monkeypatch.setenv("PATH", str(tmp_path))
+    monkeypatch.setattr(
+        discovery, "_detect_via_registry", lambda p: pytest.fail("must not be called")
+    )
+
+    assert enumerate_installations() == []
 
 
 def test_resolve_from_mise_checks_all_local_config_before_registry(

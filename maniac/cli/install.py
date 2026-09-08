@@ -77,8 +77,7 @@ def install(
     """Install a manpage: install root, then repository, then LLM synthesis.
 
     Zero tool names exits quietly rather than raising Typer's missing-argument
-    error, since `$(maniac status --candidates)` can legitimately expand to
-    nothing.
+    error, since `$(maniac status)` can legitimately expand to nothing.
     """
     if not tools:
         return

@@ -82,6 +82,41 @@ def find_installation(
     return _detect_via_registry(bin_path)
 
 
+def enumerate_installations() -> "list[tuple[Provider, Installation]]":
+    """Walk `$PATH` once per unique binary name, resolved through the provider registry.
+
+    `status`'s enumeration (ADR-0016 Stage 7) inverts from scanning the
+    manpath to this: a binary is a unit MANIAC can act on because some
+    provider claims it, whether or not a manpage for it exists anywhere
+    yet -- capability the manpath scan could never see, not a page. A name
+    is resolved once, at its first `$PATH` occurrence, since that is the
+    binary that actually runs when two providers claim the same name
+    (ADR-0016's tie-break).
+    """
+    seen: dict[str, Path] = {}
+    for entry in os.environ.get("PATH", "").split(os.pathsep):
+        if not entry:
+            continue
+        try:
+            children = list(os.scandir(entry))
+        except OSError:
+            continue
+        for child in children:
+            if child.name in seen:
+                continue
+            try:
+                if not child.is_file() or not os.access(child.path, os.X_OK):
+                    continue
+            except OSError:
+                continue
+            seen[child.name] = Path(child.path)
+
+    found = [
+        claim for claim in (_detect_via_registry(p) for p in seen.values()) if claim
+    ]
+    return sorted(found, key=lambda item: item[1].binary)
+
+
 def _detect_via_registry(bin_path: Path) -> "tuple[Provider, Installation] | None":
     """Loop over registered providers (ADR-0015) for the one that claims this path."""
     from .providers import registry  # deferred: providers import this module themselves

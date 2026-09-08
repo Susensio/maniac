@@ -1,6 +1,5 @@
-"""Tests for `status` (ADR-0013/ADR-0014): decisions only, no Rich-output scraping."""
+"""Tests for `status` (ADR-0013/ADR-0016): decisions only, no Rich-output scraping."""
 
-import dataclasses
 import io
 from pathlib import Path
 
@@ -9,229 +8,275 @@ from rich.console import Console
 from typer.testing import CliRunner
 
 import maniac.cli as cli_module
-from maniac.classification import ManpageFacts, absent_facts
 from maniac.cli import app
-from maniac.cli.status import StatusRow, _render_status, compute_status
-from maniac.models import RepoSource
-from maniac.sources.manpages import Dialect
+from maniac.cli.status import (
+    ActionState,
+    StatusRow,
+    _render_status,
+    _state_for,
+    compute_status,
+)
+from maniac.config import Config
+from maniac.models import Installation
 
 runner = CliRunner()
 
-_BASE_FACTS = ManpageFacts(
-    tool="example",
-    section="1",
-    path=Path("/usr/share/man/man1/example.1"),
-    exists=True,
-    is_maniac_authored=False,
-    generator=None,
-    dialect=Dialect.MAN,
-    word_count=0,
-    tp_count=0,
-    sections=[],
-    has_examples_section=False,
-    sources=[],
-)
+
+class _FakeProvider:
+    """Minimal `Provider` stand-in with per-test-configurable answers."""
+
+    def __init__(
+        self, name: str = "fake", local_docs: list[Path] | None = None
+    ) -> None:
+        self.name = name
+        self._local_docs = local_docs or []
+
+    def detect(self, bin_path: Path) -> Installation | None:
+        return None
+
+    def resolve_source(self, inst: Installation) -> None:
+        return None
+
+    def local_docs(self, inst: Installation) -> list[Path]:
+        return self._local_docs
 
 
-def _facts(**overrides: object) -> ManpageFacts:
-    return dataclasses.replace(_BASE_FACTS, **overrides)
-
-
-def test_compute_status_no_args_includes_source_backed_and_maniac_owned(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    source_backed = _facts(
-        tool="gum",
-        sources=[RepoSource(name="gum", target="charmbracelet/gum", is_local=False)],
+def _installation(binary: str = "tool", package: str = "tool") -> Installation:
+    return Installation(
+        binary=binary,
+        bin_path=Path(f"/bin/{binary}"),
+        real_path=Path(f"/bin/{binary}"),
+        provider="fake",
+        package=package,
+        version="1.2.3",
+        root=Path("/root"),
     )
-    maniac_owned = _facts(tool="ty", is_maniac_authored=True, sources=[])
-    unreachable = _facts(tool="bash", sources=[])
 
+
+def test_compute_status_no_args_walks_providers_not_the_manpath(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Enumeration is `discovery.enumerate_installations`, never a manpath scan."""
+    page = tmp_path / "tool.1"
+    page.write_text(".TH TOOL 1\n", encoding="utf-8")
+    provider = _FakeProvider(local_docs=[page])
+    inst = _installation()
     monkeypatch.setattr(
-        "maniac.cli.status.collect_facts",
-        lambda: [source_backed, maniac_owned, unreachable],
+        "maniac.cli.status.discovery.enumerate_installations",
+        lambda: [(provider, inst)],
     )
 
-    rows = compute_status()
-    assert {row.facts.tool for row in rows} == {"gum", "ty"}
+    rows = compute_status(config=_config(tmp_path))
 
-
-def test_compute_status_with_tools_is_unfiltered(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The argument form is the escape hatch: no source/ownership filtering applies."""
-    unreachable = _facts(tool="bash", sources=[])
-    other = _facts(tool="zsh", sources=[])
-
-    monkeypatch.setattr("maniac.cli.status.collect_facts", lambda: [unreachable, other])
-
-    rows = compute_status(["bash"])
-    assert rows == [StatusRow(facts=unreachable)]
-
-
-def test_compute_status_named_tool_with_no_page_yields_one_absence_row(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The row ADR-0013 promised: `maniac status uv` with no uv(1) installed."""
-    source = RepoSource(name="uv", target="astral-sh/uv", is_local=False)
-    monkeypatch.setattr("maniac.cli.status.collect_facts", list)
-    monkeypatch.setattr(
-        "maniac.classification.discover_candidate_source", lambda tool: source
-    )
-
-    rows = compute_status(["uv"])
-
-    assert len(rows) == 1
-    facts = rows[0].facts
-    assert facts.tool == "uv"
-    assert facts.exists is False
-    assert facts.sources == [source]
-    assert (facts.word_count, facts.tp_count, facts.sections) == (0, 0, [])
-
-
-def test_compute_status_absence_row_only_for_the_named_tools_without_facts(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    installed = _facts(tool="gum")
-    monkeypatch.setattr("maniac.cli.status.collect_facts", lambda: [installed])
-    monkeypatch.setattr(
-        "maniac.classification.discover_candidate_source", lambda tool: None
-    )
-
-    rows = compute_status(["gum", "uv", "uv"])
-
-    assert [(row.facts.tool, row.facts.exists) for row in rows] == [
-        ("gum", True),
-        ("uv", False),
-    ]
-
-
-def test_compute_status_no_args_never_invents_an_absence_row(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """No enumeration of uninstalled tools: the no-argument listing is the scan, only."""
-    monkeypatch.setattr("maniac.cli.status.collect_facts", list)
-    monkeypatch.setattr(
-        "maniac.classification.discover_candidate_source",
-        lambda tool: pytest.fail("no-argument listing must not resolve sources"),
-    )
-
-    assert compute_status() == []
-
-
-def test_compute_status_candidates_only_keeps_the_absence_row(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A missing page has nothing to lose from generation, so `--candidates` keeps it."""
-    monkeypatch.setattr("maniac.cli.status.collect_facts", list)
-    monkeypatch.setattr(
-        "maniac.classification.discover_candidate_source", lambda tool: None
-    )
-    monkeypatch.setattr("maniac.cli.status.default_cfg.min_words_per_flag", 15)
-
-    rows = compute_status(["uv"], candidates_only=True)
-
-    assert [row.facts.tool for row in rows] == ["uv"]
-
-
-def test_compute_status_candidates_only_matches_real_dump_selection(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Against ADR-0014's real numbers: selects gum/gh/pastel/just, not usage/tmux/bat/fish-lsp."""
-
-    def _source_backed(tool: str, word_count: int, tp_count: int) -> ManpageFacts:
-        return _facts(
-            tool=tool,
-            word_count=word_count,
-            tp_count=tp_count,
-            sources=[RepoSource(name=tool, target=f"org/{tool}", is_local=False)],
+    assert rows == [
+        StatusRow(
+            tool="tool",
+            package="tool",
+            provider="fake",
+            state=ActionState.SHIPS_UNINSTALLED,
         )
-
-    selected = [
-        _source_backed("gum", 3805, 986),
-        _source_backed("gh", 258, 33),
-        _source_backed("pastel", 283, 28),
-        _source_backed("just", 779, 69),
-    ]
-    not_selected = [
-        _source_backed("usage", 2227, 123),
-        _source_backed("tmux", 31902, 1017),
-        _source_backed("bat", 1919, 0),
-        _source_backed("fish-lsp", 826, 0),
     ]
 
+
+def _config(tmp_path: Path) -> Config:
+    return Config(man_dir=tmp_path / "man" / "man1")
+
+
+def test_compute_status_ships_a_page_not_installed(tmp_path: Path) -> None:
+    page = tmp_path / "install_root" / "tool.1"
+    page.parent.mkdir(parents=True)
+    page.write_text(".TH TOOL 1\n", encoding="utf-8")
+    provider = _FakeProvider(local_docs=[page])
+    inst = _installation()
+    cfg = _config(tmp_path)
+
+    assert _state_for(provider, inst, "tool", cfg) is ActionState.SHIPS_UNINSTALLED
+
+
+def test_compute_status_no_page_anywhere_when_install_root_is_empty(
+    tmp_path: Path,
+) -> None:
+    provider = _FakeProvider(local_docs=[])
+    inst = _installation()
+    cfg = _config(tmp_path)
+
+    assert _state_for(provider, inst, "tool", cfg) is ActionState.NO_PAGE
+
+
+def test_compute_status_no_provider_is_no_page_anywhere(tmp_path: Path) -> None:
+    cfg = _config(tmp_path)
+
+    assert _state_for(None, None, "tool", cfg) is ActionState.NO_PAGE
+
+
+def test_compute_status_maniac_managed_wins_even_with_an_install_root_page(
+    tmp_path: Path,
+) -> None:
+    """A tier-1/2 install copies its page verbatim, no provenance header --
+    checking MANIAC's own install directory first is what still recognises it.
+    """
+    cfg = _config(tmp_path)
+    cfg.man_dir.mkdir(parents=True)
+    (cfg.man_dir / "tool.1").write_text(".TH TOOL 1\n", encoding="utf-8")
+
+    page = tmp_path / "install_root" / "tool.1"
+    page.parent.mkdir(parents=True)
+    page.write_text(".TH TOOL 1\n", encoding="utf-8")
+    provider = _FakeProvider(local_docs=[page])
+    inst = _installation()
+
+    assert _state_for(provider, inst, "tool", cfg) is ActionState.MANAGED
+
+
+def test_compute_status_managed_page_can_be_compressed(tmp_path: Path) -> None:
+    cfg = _config(tmp_path)
+    cfg.man_dir.mkdir(parents=True)
+    (cfg.man_dir / "tool.1.gz").write_bytes(b"\x1f\x8b")
+
+    assert _state_for(None, None, "tool", cfg) is ActionState.MANAGED
+
+
+def test_compute_status_with_tools_is_unfiltered_and_resolves_each_by_name(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    provider = _FakeProvider(local_docs=[])
+    inst = _installation(binary="bash")
     monkeypatch.setattr(
-        "maniac.cli.status.collect_facts", lambda: selected + not_selected
+        "maniac.cli.status.discovery.find_installation",
+        lambda name, bin_dir=None: (provider, inst) if name == "bash" else None,
     )
-    monkeypatch.setattr("maniac.cli.status.default_cfg.min_words_per_flag", 15)
 
-    rows = compute_status(candidates_only=True)
-    assert {row.facts.tool for row in rows} == {"gum", "gh", "pastel", "just"}
+    rows = compute_status(["bash", "unknown"], config=_config(tmp_path))
+
+    assert [row.tool for row in rows] == ["bash", "unknown"]
+    assert rows[0].state is ActionState.NO_PAGE  # empty local_docs, no managed page
+    assert rows[1].state is ActionState.NO_PAGE  # no provider at all
+    assert rows[1].package == "unknown"
+    assert rows[1].provider == ""
 
 
-def test_render_status_tty_shows_a_table() -> None:
+def test_compute_status_named_tools_are_deduplicated(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(
+        "maniac.cli.status.discovery.find_installation", lambda name, bin_dir=None: None
+    )
+
+    rows = compute_status(["uv", "uv"], config=_config(tmp_path))
+
+    assert [row.tool for row in rows] == ["uv"]
+
+
+def test_render_status_tty_shows_the_three_state_table() -> None:
     buf = io.StringIO()
     test_console = Console(file=buf, force_terminal=True, no_color=True)
 
-    _render_status(test_console, [StatusRow(facts=_facts(tool="gum"))])
+    _render_status(
+        test_console,
+        [
+            StatusRow(
+                tool="pandoc",
+                package="pandoc",
+                provider="mise",
+                state=ActionState.SHIPS_UNINSTALLED,
+            )
+        ],
+    )
 
     output = buf.getvalue()
     assert "Manpage Status" in output
-    assert "gum" in output
+    assert "pandoc" in output
+    assert "install it" in output
+    assert "zero" in output
 
 
-def test_render_status_absent_page_renders_dashes_not_zeros(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A measured zero and an unmeasured absence must not look alike in the table."""
-    monkeypatch.setattr(
-        "maniac.classification.discover_candidate_source", lambda tool: None
-    )
+def test_render_status_collapses_siblings_sharing_a_package_and_state() -> None:
     buf = io.StringIO()
-    test_console = Console(file=buf, force_terminal=True, no_color=True, width=80)
+    test_console = Console(file=buf, force_terminal=True, no_color=True, width=200)
 
-    _render_status(
-        test_console,
-        [StatusRow(facts=absent_facts("uv")), StatusRow(facts=_facts(tool="gum"))],
-    )
+    rows = [
+        StatusRow(
+            tool=name,
+            package="pandoc",
+            provider="mise",
+            state=ActionState.SHIPS_UNINSTALLED,
+        )
+        for name in ("pandoc", "pandoc-lua", "pandoc-server")
+    ]
+    _render_status(test_console, rows)
 
-    lines = buf.getvalue().splitlines()
-    absent_line = next(line for line in lines if "uv" in line)
-    measured_line = next(line for line in lines if "gum" in line)
-    assert "0" not in absent_line
-    assert absent_line.count("-") >= 3
-    assert measured_line.count("0") >= 2
+    lines = [line for line in buf.getvalue().splitlines() if "pandoc" in line]
+    assert len(lines) == 1
+    assert "pandoc-lua" in lines[0]
+    assert "pandoc-server" in lines[0]
 
 
-def test_render_status_absent_page_prints_its_name_bare(
-    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """`maniac status uv --candidates | xargs maniac install` needs the name, alone."""
-    monkeypatch.setattr(
-        "maniac.classification.discover_candidate_source", lambda tool: None
-    )
+def test_render_status_does_not_collapse_siblings_in_different_states() -> None:
     buf = io.StringIO()
-    test_console = Console(file=buf, force_terminal=False)
+    test_console = Console(file=buf, force_terminal=True, no_color=True, width=200)
 
-    _render_status(test_console, [StatusRow(facts=absent_facts("uv"))])
+    rows = [
+        StatusRow(
+            tool="pandoc",
+            package="pandoc",
+            provider="mise",
+            state=ActionState.SHIPS_UNINSTALLED,
+        ),
+        StatusRow(
+            tool="pandoc-lua",
+            package="pandoc",
+            provider="mise",
+            state=ActionState.MANAGED,
+        ),
+    ]
+    _render_status(test_console, rows)
 
-    assert capsys.readouterr().out == "uv\n"
+    lines = [line for line in buf.getvalue().splitlines() if "pandoc" in line]
+    assert len(lines) == 2
 
 
 def test_render_status_non_tty_prints_bare_names(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """The path `xargs maniac install` and `$(maniac status --candidates)` rely on."""
+    """The path `xargs maniac install` relies on."""
     buf = io.StringIO()
     test_console = Console(file=buf, force_terminal=False)
 
     _render_status(
         test_console,
-        [StatusRow(facts=_facts(tool="gum")), StatusRow(facts=_facts(tool="gh"))],
+        [
+            StatusRow(
+                tool="gum", package="gum", provider="mise", state=ActionState.NO_PAGE
+            ),
+            StatusRow(
+                tool="gh", package="gh", provider="mise", state=ActionState.NO_PAGE
+            ),
+        ],
     )
 
     assert capsys.readouterr().out == "gum\ngh\n"
     assert buf.getvalue() == ""
+
+
+def test_render_status_bare_names_never_collapse_by_package(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`xargs maniac install` needs binaries, one per line, never a package label."""
+    buf = io.StringIO()
+    test_console = Console(file=buf, force_terminal=False)
+
+    rows = [
+        StatusRow(
+            tool=name,
+            package="pandoc",
+            provider="mise",
+            state=ActionState.SHIPS_UNINSTALLED,
+        )
+        for name in ("pandoc", "pandoc-lua", "pandoc-server")
+    ]
+    _render_status(test_console, rows)
+
+    assert capsys.readouterr().out == "pandoc\npandoc-lua\npandoc-server\n"
 
 
 def test_render_status_names_forces_bare_output_on_a_terminal(
@@ -240,27 +285,18 @@ def test_render_status_names_forces_bare_output_on_a_terminal(
     buf = io.StringIO()
     test_console = Console(file=buf, force_terminal=True)
 
-    _render_status(test_console, [StatusRow(facts=_facts(tool="gum"))], names=True)
-
-    assert capsys.readouterr().out == "gum\n"
-    assert buf.getvalue() == ""
-
-
-def test_render_status_bare_names_dedupe_across_sections(
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    buf = io.StringIO()
-    test_console = Console(file=buf, force_terminal=False)
-
     _render_status(
         test_console,
         [
-            StatusRow(facts=_facts(tool="gum", section="1")),
-            StatusRow(facts=_facts(tool="gum", section="5")),
+            StatusRow(
+                tool="gum", package="gum", provider="mise", state=ActionState.NO_PAGE
+            )
         ],
+        names=True,
     )
 
     assert capsys.readouterr().out == "gum\n"
+    assert buf.getvalue() == ""
 
 
 def test_cli_status_pipe_emits_bare_names(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -269,15 +305,8 @@ def test_cli_status_pipe_emits_bare_names(monkeypatch: pytest.MonkeyPatch) -> No
         cli_module.console, "_instance", Console(force_terminal=False, no_color=True)
     )
     monkeypatch.setattr(
-        "maniac.cli.status.collect_facts",
-        lambda: [
-            _facts(
-                tool="gum",
-                sources=[
-                    RepoSource(name="gum", target="charmbracelet/gum", is_local=False)
-                ],
-            )
-        ],
+        "maniac.cli.status.discovery.enumerate_installations",
+        lambda: [(_FakeProvider(), _installation(binary="gum"))],
     )
 
     res = runner.invoke(app, ["status"])
@@ -290,15 +319,8 @@ def test_cli_status_tty_shows_table(monkeypatch: pytest.MonkeyPatch) -> None:
         cli_module.console, "_instance", Console(force_terminal=True, no_color=True)
     )
     monkeypatch.setattr(
-        "maniac.cli.status.collect_facts",
-        lambda: [
-            _facts(
-                tool="gum",
-                sources=[
-                    RepoSource(name="gum", target="charmbracelet/gum", is_local=False)
-                ],
-            )
-        ],
+        "maniac.cli.status.discovery.enumerate_installations",
+        lambda: [(_FakeProvider(), _installation(binary="gum"))],
     )
 
     res = runner.invoke(app, ["status"])

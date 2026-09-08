@@ -1,96 +1,153 @@
-"""`status`: report tools MANIAC could act on, or exactly the tools named.
+"""`status`: report each binary's state, per ADR-0016's three-state table.
 
-Per ADR-0013: with no arguments, the tools with a source resolvable under
-ADR-0008's installation-tied rule, plus those MANIAC already manages. With
-arguments, exactly those tools, unfiltered -- the escape hatch that removes
-the need for `--bin-dir`, `--system` or `--all`.
+| state | action | cost |
+|---|---|---|
+| ships a page, not installed | install it | zero |
+| no page anywhere | synthesize | LLM |
+| MANIAC-managed | inventory | - |
 
-Columns are observations, never a verdict word or a state name, per
-ADR-0012 and ADR-0014: this module never recomputes classification, it only
-reads `classification.collect_facts()`'s cache.
+Enumeration inverts from scanning the manpath (ADR-0013/0014) to walking
+providers (ADR-0016 Stage 7, `discovery.enumerate_installations`): the unit
+is a binary a provider detected, not a page found on disk, since the point
+is capability -- what a provider knows that the manpath cannot -- not scan
+speed (measured 1.82s against 1.96s, over a fixed 0.84s of startup).
+
+`--candidates` and its `min_words_per_flag` threshold are gone with
+ADR-0016: judging whether an existing page is good enough left scope, so a
+binary's state is a fact about installation, never a verdict on quality.
+
+The unit is the binary, not the package -- upstream itself ships
+`pandoc.1`, `pandoc-lua.1` and `pandoc-server.1` separately, and `man`
+looks a page up by command name. Package identity groups sibling binaries
+only to collapse their rows visually in the table; the bare-name pipe
+below always names binaries, one per line, never a package.
 """
 
 from dataclasses import dataclass
-from typing import Annotated, Any
+from enum import Enum
+from typing import TYPE_CHECKING, Annotated, Any
 
 import typer
 from rich.table import Table
 
-from ..candidates import CandidateSelection, select_candidate
-from ..classification import ManpageFacts, absent_facts, collect_facts
+from ..config import Config
+from ..sources import discovery
+from ..sources.manpages import find_managed_manpage, select_primary_manpage
 from . import app, console, default_cfg
-from .render import _repo_cell
+
+if TYPE_CHECKING:
+    from ..models import Installation
+    from ..sources.providers.base import Provider
+
+
+class ActionState(Enum):
+    """Which of ADR-0016's three buckets a binary falls in."""
+
+    SHIPS_UNINSTALLED = "ships a page, not installed"
+    NO_PAGE = "no page anywhere"
+    MANAGED = "MANIAC-managed"
+
+
+_ACTION_AND_COST: dict[ActionState, tuple[str, str]] = {
+    ActionState.SHIPS_UNINSTALLED: ("install it", "zero"),
+    ActionState.NO_PAGE: ("synthesize", "LLM"),
+    ActionState.MANAGED: ("inventory", "-"),
+}
 
 
 @dataclass(frozen=True, slots=True)
 class StatusRow:
-    """One manpage's observations: word count, flag-entry count, ownership, source."""
+    """One binary's state. `package` groups siblings for the table view only."""
 
-    facts: ManpageFacts
+    tool: str
+    package: str
+    provider: str
+    state: ActionState
 
 
-def _actionable(facts: ManpageFacts) -> bool:
-    """Whether a page belongs in the no-argument listing.
+def _state_for(
+    provider: "Provider | None", inst: "Installation | None", tool: str, cfg: Config
+) -> ActionState:
+    """Decide one binary's state: MANIAC's own install directory wins first.
 
-    A resolvable installation-tied source means MANIAC could improve it; a
-    page it already manages stays visible even if a source cannot be
-    re-resolved.
+    Checked before the install-root page, not after: an install already
+    performed from tier 1 or 2 copies its source file verbatim (ADR-0016),
+    carrying no MANIAC provenance header, so re-deriving "installed" from
+    the install root every time would keep reporting it as not-yet-installed.
     """
-    return bool(facts.sources) or facts.is_maniac_authored
+    if find_managed_manpage(cfg.man_dir, tool) is not None:
+        return ActionState.MANAGED
+    if provider is not None and inst is not None:
+        page = select_primary_manpage(provider.local_docs(inst), inst.binary)
+        if page is not None:
+            return ActionState.SHIPS_UNINSTALLED
+    return ActionState.NO_PAGE
 
 
 def compute_status(
-    tools: list[str] | None = None, candidates_only: bool = False
+    tools: list[str] | None = None, config: Config | None = None
 ) -> list[StatusRow]:
-    """Compute status rows from classification facts. Never recomputes classification.
+    """One row per binary: every provider-detected installation, or exactly the named tools.
 
-    With no tool names, only actionable pages (see `_actionable`). With tool
-    names, every matching page found in the classification scan, unfiltered,
-    plus one absence row per named tool the scan found no page for -- the
-    common case MANIAC exists to serve. Absence rows come from naming a tool
-    and nothing else: there is no enumeration of uninstalled tools, and no
-    check that the binary exists, per ADR-0013.
-
-    `candidates_only` applies after that selection, per ADR-0014: it keeps
-    only pages `candidates.select_candidate` marks SELECTED against
-    `Config.min_words_per_flag`. A page with `NO_EVIDENCE` (unrecognised
-    dialect, or no countable flag entries) is never selected, however poor
-    it is -- under-claiming is the deliberate bias, not a bug here.
+    With no names, walks `$PATH` (`discovery.enumerate_installations`) and
+    reports every binary some provider claims -- the manpath is never
+    scanned. With names, resolves exactly those, unfiltered; a name no
+    provider claims still gets a row (`NO_PAGE`, unless MANIAC already
+    manages a page for it) rather than nothing, per ADR-0013.
     """
-    all_facts = collect_facts()
+    cfg = config or default_cfg
+
     if tools:
-        wanted = dict.fromkeys(tools)
-        matching = [facts for facts in all_facts if facts.tool in wanted]
-        found = {facts.tool for facts in matching}
-        matching += [absent_facts(tool) for tool in wanted if tool not in found]
-    else:
-        matching = [facts for facts in all_facts if _actionable(facts)]
+        rows: list[StatusRow] = []
+        for tool in dict.fromkeys(tools):
+            found = discovery.find_installation(tool)
+            provider, inst = found if found else (None, None)
+            rows.append(
+                StatusRow(
+                    tool=tool,
+                    package=inst.package if inst else tool,
+                    provider=provider.name if provider else "",
+                    state=_state_for(provider, inst, tool, cfg),
+                )
+            )
+        return rows
 
-    if candidates_only:
-        threshold = default_cfg.min_words_per_flag
-        matching = [
-            facts
-            for facts in matching
-            if select_candidate(facts, threshold) is CandidateSelection.SELECTED
-        ]
-
-    return [StatusRow(facts=facts) for facts in matching]
+    return [
+        StatusRow(
+            tool=inst.binary,
+            package=inst.package,
+            provider=provider.name,
+            state=_state_for(provider, inst, inst.binary, cfg),
+        )
+        for provider, inst in discovery.enumerate_installations()
+    ]
 
 
 def _bare_names(rows: list[StatusRow]) -> list[str]:
-    """Deduplicated tool names in first-seen order, for the pipe-friendly path."""
+    """Deduplicated binary names in first-seen order, for the pipe-friendly path."""
     seen: dict[str, None] = {}
     for row in rows:
-        seen.setdefault(row.facts.tool, None)
+        seen.setdefault(row.tool, None)
     return list(seen)
 
 
-def _observed(facts: ManpageFacts, value: object) -> str:
-    """Rendered observation, or `-` where there was no page to measure.
+def _grouped_for_display(rows: list[StatusRow]) -> list[tuple[str, ActionState]]:
+    """Collapse binaries sharing one (provider, package, state) into one table row.
 
-    A measured zero and an unmeasured absence must not look alike.
+    Package identity is a display grouping only -- `pandoc`, `pandoc-lua`
+    and `pandoc-server` share one install root but are three separate `man`
+    lookups. Grouping on state too means one sibling already installed does
+    not stop its still-uninstalled siblings from collapsing together.
     """
-    return str(value) if facts.exists else "-"
+    groups: dict[tuple[str, str, ActionState], list[str]] = {}
+    order: list[tuple[str, str, ActionState]] = []
+    for row in rows:
+        key = (row.provider, row.package, row.state)
+        if key not in groups:
+            order.append(key)
+        groups.setdefault(key, []).append(row.tool)
+
+    return [(", ".join(groups[key]), key[2]) for key in order]
 
 
 def _render_status(
@@ -98,10 +155,11 @@ def _render_status(
 ) -> None:
     """Render as a Rich table on a terminal, or bare tool names otherwise.
 
-    Bare names is what makes `maniac status --candidates | xargs maniac
-    install` and `maniac install $(maniac status --candidates)` work: no
-    table, no colour, no header, one name per line -- plain `print`, not the
-    Rich console, so nothing in a tool's name can be misread as markup.
+    Bare names is what makes `maniac status | xargs maniac install` work:
+    no table, no colour, no header, one binary per line -- plain `print`,
+    not the Rich console, so nothing in a tool's name can be misread as
+    markup, and never collapsed by package here, since `install` acts on
+    binaries. `--names` forces the same output on a real terminal.
     """
     if names or not target_console.is_terminal:
         for tool in _bare_names(rows):
@@ -114,23 +172,13 @@ def _render_status(
 
     table = Table(title="Manpage Status")
     table.add_column("Tool", style="cyan")
-    table.add_column("Section", justify="center")
-    table.add_column("Words", justify="right")
-    table.add_column("Flag entries", justify="right")
-    table.add_column("Owner")
-    table.add_column("Source", overflow="fold")
+    table.add_column("State")
+    table.add_column("Action")
+    table.add_column("Cost", justify="right")
 
-    for row in rows:
-        facts = row.facts
-        source_cell = _repo_cell(facts.sources[0]) if facts.sources else "-"
-        table.add_row(
-            facts.tool,
-            _observed(facts, facts.section),
-            _observed(facts, facts.word_count),
-            _observed(facts, facts.tp_count),
-            "MANIAC" if facts.is_maniac_authored else "vendor",
-            source_cell,
-        )
+    for label, state in _grouped_for_display(rows):
+        action, cost = _ACTION_AND_COST[state]
+        table.add_row(label, state.value, action, cost)
 
     target_console.print(table)
 
@@ -140,16 +188,9 @@ def status(
     tools: Annotated[
         list[str] | None,
         typer.Argument(
-            help="Tools to report on. With none, every tool MANIAC could act on."
+            help="Tools to report on. With none, every binary a provider detects."
         ),
     ] = None,
-    candidates: Annotated[
-        bool,
-        typer.Option(
-            "--candidates",
-            help="Only pages MANIAC's internal heuristic flags as improvable.",
-        ),
-    ] = False,
     names: Annotated[
         bool,
         typer.Option(
@@ -158,6 +199,6 @@ def status(
         ),
     ] = False,
 ) -> None:
-    """Report tools MANIAC could act on, or exactly the tools named."""
-    rows = compute_status(tools, candidates_only=candidates)
+    """Report each binary's state: ships a page not installed, no page anywhere, or MANIAC-managed."""
+    rows = compute_status(tools)
     _render_status(console, rows, names=names)

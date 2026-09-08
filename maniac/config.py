@@ -39,7 +39,6 @@ _DEFAULTS = _load_defaults()
 PROVIDER_DEFAULTS: dict[str, str] = cast(dict[str, str], _DEFAULTS["providers"])
 _LIMITS: dict[str, int] = cast(dict[str, int], _DEFAULTS["limits"])
 _TIMEOUTS: dict[str, int] = cast(dict[str, int], _DEFAULTS["timeouts"])
-_CLASSIFICATION: dict[str, int] = cast(dict[str, int], _DEFAULTS["classification"])
 
 
 def _load_config_env(config_dir: Path) -> None:
@@ -47,7 +46,7 @@ def _load_config_env(config_dir: Path) -> None:
 
 
 def _load_config_file(config_dir: Path) -> dict[str, Any]:
-    """Read the user's provider/model/reasoning_effort/classification settings."""
+    """Read the user's provider/model/reasoning_effort settings."""
     config_file = config_dir / "config.toml"
     if not config_file.is_file():
         legacy_file = config_dir / "config.yaml"
@@ -64,19 +63,11 @@ def _load_config_file(config_dir: Path) -> dict[str, Any]:
     except tomllib.TOMLDecodeError as e:
         raise ValueError(f"Invalid configuration file: {config_file}") from e
 
-    values: dict[str, Any] = {
+    return {
         key: contents[key]
         for key in ("provider", "model", "reasoning_effort")
         if key in contents and isinstance(contents[key], str)
     }
-    classification = contents.get("classification")
-    if isinstance(classification, dict) and isinstance(
-        classification.get("min_words_per_flag"), int
-    ):
-        values["classification"] = {
-            "min_words_per_flag": classification["min_words_per_flag"]
-        }
-    return values
 
 
 _CONFIG_VALUES = _load_config_file(_CONFIG_DIR)
@@ -88,17 +79,6 @@ def _configured_reasoning_effort() -> str | None:
     return _CONFIG_VALUES.get("reasoning_effort") or os.environ.get(
         "MANIAC_REASONING_EFFORT"
     )
-
-
-def _configured_min_words_per_flag() -> int:
-    """config.toml's [classification].min_words_per_flag outranks the packaged default.
-
-    Internal per ADR-0014: tunable through config, never a CLI option.
-    """
-    classification = _CONFIG_VALUES.get("classification", {})
-    if isinstance(classification, dict) and "min_words_per_flag" in classification:
-        return cast(int, classification["min_words_per_flag"])
-    return _CLASSIFICATION["min_words_per_flag"]
 
 
 def _provider_default_model(provider: str) -> str:
@@ -178,7 +158,6 @@ class Config:
     timeout_llm: int = _TIMEOUTS["llm"]
     timeout_git: int = _TIMEOUTS["git"]
     timeout_pandoc: int = _TIMEOUTS["pandoc"]
-    min_words_per_flag: int = field(default_factory=_configured_min_words_per_flag)
 
     def resolve_model(self, model: str | None = None) -> str:
         """Resolve a model identifier: explicit argument, config.toml, MANIAC_MODEL, sniffed provider.

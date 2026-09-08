@@ -12,6 +12,3 @@ llm = 180
 help = 5
 git = 60
 pandoc = 15
-
-[classification]
-min_words_per_flag = 15

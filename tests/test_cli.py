@@ -169,7 +169,7 @@ def test_cli_install_installs_by_default(
 def test_cli_install_zero_tools_exits_quietly(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """`$(maniac status --candidates)` can legitimately expand to nothing."""
+    """`$(maniac status)` can legitimately expand to nothing."""
     called = False
 
     def _run_pipeline(*args: object, **kwargs: object) -> None:
