@@ -7,6 +7,7 @@ from ...logging import logger
 from ...models import Installation, RepoSource
 from .. import discovery
 from ..manpages import find_install_root_manpages
+from ..pathcache import resolve_cached
 
 _LIB_MARKER = "/.local/lib/"
 
@@ -20,7 +21,7 @@ class LocalLibProvider:
     name = "local_lib"
 
     def detect(self, bin_path: Path) -> Installation | None:
-        resolved = bin_path.resolve()
+        resolved = resolve_cached(bin_path)
         if _LIB_MARKER not in str(resolved):
             return None
         base_lib = Path.home() / ".local" / "lib"

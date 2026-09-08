@@ -7,6 +7,7 @@ from ...logging import logger
 from ...models import Installation, RepoSource
 from .. import discovery
 from ..manpages import find_install_root_manpages
+from ..pathcache import resolve_cached
 from .base import Provider
 from .registry import registry
 
@@ -34,7 +35,7 @@ class MiseProvider:
     name = "mise"
 
     def detect(self, bin_path: Path) -> Installation | None:
-        resolved = bin_path.resolve()
+        resolved = resolve_cached(bin_path)
         if _INSTALLS_MARKER not in str(resolved):
             return None
         parts = resolved.parts
