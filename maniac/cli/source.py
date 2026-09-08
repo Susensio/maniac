@@ -46,6 +46,11 @@ def docs(
 
     try:
         source = discover_repo(tool)
+        if source is None:
+            console.print(
+                f"[yellow]No installation-derived source found for '{tool}'.[/yellow]"
+            )
+            return
         console.print(
             f"[bold green]Discovered repository source:[/bold green] {source.target} (local={source.is_local})"
         )

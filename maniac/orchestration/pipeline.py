@@ -51,8 +51,12 @@ def run_pipeline(
         if bin_dir is not None
         else discover_repo(tool_name)
     )
-    doc_files = fetch_and_extract_docs(
-        source, cache_dir=c_dir, max_total_chars=cfg.max_total_doc_chars
+    doc_files = (
+        fetch_and_extract_docs(
+            source, cache_dir=c_dir, max_total_chars=cfg.max_total_doc_chars
+        )
+        if source is not None
+        else []
     )
     docs_block = format_docs_section(doc_files)
 

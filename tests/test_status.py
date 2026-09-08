@@ -206,7 +206,7 @@ def test_render_status_absent_page_renders_dashes_not_zeros(
 def test_render_status_absent_page_prints_its_name_bare(
     capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """`maniac status uv --candidates | xargs maniac generate` needs the name, alone."""
+    """`maniac status uv --candidates | xargs maniac install` needs the name, alone."""
     monkeypatch.setattr(
         "maniac.classification.discover_candidate_source", lambda tool: None
     )
@@ -221,7 +221,7 @@ def test_render_status_absent_page_prints_its_name_bare(
 def test_render_status_non_tty_prints_bare_names(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """The path `xargs maniac generate` and `$(maniac status --candidates)` rely on."""
+    """The path `xargs maniac install` and `$(maniac status --candidates)` rely on."""
     buf = io.StringIO()
     test_console = Console(file=buf, force_terminal=False)
 

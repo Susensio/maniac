@@ -99,7 +99,7 @@ def _render_status(
     """Render as a Rich table on a terminal, or bare tool names otherwise.
 
     Bare names is what makes `maniac status --candidates | xargs maniac
-    generate` and `maniac generate $(maniac status --candidates)` work: no
+    install` and `maniac install $(maniac status --candidates)` work: no
     table, no colour, no header, one name per line -- plain `print`, not the
     Rich console, so nothing in a tool's name can be misread as markup.
     """

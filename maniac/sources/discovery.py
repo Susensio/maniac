@@ -9,40 +9,50 @@ import tomllib
 from functools import cache
 from pathlib import Path
 from time import time
+from typing import TYPE_CHECKING
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
 import zstandard
 
 from ..logging import logger
-from ..models import RepoSource
+from ..models import Installation, RepoSource
+
+if TYPE_CHECKING:
+    from .providers.base import Provider
 
 MISE_REGISTRY_URL = "https://mise.jdx.dev/registry/latest.tar.zst"
 MISE_REGISTRY_TTL_SECONDS = 3_600
 
 
-def discover_repo(binary_name: str, bin_dir: str | Path | None = None) -> RepoSource:
-    """Discover an upstream repository or local source for a binary dynamically."""
+def _resolve_bin_path(binary_name: str, bin_dir: str | Path | None) -> Path | None:
+    """Locate a binary's path: an explicit directory first, then `$PATH`."""
     target_bin_dir = Path(bin_dir) if bin_dir else Path.home() / ".local" / "bin"
     bin_path = target_bin_dir / binary_name
-
-    # If target binary doesn't exist in target_bin_dir, check system PATH
     if not bin_path.exists():
         which_path = shutil.which(binary_name)
         if which_path:
             bin_path = Path(which_path)
+    return bin_path if bin_path.exists() else None
 
-    # Detection is no longer gated on a symlink (ADR-0015 Stage 4) -- cargo
-    # and go install real files. A binary with no provider claiming it is
-    # unresolvable rather than a guess from its bare name against the Mise
-    # registry.
-    if bin_path.exists():
-        source = _resolve_symlink_target(binary_name, bin_path)
-        if source:
-            return source
 
-    # Fallback default
-    return RepoSource(name=binary_name, target=binary_name, is_local=False)
+def discover_repo(
+    binary_name: str, bin_dir: str | Path | None = None
+) -> RepoSource | None:
+    """Discover an upstream repository or local source for a binary dynamically.
+
+    None means unresolvable: no provider (ADR-0015) detected an
+    installation behind this binary, so nothing installation-derived backs
+    a source for it. There is no bare-name fallback -- ADR-0015 rules that
+    "a tool with no provider is reported as unresolvable and nothing is
+    generated for it", closing the gap where this used to return
+    `RepoSource(name=binary, target=binary)`, reachable by `run_pipeline`
+    and liable to synthesize a page for a genuinely unresolved tool.
+    """
+    bin_path = _resolve_bin_path(binary_name, bin_dir)
+    if bin_path is None:
+        return None
+    return _resolve_symlink_target(binary_name, bin_path)
 
 
 def discover_candidate_source(binary_name: str) -> RepoSource | None:
@@ -55,16 +65,40 @@ def discover_candidate_source(binary_name: str) -> RepoSource | None:
     return _resolve_symlink_target(binary_name, Path(which_path))
 
 
-def _resolve_symlink_target(binary_name: str, bin_path: Path) -> RepoSource | None:
+def find_installation(
+    binary_name: str, bin_dir: str | Path | None = None
+) -> "tuple[Provider, Installation] | None":
+    """Return the provider and `Installation` a binary resolves to, if any.
+
+    Shares `discover_repo`'s own bin-path resolution but stops at the
+    `Installation` itself rather than resolving its source -- ADR-0016's
+    tier 1 (install root) and tier 2 (repository, version matched) both
+    need the install root and version directly, not only what
+    `resolve_source` derives from them.
+    """
+    bin_path = _resolve_bin_path(binary_name, bin_dir)
+    if bin_path is None:
+        return None
+    return _detect_via_registry(bin_path)
+
+
+def _detect_via_registry(bin_path: Path) -> "tuple[Provider, Installation] | None":
     """Loop over registered providers (ADR-0015) for the one that claims this path."""
     from .providers import registry  # deferred: providers import this module themselves
 
     for provider in registry:
         inst = provider.detect(bin_path)
-        if inst is None:
-            continue
-        return provider.resolve_source(inst)
+        if inst is not None:
+            return provider, inst
     return None
+
+
+def _resolve_symlink_target(binary_name: str, bin_path: Path) -> RepoSource | None:
+    found = _detect_via_registry(bin_path)
+    if found is None:
+        return None
+    provider, inst = found
+    return provider.resolve_source(inst)
 
 
 def _check_mise_toml(cfg_path: Path, tool_id: str, binary_name: str) -> str | None:

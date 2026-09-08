@@ -17,7 +17,7 @@ def _no_real_xdg_writes(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None
 
     This lives in conftest rather than one test module because the leak is
     not specific to the pipeline: any entry point that builds a default
-    `Config` reintroduces it, as `test_cli_generate_dry_run` did.
+    `Config` reintroduces it, as `test_cli_install_dry_run` did.
     """
     for attr, sub in (
         ("_XDG_CONFIG", "config"),

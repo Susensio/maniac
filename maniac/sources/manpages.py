@@ -264,6 +264,47 @@ def has_examples_section(sections: list[str]) -> bool:
     return any(section.upper() in _EXAMPLES_SECTIONS for section in sections)
 
 
+# `.TH` (man(7)) and `.Dt` (mdoc) both open with the page's own declared
+# title as their first argument, bare or quoted.
+_TH_TITLE = re.compile(r'(?m)^\.TH\s+"?([^"\s]+)"?')
+_DT_TITLE = re.compile(r'(?m)^\.Dt\s+"?([^"\s]+)"?')
+
+
+def manpage_documents(content: str, binary_name: str) -> bool:
+    """Whether a page's own `.TH`/`.Dt` title names `binary_name` (ADR-0016 tier 2).
+
+    A tier-2 page already matched `binary_name` by filename before this is
+    called; this checks the page's own declared subject too, so a
+    same-named file that documents something else is not installed
+    verbatim. It does not prove the repository itself is the right
+    upstream -- a wrongly resolved repository can still ship a page that
+    correctly names the binary it documents (`docs/BACKLOG.md`'s
+    `tmux`/`tmux-builds` case) -- only that title and filename agree.
+    """
+    prefix = content[:_PREFIX_BYTES]
+    match = _TH_TITLE.search(prefix) or _DT_TITLE.search(prefix)
+    if match is None:
+        return False
+    return match.group(1).strip('"').lower() == binary_name.lower()
+
+
+def select_primary_manpage(paths: list[Path], binary_name: str) -> Path | None:
+    """Pick the page documenting `binary_name` itself from a `local_docs()`-style list.
+
+    Prefers an exact `<bin>.<section>` match over a `<bin>-sub.<section>`
+    sibling -- naive lexical sorting would return `fzf-tmux.1` before
+    `fzf.1` since `-` sorts before `.`. Mirrors `find_repo_manpage`'s own
+    exact-over-subcommand ordering, applied to an already-gathered list
+    (`find_install_root_manpages`'s) instead of a directory walk.
+    """
+    exact_patterns, subcommand_patterns = _manpage_patterns(binary_name)
+    for patterns in (exact_patterns, subcommand_patterns):
+        for path in paths:
+            if any(fnmatch.fnmatch(path.name, pattern) for pattern in patterns):
+                return path
+    return None
+
+
 def find_repo_manpage(repo_dir: Path, binary_name: str) -> Path | None:
     """Find a hand-authored manpage for ``binary_name`` shipped in a repository checkout.
 

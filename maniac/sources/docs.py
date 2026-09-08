@@ -94,15 +94,43 @@ def fetch_and_extract_docs(
 
 
 def resolve_repo_dir(
-    source: RepoSource, cache_dir_path: Path, cfg: Config
+    source: RepoSource,
+    cache_dir_path: Path,
+    cfg: Config,
+    version: str | None = None,
 ) -> Path | None:
-    """Resolve a source to its local directory, cloning a remote repository if needed."""
+    """Resolve a source to its local directory, cloning a remote repository if needed.
+
+    With `version`, clones the git tag naming it instead of the default
+    branch, into a distinct `<name>@<tag>` directory -- ADR-0016 tier 2
+    needs the installed version, not whatever the default branch currently
+    holds, and a page fetched at the wrong version is worse than none.
+    Returns None, rather than falling back to the default branch, when no
+    tag matches.
+    """
     if source.is_local and source.local_path:
         return source.local_path
 
     cache_dir_path.mkdir(parents=True, exist_ok=True)
-    dest_dir = cache_dir_path / source.name
 
+    ref = None
+    dest_name = source.name
+    if version is not None:
+        clone_url = source.clone_url
+        if not clone_url:
+            logger.debug("No clone URL for repository", source=source.name)
+            return None
+        ref = _find_matching_tag(clone_url, version, cfg.timeout_git)
+        if ref is None:
+            logger.debug(
+                "No matching upstream tag for installed version",
+                source=source.name,
+                version=version,
+            )
+            return None
+        dest_name = f"{source.name}@{ref}"
+
+    dest_dir = cache_dir_path / dest_name
     if dest_dir.exists() and not (dest_dir / ".git").exists():
         shutil.rmtree(dest_dir, ignore_errors=True)
 
@@ -111,7 +139,7 @@ def resolve_repo_dir(
         if not clone_url:
             logger.debug("No clone URL for repository", source=source.name)
             return None
-        if not _clone_repository(clone_url, dest_dir, cfg):
+        if not _clone_repository(clone_url, dest_dir, cfg, ref=ref):
             return None
     return dest_dir
 
@@ -121,29 +149,76 @@ def discover_repo_manpage(
     binary_name: str,
     cache_dir: str | Path | None = None,
     config: Config | None = None,
+    version: str | None = None,
 ) -> Path | None:
     """Return a hand-authored manpage for ``binary_name`` shipped in ``source``'s repository.
 
     Resolves (and clones, if needed and not already cached) the same repository
     directory ``fetch_and_extract_docs`` uses, then looks for a manpage MANIAC
-    can install as-is instead of generating one.
+    can install as-is instead of generating one. With `version`, resolves the
+    git tag naming it (ADR-0016 tier 2) rather than the default branch.
     """
     cfg = config or Config()
     cache_dir_path = Path(cache_dir) if cache_dir is not None else cfg.cache_dir
-    repo_dir = resolve_repo_dir(source, cache_dir_path, cfg)
+    repo_dir = resolve_repo_dir(source, cache_dir_path, cfg, version=version)
     if repo_dir is None:
         return None
     return _find_repo_manpage(repo_dir, binary_name)
 
 
+def _find_matching_tag(clone_url: str, version: str, timeout: int) -> str | None:
+    """Return the git tag naming `version`, or None if none does.
+
+    Tries the two conventional spellings, `v<version>` then a bare
+    `<version>`, against the remote's tag list via `git ls-remote` -- no
+    clone needed to check. Covers semver-tagged projects (`gh` tags
+    `v2.90.0`, `pandoc` tags `3.10.2`) without guessing at less common
+    schemes; deliberately not a fuzzy match, since an unmatched version is
+    refused rather than approximated (ADR-0016).
+    """
+    try:
+        result = subprocess.run(
+            ["git", "ls-remote", "--tags", clone_url],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as e:
+        logger.debug("Error listing remote tags", url=clone_url, error=str(e))
+        return None
+    if result.returncode != 0:
+        return None
+
+    tags: set[str] = set()
+    for line in result.stdout.splitlines():
+        _, _, ref = line.partition("refs/tags/")
+        if ref:
+            tags.add(ref.removesuffix("^{}"))
+
+    for candidate in (f"v{version}", version):
+        if candidate in tags:
+            return candidate
+    return None
+
+
 def _clone_repository(
-    clone_url: str, dest_dir: Path, cfg: Config, *, optional: bool = False
+    clone_url: str,
+    dest_dir: Path,
+    cfg: Config,
+    *,
+    ref: str | None = None,
+    optional: bool = False,
 ) -> bool:
-    """Clone a shallow repository into dest_dir."""
-    logger.info("Cloning repository", url=clone_url, dest=str(dest_dir))
+    """Clone a shallow repository into dest_dir, at `ref` (a tag or branch) if given."""
+    logger.info("Cloning repository", url=clone_url, dest=str(dest_dir), ref=ref)
+    cmd = ["git", "clone", "--depth", "1"]
+    if ref is not None:
+        cmd += ["--branch", ref]
+    cmd += [clone_url, str(dest_dir)]
     try:
         res = subprocess.run(
-            ["git", "clone", "--depth", "1", clone_url, str(dest_dir)],
+            cmd,
             capture_output=True,
             text=True,
             timeout=cfg.timeout_git,

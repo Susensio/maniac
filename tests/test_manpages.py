@@ -18,7 +18,9 @@ from maniac.sources.manpages import (
     find_repo_manpage,
     has_examples_section,
     is_help2man_manpage,
+    manpage_documents,
     read_manpage_source,
+    select_primary_manpage,
 )
 
 # Trimmed fixtures of the real `ls.1`/`fold.1` pages on the development
@@ -548,3 +550,30 @@ def test_find_installed_manpages_includes_pages_without_a_marker(
         manpages.HelpDerivedManpage("bare", "1", bare),
         manpages.HelpDerivedManpage("generated", "1", generated),
     ]
+
+
+def test_select_primary_manpage_prefers_exact_over_subcommand() -> None:
+    """`pandoc.1.gz`'s own package, not one of its sibling binaries' pages."""
+    exact = Path("pandoc.1.gz")
+    sibling = Path("pandoc-lua.1.gz")
+
+    assert select_primary_manpage([sibling, exact], "pandoc") == exact
+
+
+def test_select_primary_manpage_no_match_returns_none() -> None:
+    assert select_primary_manpage([Path("pandoc-lua.1.gz")], "somethingelse") is None
+
+
+def test_manpage_documents_matches_th_title() -> None:
+    content = '.TH PANDOC "1" "January 2024" "pandoc 3.1.2" "User Commands"\n'
+    assert manpage_documents(content, "pandoc") is True
+    assert manpage_documents(content, "someothertool") is False
+
+
+def test_manpage_documents_matches_mdoc_title() -> None:
+    content = ".Dd January 1, 2024\n.Dt TMUX 1\n.Sh NAME\n"
+    assert manpage_documents(content, "tmux") is True
+
+
+def test_manpage_documents_no_title_is_false() -> None:
+    assert manpage_documents("no macros here\n", "pandoc") is False

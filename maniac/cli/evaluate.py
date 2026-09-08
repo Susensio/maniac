@@ -127,7 +127,7 @@ def compute_compare(
             tool=tool,
             error=(
                 f"Generated manpage not found at {target_manpage}. "
-                f"Run 'maniac generate {tool}' first."
+                f"Run 'maniac install {tool}' first."
             ),
         )
     if not target_context.exists():

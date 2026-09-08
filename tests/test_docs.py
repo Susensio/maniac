@@ -9,6 +9,7 @@ from maniac.sources.docs import (
     extract_docs_from_dir,
     fetch_and_extract_docs,
     format_docs_section,
+    resolve_repo_dir,
 )
 
 
@@ -198,3 +199,119 @@ def test_fetch_and_extract_docs_no_clone_url() -> None:
     )
     docs = fetch_and_extract_docs(source)
     assert docs == []
+
+
+def test_find_matching_tag_prefers_v_prefixed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`gh` tags releases `v2.90.0`; a peeled annotated-tag ref (`^{}`) is stripped."""
+    import subprocess
+
+    from maniac.sources.docs import _find_matching_tag
+
+    def fake_run(cmd: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        assert cmd[:3] == ["git", "ls-remote", "--tags"]
+        stdout = "abc\trefs/tags/v2.90.0\ndef\trefs/tags/v2.90.0^{}\n"
+        return subprocess.CompletedProcess(cmd, 0, stdout=stdout, stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    tag = _find_matching_tag("https://github.com/cli/cli.git", "2.90.0", 10)
+    assert tag == "v2.90.0"
+
+
+def test_find_matching_tag_bare_version(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`pandoc` tags releases bare, `3.10.2` with no `v` prefix."""
+    import subprocess
+
+    from maniac.sources.docs import _find_matching_tag
+
+    def fake_run(cmd: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(
+            cmd, 0, stdout="abc\trefs/tags/3.10.2\n", stderr=""
+        )
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    tag = _find_matching_tag("https://github.com/jgm/pandoc.git", "3.10.2", 10)
+    assert tag == "3.10.2"
+
+
+def test_find_matching_tag_no_match_returns_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import subprocess
+
+    from maniac.sources.docs import _find_matching_tag
+
+    def fake_run(cmd: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(
+            cmd, 0, stdout="abc\trefs/tags/v0.1.0\n", stderr=""
+        )
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    assert _find_matching_tag("https://github.com/owner/tool.git", "9.9.9", 10) is None
+
+
+def test_resolve_repo_dir_with_version_clones_the_matching_tag(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from maniac.config import Config
+    from maniac.sources import docs as docs_module
+
+    monkeypatch.setattr(
+        docs_module, "_find_matching_tag", lambda url, version, timeout: "v1.2.3"
+    )
+    observed_refs: list[object] = []
+
+    def fake_clone(
+        clone_url: str, dest_dir: Path, cfg: object, **kwargs: object
+    ) -> bool:
+        observed_refs.append(kwargs.get("ref"))
+        dest_dir.mkdir()
+        (dest_dir / ".git").mkdir()
+        return True
+
+    monkeypatch.setattr(docs_module, "_clone_repository", fake_clone)
+    source = RepoSource(name="tool", target="owner/tool", is_local=False)
+
+    result = resolve_repo_dir(source, tmp_path, Config(), version="1.2.3")
+
+    assert result == tmp_path / "tool@v1.2.3"
+    assert observed_refs == ["v1.2.3"]
+
+
+def test_resolve_repo_dir_with_version_no_matching_tag_returns_none(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """ADR-0016: an unmatched version is refused, not approximated from the default branch."""
+    from maniac.config import Config
+    from maniac.sources import docs as docs_module
+
+    monkeypatch.setattr(
+        docs_module, "_find_matching_tag", lambda url, version, timeout: None
+    )
+    source = RepoSource(name="tool", target="owner/tool", is_local=False)
+
+    assert resolve_repo_dir(source, tmp_path, Config(), version="9.9.9") is None
+
+
+def test_discover_repo_manpage_with_version_uses_the_tagged_checkout(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from maniac.sources import docs as docs_module
+
+    monkeypatch.setattr(
+        docs_module, "_find_matching_tag", lambda url, version, timeout: "v1.2.3"
+    )
+
+    def fake_clone(
+        clone_url: str, dest_dir: Path, cfg: object, **kwargs: object
+    ) -> bool:
+        dest_dir.mkdir()
+        (dest_dir / ".git").mkdir()
+        (dest_dir / "tool.1").write_text(".TH TOOL 1\n", encoding="utf-8")
+        return True
+
+    monkeypatch.setattr(docs_module, "_clone_repository", fake_clone)
+    source = RepoSource(name="tool", target="owner/tool", is_local=False)
+
+    manpage = discover_repo_manpage(source, "tool", cache_dir=tmp_path, version="1.2.3")
+
+    assert manpage == tmp_path / "tool@v1.2.3" / "tool.1"

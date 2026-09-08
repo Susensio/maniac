@@ -92,10 +92,9 @@ def test_check_mise_toml_invalid(tmp_path: Path) -> None:
 
 
 def test_discover_repo_fallback(monkeypatch, tmp_path: Path) -> None:
+    """A binary nothing on disk resolves to is unresolvable, not a bare-name guess."""
     monkeypatch.setattr(discovery, "_load_mise_registry", dict)
-    source = discover_repo("nonexistent_unknown_tool", bin_dir=tmp_path)
-    assert source.name == "nonexistent_unknown_tool"
-    assert source.target == "nonexistent_unknown_tool"
+    assert discover_repo("nonexistent_unknown_tool", bin_dir=tmp_path) is None
 
 
 def test_discover_repo_does_not_use_the_registry_without_an_installation(
@@ -114,10 +113,7 @@ def test_discover_repo_does_not_use_the_registry_without_an_installation(
         lambda: {"envsubst": "a8m/envsubst"},
     )
 
-    source = discover_repo("envsubst", bin_dir=tmp_path)
-
-    assert source.name == "envsubst"
-    assert source.target == "envsubst"
+    assert discover_repo("envsubst", bin_dir=tmp_path) is None
 
 
 def test_discover_candidate_source_does_not_guess_from_a_system_binary(

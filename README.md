@@ -98,19 +98,29 @@ Zero keys present is a hard error; two or more prints one line to stderr naming 
 
 ## Quickstart
 
-### 1. Generate & Install Manpages
+### 1. Install Manpages
 
-`generate` compiles a manpage and installs it straight into your user manual directory; pass `--no-install` to stop after compiling:
+`install` tries the most authoritative source first: a manpage already shipped inside the tool's own install root, then one fetched from its upstream repository at the matching version, then LLM synthesis from `--help` and repository docs.
+It reports which one answered:
 
 ```bash
-# Generate and install for a single tool
-maniac generate hx
+$ maniac install pandoc hx
+pandoc   upstream manpage from install root (3.10.2)   [no synthesis]
+hx       synthesized from --help + repo docs
+```
 
-# Generate for multiple tools at once
-maniac generate uv howdoi glow ruff bat
+`--no-generate` restricts this to the first two tiers and never calls an LLM; `--generate` forces the third, skipping the first two outright.
+Pass `--no-install` to stop after compiling, for the synthesis tier only:
 
-# Compile only, without touching your man path
-maniac generate hx --no-install
+```bash
+# Install for a single tool
+maniac install hx
+
+# Install for multiple tools at once
+maniac install uv howdoi glow ruff bat
+
+# Never call an LLM: install root or repository only
+maniac install pandoc --no-generate
 
 # Now use standard man immediately
 man hx
@@ -140,18 +150,18 @@ The heuristic and its threshold are internal (tunable via `config.toml`, never a
 maniac status --candidates
 ```
 
-### 3. Bulk-Generate via Piping
+### 3. Bulk-Install via Piping
 
-There is no bulk generation command: piping `status`'s output into `generate` is the bulk path.
+There is no bulk install command: piping `status`'s output into `install` is the bulk path.
 Redirected to anything other than a terminal, `status` prints bare tool names, one per line, with no table, colour, or header:
 
 ```bash
-maniac status --candidates | xargs maniac generate
+maniac status --candidates | xargs maniac install
 # or, equivalently
-maniac generate $(maniac status --candidates)
+maniac install $(maniac status --candidates)
 ```
 
-`generate` with zero tool names exits quietly, so an empty expansion is harmless.
+`install` with zero tool names exits quietly, so an empty expansion is harmless.
 
 ### 4. Evaluate Manual Quality
 

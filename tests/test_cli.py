@@ -40,7 +40,7 @@ def test_cli_help() -> None:
     assert result.exit_code == 0
     assert "Maniac:" in result.output
     assert "source" in result.output
-    assert "generate" in result.output
+    assert "install" in result.output
     assert "eval" in result.output
     assert "status" in result.output
 
@@ -108,7 +108,7 @@ def test_cli_source_docs(monkeypatch: pytest.MonkeyPatch) -> None:
     assert "README.md" in result.output
 
 
-def test_cli_generate_dry_run(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_cli_install_dry_run(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setattr(
         "maniac.orchestration.pipeline.find_subcommands",
         lambda cmd: {"> tool --help": "Usage: tool"},
@@ -126,16 +126,16 @@ def test_cli_generate_dry_run(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -
 
     result = runner.invoke(
         app,
-        ["generate", "mytool", "--output-dir", str(tmp_path), "--dry-run"],
+        ["install", "mytool", "--output-dir", str(tmp_path), "--dry-run"],
     )
     assert result.exit_code == 0
-    assert "Successfully generated manpage" in result.output
+    assert "synthesized from --help" in result.output
 
 
-def test_cli_generate_installs_by_default(
+def test_cli_install_installs_by_default(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """M-inverted-install: `generate` installs unless told `--no-install`."""
+    """M-inverted-install: `install` installs unless told `--no-install`."""
     from maniac.models import PipelineResult
 
     observed: dict[str, object] = {}
@@ -157,16 +157,16 @@ def test_cli_generate_installs_by_default(
 
     monkeypatch.setattr("maniac.orchestration.pipeline.run_pipeline", _run_pipeline)
 
-    res = runner.invoke(app, ["generate", "mytool"])
+    res = runner.invoke(app, ["install", "mytool"])
     assert res.exit_code == 0
     assert observed == {"install": True}
 
-    res = runner.invoke(app, ["generate", "mytool", "--no-install"])
+    res = runner.invoke(app, ["install", "mytool", "--no-install"])
     assert res.exit_code == 0
     assert observed == {"install": False}
 
 
-def test_cli_generate_zero_tools_exits_quietly(
+def test_cli_install_zero_tools_exits_quietly(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """`$(maniac status --candidates)` can legitimately expand to nothing."""
@@ -178,7 +178,7 @@ def test_cli_generate_zero_tools_exits_quietly(
 
     monkeypatch.setattr("maniac.orchestration.pipeline.run_pipeline", _run_pipeline)
 
-    res = runner.invoke(app, ["generate"])
+    res = runner.invoke(app, ["install"])
     assert res.exit_code == 0
     assert res.output == ""
     assert not called
@@ -192,7 +192,7 @@ def test_fish_completion_includes_only_dry_run() -> None:
         env={
             "_MANIAC_COMPLETE": "complete_fish",
             "_TYPER_COMPLETE_FISH_ACTION": "get-args",
-            "_TYPER_COMPLETE_ARGS": "maniac generate --dry",
+            "_TYPER_COMPLETE_ARGS": "maniac install --dry",
         },
     )
 
@@ -206,7 +206,7 @@ def test_fish_completion_includes_only_dry_run() -> None:
         env={
             "_MANIAC_COMPLETE": "complete_fish",
             "_TYPER_COMPLETE_FISH_ACTION": "get-args",
-            "_TYPER_COMPLETE_ARGS": "maniac generate --no-dry",
+            "_TYPER_COMPLETE_ARGS": "maniac install --no-dry",
         },
     )
 
@@ -307,27 +307,27 @@ def test_cli_uninstall_foreign_kept(
     assert "Left non-MANIAC manpage in place" in res.output
 
 
-def test_cli_generate_multiple_all_fail_exits_nonzero(
+def test_cli_install_multiple_all_fail_exits_nonzero(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """M10: `generate` must not silently exit 0 when every tool fails."""
+    """M10: `install` must not silently exit 0 when every tool fails."""
     from maniac.exceptions import ManiacError
 
     def _raise(*args: object, **kwargs: object) -> None:
         raise ManiacError("boom")
 
     monkeypatch.setattr("maniac.orchestration.pipeline.run_pipeline", _raise)
-    res = runner.invoke(app, ["generate", "toolone", "tooltwo"])
+    res = runner.invoke(app, ["install", "toolone", "tooltwo"])
     assert res.exit_code == 1
-    assert "Generation failed for toolone: boom" in res.output
-    assert "Generation failed for tooltwo: boom" in res.output
+    assert "Install failed for toolone: boom" in res.output
+    assert "Install failed for tooltwo: boom" in res.output
     assert "2/2 tool(s) failed" in res.output
 
 
-def test_cli_generate_multiple_partial_success_exits_nonzero(
+def test_cli_install_multiple_partial_success_exits_nonzero(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """M10: one failure among several tools still fails the multi-generation."""
+    """M10: one failure among several tools still fails the multi-install."""
     from maniac.exceptions import ManiacError
     from maniac.models import PipelineResult
 
@@ -348,6 +348,33 @@ def test_cli_generate_multiple_partial_success_exits_nonzero(
         )
 
     monkeypatch.setattr("maniac.orchestration.pipeline.run_pipeline", _run_pipeline)
-    res = runner.invoke(app, ["generate", "goodtool", "badtool"])
+    res = runner.invoke(app, ["install", "goodtool", "badtool"])
     assert res.exit_code == 1
     assert "1/2 tool(s) failed" in res.output
+
+
+def test_render_install_does_not_swallow_bracketed_detail() -> None:
+    """M-bracket-escape: `[no synthesis]` is literal text, not Rich markup.
+
+    Rich reads an unescaped `[...]` as a style tag and silently drops it,
+    so an un-escaped render would print "pandoc   upstream manpage from
+    install root (3.10.2)" with the `[no synthesis]` suffix missing.
+    """
+    import io
+
+    from rich.console import Console
+
+    from maniac.cli.install import _render_install
+    from maniac.orchestration.install import InstallOutcome, Tier
+
+    buf = io.StringIO()
+    test_console = Console(file=buf, force_terminal=False, no_color=True)
+    outcome = InstallOutcome(
+        tool="pandoc",
+        tier=Tier.INSTALL_ROOT,
+        detail="upstream manpage from install root (3.10.2)   [no synthesis]",
+    )
+
+    _render_install(test_console, outcome)
+
+    assert "[no synthesis]" in buf.getvalue()

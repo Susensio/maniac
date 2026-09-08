@@ -84,7 +84,7 @@ class CoverageStats:
 @dataclass
 class PipelineResult:
     tool_name: str
-    repo_source: RepoSource
+    repo_source: RepoSource | None
     command_count: int
     doc_file_count: int
     context_path: Path | None
