@@ -75,7 +75,7 @@ Redirected to anything but a terminal, `status` prints bare binary names -- one 
 
 ## Verification performed
 
-`just check` (Ruff format, Ruff lint, `ty`, pytest) passes with 335 tests, exit 0.
+`just check` (Ruff format, Ruff lint, `ty`, pytest) passes with 347 tests, exit 0.
 `ruff format` reaches Python code fences inside markdown; hand-aligned comments in such fences are reformatted to its canonical output.
 That behavior predated this work (confirmed against `f518a8a`), meaning `just check` was already running against this constraint when the work landed.
 
@@ -123,6 +123,42 @@ Tier 3 runs the full LLM synthesis pipeline via `run_pipeline`, imported lazily 
 Verified live: `maniac install pandoc --no-generate` finds and installs `pandoc.1.gz` from the install root with no LLM access needed.
 `maniac status` on the development system (65 binaries across all eight providers) reports: 2 `SHIPS_UNINSTALLED`, 21 `MANAGED`, 42 `NO_PAGE`.
 `maniac status pandoc-lua pandoc-server | xargs maniac install --no-generate` installs both siblings from the install root with no LLM call.
+
+## Installed-pages manifest (ADR-0017)
+
+ADR-0017 made a manifest the authoritative record of which pages MANIAC installed, replacing the provenance header as the thing `install`, `uninstall` and `status` branch on.
+The header stays on synthesized pages as informational metadata; no command reads it to decide ownership.
+
+`maniac/manifest.py` holds the store at `Config.manifest_path` (`$XDG_STATE_HOME/maniac/installed.json`), schema version 1.
+An `Entry` is `path`, `tier` (`Tier.INSTALL_ROOT`/`REPOSITORY`/`SYNTHESIS`), `source`, `checksum` (sha256 hex) and an optional `backup`.
+The surface is `load`, `record`, `lookup`, `forget` and `checksum_of`, each taking an optional `Config`.
+Loading tolerates corruption: a missing file, unreadable file, bad JSON or wrong `version` yields an empty manifest, and a single malformed entry is skipped rather than voiding the file.
+Writes are atomic -- a `.tmp` sibling then `Path.replace` -- so a crash mid-write cannot leave a torn file.
+
+The entry is written before the copy, not after, settling what ADR-0017 left open.
+A crash between the two leaves an entry naming a file that does not exist, which `status` can see, rather than an untracked page on disk that nothing could attribute; a copy that raises restores the prior entry, or forgets a freshly written one.
+
+Ownership by record rather than by inference closed two defects.
+`uninstall_manpage` reconstructed its target as `<tool>.1` with no compression suffix, so a tier-1 `pandoc.1.gz` was unreachable rather than merely misreported; it now removes the recorded path.
+`status`'s `MANAGED` came from `find_managed_manpage`, a location-and-filename test over the shared `$XDG_DATA_HOME/man/man1`, so a page MANIAC never installed reported as managed; that helper is deleted and `_state_for` consults the manifest.
+
+A recorded page whose bytes no longer match its checksum is treated as foreign: left in place and reported through the existing `UninstallResult.foreign_kept`, with no backup restored and no entry forgotten, unless `uninstall --force` overrides.
+A recorded page whose file has vanished is not a mismatch but the crash case above, and is forgotten cleanly.
+
+Vendor backups moved out of the manpath.
+`install --force` writes the displaced page to `Config.backup_dir` (`$XDG_STATE_HOME/maniac/backups`) and records its path on the entry, where it previously dropped a `.maniac_bak` sibling into the directory `man` scans.
+The relocation also fixed a live bug: the backup was created as `<page>.maniac_bak` but looked for as `<tool>.1.maniac_bak`, so a compressed vendor page was backed up and then never restorable.
+Because backups and pages now sit under different XDG roots, and so possibly different mounts, restore and migration use `shutil.move` rather than `Path.rename`, which raises `EXDEV` across filesystems.
+
+Migration seeds the manifest on a load that finds no file, scanning `man_dir` alone for header-carrying pages and recording each as tier `synthesis` with its current checksum.
+`output_dir` is deliberately not scanned: it holds staging copies, and seeding from it let a leftover artifact report as `MANAGED`.
+A stray `.maniac_bak` in `man_dir` is relocated to `backup_dir` and attached to its entry; one matching no entry is left alone rather than deleted.
+Pages installed at tiers 1 and 2 before this change carry no trace and cannot be seeded -- they were already reported foreign under the old code, so nothing that worked was lost.
+
+Verified live against a real installation, with every XDG root pointed at a throwaway directory.
+`maniac install pandoc --no-generate` took tier 1 from mise's `pandoc/3.10.2` install root and wrote `pandoc.1.gz` still compressed and byte-identical to source (sha256 `af7789d7...9e4d485`, matching the manifest's recorded checksum); `status` reported `MANIAC-managed`; `uninstall` removed the page and emptied the manifest.
+That last step is the round trip that was impossible before: the compressed tier-1 page `uninstall` could not name.
+A hand-placed `faketool.1` in the same manpath reported `no page anywhere` rather than `MANAGED`, confirming the `status` over-claim is gone.
 
 ## Performance and capability
 
