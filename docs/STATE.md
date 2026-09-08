@@ -99,14 +99,27 @@ That failure predated this work -- confirmed against `f518a8a` -- meaning `just 
 
 ## Direction set 2026-09-07 (ADR-0015, ADR-0016)
 
-Two decisions were taken; `docs/ROADMAP.md` sequences the work in seven stages, of which Stage 1 has landed.
+Two decisions were taken; `docs/ROADMAP.md` sequences the work in seven stages, of which Stages 1 and 2 have landed.
 
 ADR-0015 replaces symlink-prefix matching with a provider per installer, each answering detection, source resolution and local documentation as three separate methods, and introduces `Installation` as the type every other layer consumes.
 Name-only registry matching is removed everywhere rather than left available to explicit requests, closing the gap where `discover_repo("envsubst")` returned `a8m/envsubst` and `generate` would have installed a page describing an unrelated program.
 
 Stage 1 landed: the frozen, slotted `Installation` dataclass sits in `maniac/models.py` next to the existing DTOs; the `Provider` protocol is `maniac/sources/providers/base.py`; `ProviderRegistry` plus the module-level singleton `registry` that owns the ordered provider list is `maniac/sources/providers/registry.py`, both re-exported from `sources/providers/__init__.py`.
-Nothing calls any of it yet and the registry is empty of concrete providers by construction -- Stage 2 ports mise, uv tools and `~/.local/lib` behind the protocol and wires `discovery.py` to loop over `registry`.
-Unit tests over `Installation` alone live in `tests/test_installation.py`; `tests/test_provider_registry.py` covers registration and iteration order with a fake provider, since no concrete one exists yet.
+Unit tests over `Installation` alone live in `tests/test_installation.py`.
+
+Stage 2 ported mise, uv tools and `~/.local/lib` behind the protocol: `maniac/sources/providers/{mise,uv,local_lib}.py`.
+`providers/__init__.py` registers all three into the module singleton on import, in the order `discovery._resolve_symlink_target`'s prior if-elif chain checked them -- `local_lib`, `uv`, `mise` -- so the diff is a pure refactor; the three path markers (`/.local/lib/`, `/.local/share/uv/tools/`, `/.local/share/mise/installs/`) were confirmed mutually exclusive against 227,002 real paths under `~/.local` on the development system before relying on registration order not mattering for correctness.
+`discovery._resolve_symlink_target` now loops over `registry`, calling `detect(bin_path)` on each until one claims the path, imported lazily inside the function body to avoid a cycle (`discovery` -> `providers` -> a provider module that imports `discovery` back for reuse).
+Detection fills every `Installation` field from the path each provider recognises, with three left empty by nature rather than oversight: `parent` is `None` for all three this stage, since composing mise's backend via `.mise.backend.toml` is Stage 3's job; `local_lib`'s `version` is always `None`, since a raw checkout has git history rather than a release version; `uv`'s `version` is best-effort from a matching `*.dist-info` directory under the tool's venv and is `None` when nothing matches (a non-Python entrypoint, or an odd layout).
+`local_docs()` returns `[]` for all three -- wiring it to the install root is Stage 5's job, and returning nothing is not yet an observable behaviour change since nothing calls it.
+`resolve_source` reuses `discovery._resolve_from_mise` (mise) and `discovery._clean_git_url` (local_lib) rather than duplicating that logic; the mise-registry download/parse/cache machinery, `_check_mise_toml`, and the `github-`/`pipx-`/`npm-`/`cargo-https-github-com-` prefix parsing all stay in `discovery.py` untouched, since `discover_repo`'s own non-symlink fallback still calls them directly and Stage 3 is what replaces them.
+One gap this stage did not close: `Provider.resolve_source` has no parameter for `allow_binary_registry_match`, so `MiseProvider.resolve_source` (used by any future generic caller) always resolves with the permissive default; the restrictive mode `discover_candidate_source` needs per ADR-0008 is threaded directly in `discovery._resolve_symlink_target`, which special-cases `inst.provider == "mise"` rather than routing through the protocol method.
+Stage 3 or 4 needs to either give the protocol a home for this flag or decide the restriction belongs somewhere else once the prefix parsing it protects is gone.
+
+`tests/test_provider_registry.py::test_the_module_registry_ships_empty` is replaced by `test_the_module_registry_holds_the_registered_providers`, asserting `[p.name for p in registry] == ["local_lib", "uv", "mise"]`.
+The old test asserted the *absence* of Stage 2's deliverable -- that no concrete provider had registered into the singleton -- not any discovery outcome, so it necessarily expired the moment Stage 2 registered three of them into that same singleton; the roadmap's "every existing test passes unmodified" rule is a proof that porting mise/uv/local_lib behind the protocol changes no observable discovery outcome, and registry emptiness was never a discovery outcome to preserve.
+Every test that does assert one -- `tests/test_discovery.py`'s `discover_repo`/`discover_candidate_source` suite, unchanged -- still passes unmodified.
+`tests/test_providers_{mise,uv,local_lib}.py` are new, covering each provider's `detect`/`resolve_source`/`local_docs` against constructed install layouts under `tmp_path`, including the negative case per provider (a path it must not claim) and the deliberately-empty fields above.
 
 ADR-0016 puts authoritative pages ahead of synthesis in a fixed order -- install root, then repository or online with the version matched, then the LLM -- and renames `generate` to `install`, making it the inverse of the previously orphaned `uninstall`, with `--generate` and `--no-generate` selecting the tier.
 It supersedes ADR-0014: judging whether an existing page is poor enough to replace leaves the current scope, taking `--candidates` and `min_words_per_flag` with it.
