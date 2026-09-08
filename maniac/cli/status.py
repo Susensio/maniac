@@ -2,9 +2,9 @@
 
 | state | action | cost |
 |---|---|---|
-| ships a page, not installed | install it | zero |
-| no page anywhere | synthesize | LLM |
-| MANIAC-managed | inventory | - |
+| available | install it | zero |
+| missing | synthesize | LLM |
+| managed | inventory | - |
 
 Enumeration inverts from scanning the manpath (ADR-0013/0014) to walking
 providers (ADR-0016 Stage 7, `discovery.enumerate_installations`): the unit
@@ -44,9 +44,9 @@ if TYPE_CHECKING:
 class ActionState(Enum):
     """Which of ADR-0016's three buckets a binary falls in."""
 
-    SHIPS_UNINSTALLED = "ships a page, not installed"
-    NO_PAGE = "no page anywhere"
-    MANAGED = "MANIAC-managed"
+    SHIPS_UNINSTALLED = "available"
+    NO_PAGE = "missing"
+    MANAGED = "managed"
 
 
 _ACTION_AND_COST: dict[ActionState, tuple[str, str]] = {
@@ -216,6 +216,6 @@ def status(
         ),
     ] = False,
 ) -> None:
-    """Report each binary's state: ships a page not installed, no page anywhere, or MANIAC-managed."""
+    """Report each binary's state: available, missing, or managed."""
     rows = compute_status(tools)
     _render_status(console, rows, names=names)
