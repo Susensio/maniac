@@ -90,7 +90,20 @@ def test_resolve_source_returns_none_when_brew_info_fails(
     assert homebrew.HomebrewProvider().resolve_source(inst) is None
 
 
-def test_local_docs_is_not_yet_wired(tmp_path: Path) -> None:
+def test_local_docs_finds_manpage_under_install_root(tmp_path: Path) -> None:
+    bin_path = _make_cellar_install(tmp_path, "jq", "1.7.1", "jq")
+    inst = homebrew.HomebrewProvider().detect(bin_path)
+    assert inst is not None
+    manpage = inst.root / "share" / "man" / "man1" / "jq.1"
+    manpage.parent.mkdir(parents=True)
+    manpage.touch()
+
+    assert homebrew.HomebrewProvider().local_docs(inst) == [manpage]
+
+
+def test_local_docs_finds_nothing_when_install_root_ships_no_manpage(
+    tmp_path: Path,
+) -> None:
     bin_path = _make_cellar_install(tmp_path, "jq", "1.7.1", "jq")
     inst = homebrew.HomebrewProvider().detect(bin_path)
     assert inst is not None

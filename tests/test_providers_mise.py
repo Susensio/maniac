@@ -204,8 +204,22 @@ def test_resolve_source_falls_back_to_the_registry_keyed_on_the_directory_name(
     assert provider.resolve_source(inst) is None
 
 
-def test_local_docs_is_not_yet_wired(tmp_path: Path) -> None:
-    """Stage 5 wires `local_docs` to the install root; Stage 2 stubs it honestly."""
+def test_local_docs_finds_manpage_under_install_root(tmp_path: Path) -> None:
+    """Stage 5: `local_docs` reads the install root, no manpath lookup involved."""
+    bin_path = _make_mise_install(tmp_path, "helix", "25.07.1", "hx")
+    provider = mise.MiseProvider()
+    inst = provider.detect(bin_path)
+    assert inst is not None
+    manpage = inst.root / "share" / "man" / "man1" / "hx.1.gz"
+    manpage.parent.mkdir(parents=True)
+    manpage.touch()
+
+    assert provider.local_docs(inst) == [manpage]
+
+
+def test_local_docs_finds_nothing_when_install_root_ships_no_manpage(
+    tmp_path: Path,
+) -> None:
     bin_path = _make_mise_install(tmp_path, "helix", "25.07.1", "hx")
     provider = mise.MiseProvider()
     inst = provider.detect(bin_path)

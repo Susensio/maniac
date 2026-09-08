@@ -6,6 +6,7 @@ from pathlib import Path
 from ...logging import logger
 from ...models import Installation, RepoSource
 from .. import discovery
+from ..manpages import find_install_root_manpages
 from .base import Provider
 from .registry import registry
 
@@ -74,8 +75,7 @@ class MiseProvider:
         )
 
     def local_docs(self, inst: Installation) -> list[Path]:
-        # Wiring this to the install root is Stage 5's job.
-        return []
+        return find_install_root_manpages(inst.root, inst.binary)
 
 
 def _read_backend_record(root: Path) -> tuple[str, str] | None:

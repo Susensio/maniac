@@ -275,12 +275,7 @@ def find_repo_manpage(repo_dir: Path, binary_name: str) -> Path | None:
     installed tool directory, since a checkout can otherwise hold unrelated
     fixtures and vendored sources.
     """
-    exact_patterns = [
-        f"{binary_name}.[1-9]{suffix}" for suffix in _COMPRESSION_SUFFIXES
-    ]
-    subcommand_patterns = [
-        f"{binary_name}-*.[1-9]{suffix}" for suffix in _COMPRESSION_SUFFIXES
-    ]
+    exact_patterns, subcommand_patterns = _manpage_patterns(binary_name)
     candidates = sorted(_iter_repo_manpage_files(repo_dir))
 
     for patterns in (exact_patterns, subcommand_patterns):
@@ -289,6 +284,49 @@ def find_repo_manpage(repo_dir: Path, binary_name: str) -> Path | None:
             if matches and not is_help2man_manpage(path):
                 return path
     return None
+
+
+def find_install_root_manpages(root: Path, binary_name: str) -> list[Path]:
+    """List every manpage an install root ships for ``binary_name`` (ADR-0016 tier 1).
+
+    Same patterns as `find_repo_manpage`, but returns every match instead of
+    the first and applies no generator filter: a page taken from the install
+    root is the installed version by construction, so whether it happens to
+    be help2man-generated is not asked here (ADR-0016 defers quality
+    judgement past tier 1). The subcommand pattern is what keeps a package's
+    sibling binaries in one result -- ``pandoc-lua.1.gz`` and
+    ``pandoc-server.1.gz`` alongside ``pandoc.1.gz`` -- while excluding
+    unrelated files that share a section-like suffix by accident, such as
+    mise's own numbered backup copies (``fzf.1.1``, ``fzf.1.12``, ...
+    alongside ``fzf.1``, none of which fnmatch's fixed-width ``[1-9]`` class
+    matches).
+
+    Walks `_iter_install_root_manpage_files`, not `find_repo_manpage`'s own
+    `_iter_repo_manpage_files`: an install root is a single package's
+    extracted content, not an arbitrary checkout that can hold unrelated
+    vendored trees, so it tolerates the one extra wrapper directory a
+    release tarball's own top-level folder adds (mise's `gh` install keeps
+    `gh_2.90.0_linux_amd64/share/man/man1/`, not `share/man/man1/` directly
+    under root) -- a laxness `find_repo_manpage` deliberately does not carry.
+    """
+    exact_patterns, subcommand_patterns = _manpage_patterns(binary_name)
+    patterns = exact_patterns + subcommand_patterns
+    return sorted(
+        path
+        for path in _iter_install_root_manpage_files(root)
+        if any(fnmatch.fnmatch(path.name, pattern) for pattern in patterns)
+    )
+
+
+def _manpage_patterns(binary_name: str) -> tuple[list[str], list[str]]:
+    """Return (exact, subcommand) glob patterns across `_COMPRESSION_SUFFIXES`."""
+    exact_patterns = [
+        f"{binary_name}.[1-9]{suffix}" for suffix in _COMPRESSION_SUFFIXES
+    ]
+    subcommand_patterns = [
+        f"{binary_name}-*.[1-9]{suffix}" for suffix in _COMPRESSION_SUFFIXES
+    ]
+    return exact_patterns, subcommand_patterns
 
 
 def _iter_repo_manpage_files(repo_dir: Path) -> Iterator[Path]:
@@ -306,6 +344,40 @@ def _iter_repo_manpage_files(repo_dir: Path) -> Iterator[Path]:
             continue
         for filename in files:
             yield Path(root, filename)
+
+
+# How many leading path segments below an install root `_iter_install_root_manpage_files`
+# will skip over before requiring a `REPO_MANPAGE_DIRS` prefix to match -- one, the
+# release-archive folder a tarball extracts into (`gh_2.90.0_linux_amd64/`,
+# `pastel-v0.12.0-x86_64-unknown-linux-gnu/`), never unbounded: an install root holds
+# one package's own content, not a checkout that could bury a coincidental `man/` dir
+# arbitrarily deep in a vendored dependency.
+_INSTALL_ROOT_WRAPPER_DEPTHS = (0, 1)
+
+
+def _iter_install_root_manpage_files(root: Path) -> Iterator[Path]:
+    """Yield files at an install root and under its manpage trees, tolerating
+    one leading release-archive wrapper directory before them.
+    """
+    if not root.is_dir():
+        return
+    yield from (item for item in root.iterdir() if item.is_file())
+    for path, directories, files in os.walk(root):
+        rel_dir = Path(path).relative_to(root)
+        directories[:] = [d for d in directories if not d.startswith(".")]
+        if rel_dir == Path("."):
+            continue
+        parts = tuple(part.lower() for part in rel_dir.parts)
+        matches = any(
+            parts[depth : depth + len(prefix)] == prefix
+            for prefix in REPO_MANPAGE_DIRS
+            for depth in _INSTALL_ROOT_WRAPPER_DEPTHS
+            if depth < len(parts)
+        )
+        if not matches:
+            continue
+        for filename in files:
+            yield Path(path, filename)
 
 
 def find_help_derived_manpages(

@@ -113,7 +113,19 @@ def test_resolve_source_returns_none_for_a_published_package(tmp_path: Path) -> 
     assert uv.UvProvider().resolve_source(inst) is None
 
 
-def test_local_docs_is_not_yet_wired(tmp_path: Path) -> None:
+def test_local_docs_finds_manpage_under_install_root(tmp_path: Path) -> None:
+    bin_path, root = _make_uv_tool(tmp_path, "ruff", "ruff")
+    inst = uv.UvProvider().detect(bin_path)
+    assert inst is not None
+    manpage = root / "ruff.1"
+    manpage.touch()
+
+    assert uv.UvProvider().local_docs(inst) == [manpage]
+
+
+def test_local_docs_finds_nothing_when_install_root_ships_no_manpage(
+    tmp_path: Path,
+) -> None:
     bin_path, _root = _make_uv_tool(tmp_path, "ruff", "ruff")
     inst = uv.UvProvider().detect(bin_path)
     assert inst is not None

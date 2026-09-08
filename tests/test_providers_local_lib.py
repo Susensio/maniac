@@ -110,7 +110,22 @@ def test_resolve_source_falls_back_to_local_without_a_git_remote(
     assert source.target == f"LOCAL:{root}"
 
 
-def test_local_docs_is_not_yet_wired(tmp_path: Path, monkeypatch) -> None:
+def test_local_docs_finds_manpage_under_install_root(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    bin_path, root = _make_local_lib_tool(tmp_path, "sometool", "sometool")
+    inst = local_lib.LocalLibProvider().detect(bin_path)
+    assert inst is not None
+    manpage = root / "sometool.1"
+    manpage.touch()
+
+    assert local_lib.LocalLibProvider().local_docs(inst) == [manpage]
+
+
+def test_local_docs_finds_nothing_when_install_root_ships_no_manpage(
+    tmp_path: Path, monkeypatch
+) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
     bin_path, _root = _make_local_lib_tool(tmp_path, "sometool", "sometool")
     inst = local_lib.LocalLibProvider().detect(bin_path)

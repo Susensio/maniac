@@ -129,7 +129,20 @@ def test_resolve_source_returns_none_with_no_repository_field(tmp_path: Path) ->
     assert npm.NpmProvider().resolve_source(inst) is None
 
 
-def test_local_docs_is_not_yet_wired(tmp_path: Path) -> None:
+def test_local_docs_finds_manpage_under_install_root(tmp_path: Path) -> None:
+    bin_path, root = _make_npm_global(tmp_path, "tool", "tool", {"name": "tool"})
+    inst = npm.NpmProvider().detect(bin_path)
+    assert inst is not None
+    manpage = root / "man" / "man1" / "tool.1"
+    manpage.parent.mkdir(parents=True)
+    manpage.touch()
+
+    assert npm.NpmProvider().local_docs(inst) == [manpage]
+
+
+def test_local_docs_finds_nothing_when_install_root_ships_no_manpage(
+    tmp_path: Path,
+) -> None:
     bin_path, _root = _make_npm_global(tmp_path, "tool", "tool", {"name": "tool"})
     inst = npm.NpmProvider().detect(bin_path)
     assert inst is not None

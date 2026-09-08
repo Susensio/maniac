@@ -164,7 +164,25 @@ def test_resolve_source_returns_none_for_a_non_github_module(
     assert go.GoProvider().resolve_source(inst) is None
 
 
-def test_local_docs_is_not_yet_wired(tmp_path, monkeypatch) -> None:
+def test_local_docs_finds_manpage_under_install_root(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("GOBIN", str(tmp_path / "go-bin"))
+    bin_path = _make_go_bin(tmp_path / "go-bin", "tool")
+    monkeypatch.setattr(
+        go,
+        "_read_module_info",
+        lambda path: ("example.com/tool", "example.com/tool", "v1.0.0"),
+    )
+    inst = go.GoProvider().detect(bin_path)
+    assert inst is not None
+    manpage = inst.root / "tool.1"
+    manpage.touch()
+
+    assert go.GoProvider().local_docs(inst) == [manpage]
+
+
+def test_local_docs_finds_nothing_when_install_root_ships_no_manpage(
+    tmp_path, monkeypatch
+) -> None:
     monkeypatch.setenv("GOBIN", str(tmp_path / "go-bin"))
     bin_path = _make_go_bin(tmp_path / "go-bin", "tool")
     monkeypatch.setattr(

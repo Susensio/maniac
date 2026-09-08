@@ -5,6 +5,7 @@ from pathlib import Path
 
 from ...logging import logger
 from ...models import Installation, RepoSource
+from ..manpages import find_install_root_manpages
 
 _TOOLS_MARKER = "/.local/share/uv/tools/"
 
@@ -47,8 +48,7 @@ class UvProvider:
         )
 
     def local_docs(self, inst: Installation) -> list[Path]:
-        # Wiring this to the install root is Stage 5's job.
-        return []
+        return find_install_root_manpages(inst.root, inst.binary)
 
 
 def _installed_version(root: Path, tool: str) -> str | None:

@@ -7,6 +7,7 @@ from pathlib import Path
 from ...logging import logger
 from ...models import Installation, RepoSource
 from .. import discovery
+from ..manpages import find_install_root_manpages
 
 
 class PipxProvider:
@@ -51,8 +52,7 @@ class PipxProvider:
         )
 
     def local_docs(self, inst: Installation) -> list[Path]:
-        # Wiring this to the install root is Stage 5's job.
-        return []
+        return find_install_root_manpages(inst.root, inst.binary)
 
 
 def _pipx_home_candidates() -> list[str]:

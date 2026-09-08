@@ -153,7 +153,20 @@ def test_resolve_source_returns_none_with_no_github_url(tmp_path, monkeypatch) -
     assert provider.resolve_source(inst) is None
 
 
-def test_local_docs_is_not_yet_wired(tmp_path, monkeypatch) -> None:
+def test_local_docs_finds_manpage_under_install_root(tmp_path, monkeypatch) -> None:
+    bin_path, root = _make_pipx_venv(tmp_path, "howdoi", "howdoi")
+    provider = _provider(tmp_path, monkeypatch)
+    inst = provider.detect(bin_path)
+    assert inst is not None
+    manpage = root / "howdoi.1"
+    manpage.touch()
+
+    assert provider.local_docs(inst) == [manpage]
+
+
+def test_local_docs_finds_nothing_when_install_root_ships_no_manpage(
+    tmp_path, monkeypatch
+) -> None:
     bin_path, _root = _make_pipx_venv(tmp_path, "howdoi", "howdoi")
     provider = _provider(tmp_path, monkeypatch)
     inst = provider.detect(bin_path)

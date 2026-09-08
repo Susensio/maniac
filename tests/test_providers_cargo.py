@@ -120,7 +120,29 @@ def test_resolve_source_returns_none(tmp_path, monkeypatch) -> None:
     assert provider.resolve_source(inst) is None
 
 
-def test_local_docs_is_not_yet_wired(tmp_path, monkeypatch) -> None:
+def test_local_docs_finds_manpage_under_install_root(tmp_path, monkeypatch) -> None:
+    cargo_home = _make_cargo_home(
+        tmp_path,
+        {
+            "hexyl 0.17.0 (registry+https://github.com/rust-lang/crates.io-index)": [
+                "hexyl"
+            ]
+        },
+    )
+    bin_path = cargo_home / "bin" / "hexyl"
+    bin_path.touch()
+    provider = _provider(tmp_path, monkeypatch, cargo_home)
+    inst = provider.detect(bin_path)
+    assert inst is not None
+    manpage = cargo_home / "bin" / "hexyl.1"
+    manpage.touch()
+
+    assert provider.local_docs(inst) == [manpage]
+
+
+def test_local_docs_finds_nothing_when_install_root_ships_no_manpage(
+    tmp_path, monkeypatch
+) -> None:
     cargo_home = _make_cargo_home(
         tmp_path,
         {
