@@ -142,6 +142,13 @@ def _bare_names(rows: list[StatusRow]) -> list[str]:
 def _grouped_for_display(rows: list[StatusRow]) -> list[tuple[str, ActionState]]:
     """Collapse binaries sharing one (provider, package, state) into one table row.
 
+    A solo group's label is its one tool's name, unchanged. A group of
+    several is the package name with a count suffix, e.g. `python (12
+    binaries)`, not every sibling's name comma-joined: that joined form is
+    unbounded -- a package can expose a dozen-plus binaries under one state
+    -- and blows up the Tool column's width, breaking the reader's ability
+    to track rows by eye down the table.
+
     Package identity is a display grouping only -- `pandoc`, `pandoc-lua`
     and `pandoc-server` share one install root but are three separate `man`
     lookups. Grouping on state too means one sibling already installed does
@@ -155,7 +162,12 @@ def _grouped_for_display(rows: list[StatusRow]) -> list[tuple[str, ActionState]]
             order.append(key)
         groups.setdefault(key, []).append(row.tool)
 
-    return [(", ".join(groups[key]), key[2]) for key in order]
+    rendered: list[tuple[str, ActionState]] = []
+    for provider, package, state in order:
+        tools = groups[(provider, package, state)]
+        label = tools[0] if len(tools) == 1 else f"{package} ({len(tools)} binaries)"
+        rendered.append((label, state))
+    return rendered
 
 
 def _render_status(
@@ -181,12 +193,9 @@ def _render_status(
     table = Table(title="Manpage Status")
     table.add_column("Tool", style="cyan")
     table.add_column("State")
-    table.add_column("Action")
-    table.add_column("Cost", justify="right")
 
     for label, state in _grouped_for_display(rows):
-        action, cost = _ACTION_AND_COST[state]
-        table.add_row(label, state.value, action, cost)
+        table.add_row(label, state.value)
 
     target_console.print(table)
 
