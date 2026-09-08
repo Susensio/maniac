@@ -110,7 +110,6 @@ hx       synthesized from --help + repo docs
 ```
 
 `--no-generate` restricts this to the first two tiers and never calls an LLM; `--generate` forces the third, skipping the first two outright.
-Pass `--no-install` to stop after compiling, for the synthesis tier only:
 
 ```bash
 # Install for a single tool

@@ -90,7 +90,7 @@ The unit is the binary, not the package: `pandoc`, `pandoc-lua` and `pandoc-serv
 Package identity (`Installation.package`) groups rows only for the Rich table's display -- `_grouped_for_display` collapses binaries sharing one `(provider, package, state)` into a single row, so `pandoc`'s already-managed row stays separate from its still-uninstalled `pandoc-lua`/`pandoc-server` siblings, which collapse together.
 Redirected to anything but a terminal, `status` prints bare binary names -- one per line, deduplicated, via `print()` rather than the Rich console, never collapsed by package -- which is what makes `maniac status | xargs maniac install` work; `--names` forces the same output on a real terminal.
 
-`install` (`generate` renamed by ADR-0016) resolves through three tiers and installs by default, with `--no-install` to stop after the tier-3 (synthesis) case's compile step.
+`install` (`generate` renamed by ADR-0016) resolves through three tiers and always installs -- a `--install`/`--no-install` flag inherited from `generate` was dropped once the command's own name made `--no-install` self-contradictory; the tier-3 (synthesis) case's compiled markdown/roff still lands in the XDG output dir regardless, so it stays reviewable before trusting it.
 `install` with zero tool names exits 0 quietly rather than raising Typer's missing-argument error, since a `$(maniac status)` expansion can legitimately be empty.
 
 ## Verification performed
@@ -142,7 +142,7 @@ Tier 3 runs the full LLM synthesis pipeline via `run_pipeline`, imported lazily 
 
 Verified live: `maniac install pandoc --no-generate` finds and installs `pandoc.1.gz` from the install root with no LLM access needed.
 `maniac status` on the development system (65 binaries across all eight providers) reports: 2 `SHIPS_UNINSTALLED`, 21 `MANAGED`, 42 `NO_PAGE`.
-`maniac status pandoc-lua pandoc-server | xargs maniac install --no-generate --no-install` installs both siblings from the install root with no LLM call.
+`maniac status pandoc-lua pandoc-server | xargs maniac install --no-generate` installs both siblings from the install root with no LLM call.
 
 ## Performance and capability
 
