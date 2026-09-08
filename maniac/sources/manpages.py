@@ -373,6 +373,60 @@ def _manpage_patterns(binary_name: str) -> tuple[list[str], list[str]]:
     return exact_patterns, subcommand_patterns
 
 
+# Anchor depths a lowercased relative path is checked against `REPO_MANPAGE_DIRS`
+# at: the repo variant only ever anchors at the root itself, the install-root
+# variant also anchors one level down, tolerating the one release-archive wrapper
+# directory a tarball extracts into (`gh_2.90.0_linux_amd64/`,
+# `pastel-v0.12.0-x86_64-unknown-linux-gnu/`) -- never unbounded, since an install
+# root holds one package's own content, not a checkout that could bury a
+# coincidental `man/` dir arbitrarily deep in a vendored dependency.
+_REPO_DEPTHS = (0,)
+_INSTALL_ROOT_WRAPPER_DEPTHS = (0, 1)
+
+
+def _matches_manpage_dir(parts: tuple[str, ...], depths: tuple[int, ...]) -> bool:
+    """Whether a lowercased relative path already sits under a `REPO_MANPAGE_DIRS` tree."""
+    return any(
+        parts[depth : depth + len(prefix)] == prefix
+        for prefix in REPO_MANPAGE_DIRS
+        for depth in depths
+    )
+
+
+def _worth_descending(child_parts: tuple[str, ...], depths: tuple[int, ...]) -> bool:
+    """Whether a candidate directory could still lead to a `REPO_MANPAGE_DIRS` match.
+
+    Checked per anchor depth: the segments from that depth onward must be a
+    partial or full prefix of some `REPO_MANPAGE_DIRS` tuple. A depth beyond
+    the segments collected so far yields an empty slice, which trivially
+    prefixes everything -- exactly the wrapper-tolerance case, where descent
+    is warranted without yet knowing whether this directory is the
+    release-archive wrapper or a real manpage-tree segment.
+    """
+    return any(
+        child_parts[depth:] == prefix[: len(child_parts) - depth]
+        for prefix in REPO_MANPAGE_DIRS
+        for depth in depths
+    )
+
+
+def _prune_manpage_dirs(
+    directories: list[str], parts: tuple[str, ...], depths: tuple[int, ...]
+) -> None:
+    """Strip dotdirs and any subdirectory that could not lead to a manpage match.
+
+    Skipped once `parts` already fully matches a `REPO_MANPAGE_DIRS` tuple: a
+    real `share/man/man1/` tree is walked in full from there, since it is
+    never the source of the blow-up vendor/node_modules-style trees are.
+    """
+    directories[:] = [d for d in directories if not d.startswith(".")]
+    if _matches_manpage_dir(parts, depths):
+        return
+    directories[:] = [
+        d for d in directories if _worth_descending((*parts, d.lower()), depths)
+    ]
+
+
 def _iter_repo_manpage_files(repo_dir: Path) -> Iterator[Path]:
     """Yield files at a repository root and under its manpage trees."""
     if not repo_dir.is_dir():
@@ -380,23 +434,12 @@ def _iter_repo_manpage_files(repo_dir: Path) -> Iterator[Path]:
     yield from (item for item in repo_dir.iterdir() if item.is_file())
     for root, directories, files in os.walk(repo_dir):
         rel_dir = Path(root).relative_to(repo_dir)
-        directories[:] = [d for d in directories if not d.startswith(".")]
-        if rel_dir == Path("."):
-            continue
-        parts = tuple(part.lower() for part in rel_dir.parts)
-        if not any(parts[: len(prefix)] == prefix for prefix in REPO_MANPAGE_DIRS):
+        parts = () if rel_dir == Path(".") else tuple(p.lower() for p in rel_dir.parts)
+        _prune_manpage_dirs(directories, parts, _REPO_DEPTHS)
+        if rel_dir == Path(".") or not _matches_manpage_dir(parts, _REPO_DEPTHS):
             continue
         for filename in files:
             yield Path(root, filename)
-
-
-# How many leading path segments below an install root `_iter_install_root_manpage_files`
-# will skip over before requiring a `REPO_MANPAGE_DIRS` prefix to match -- one, the
-# release-archive folder a tarball extracts into (`gh_2.90.0_linux_amd64/`,
-# `pastel-v0.12.0-x86_64-unknown-linux-gnu/`), never unbounded: an install root holds
-# one package's own content, not a checkout that could bury a coincidental `man/` dir
-# arbitrarily deep in a vendored dependency.
-_INSTALL_ROOT_WRAPPER_DEPTHS = (0, 1)
 
 
 def _iter_install_root_manpage_files(root: Path) -> Iterator[Path]:
@@ -408,17 +451,11 @@ def _iter_install_root_manpage_files(root: Path) -> Iterator[Path]:
     yield from (item for item in root.iterdir() if item.is_file())
     for path, directories, files in os.walk(root):
         rel_dir = Path(path).relative_to(root)
-        directories[:] = [d for d in directories if not d.startswith(".")]
-        if rel_dir == Path("."):
-            continue
-        parts = tuple(part.lower() for part in rel_dir.parts)
-        matches = any(
-            parts[depth : depth + len(prefix)] == prefix
-            for prefix in REPO_MANPAGE_DIRS
-            for depth in _INSTALL_ROOT_WRAPPER_DEPTHS
-            if depth < len(parts)
-        )
-        if not matches:
+        parts = () if rel_dir == Path(".") else tuple(p.lower() for p in rel_dir.parts)
+        _prune_manpage_dirs(directories, parts, _INSTALL_ROOT_WRAPPER_DEPTHS)
+        if rel_dir == Path(".") or not _matches_manpage_dir(
+            parts, _INSTALL_ROOT_WRAPPER_DEPTHS
+        ):
             continue
         for filename in files:
             yield Path(path, filename)

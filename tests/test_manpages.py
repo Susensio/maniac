@@ -394,6 +394,41 @@ def test_find_install_root_manpages_does_not_reach_two_wrapper_levels(
     assert find_install_root_manpages(tmp_path, "tool") == []
 
 
+def test_find_install_root_manpages_prunes_irrelevant_trees(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A large irrelevant tree (a venv's `lib/site-packages/`, say) must not
+    be descended into once its wrapper-tolerant top level rules it out --
+    the regression this fixes: an unpruned walk would visit every nested
+    directory below `lib/` just to find nothing there."""
+    nested = tmp_path / "lib" / "site-packages"
+    for index in range(50):
+        nested = nested / f"pkg{index}"
+    nested.mkdir(parents=True)
+    (nested / "module.py").write_text("", encoding="utf-8")
+
+    man1_dir = tmp_path / "share" / "man" / "man1"
+    man1_dir.mkdir(parents=True)
+    manpage = man1_dir / "tool.1"
+    manpage.write_text(".TH TOOL 1\n", encoding="utf-8")
+
+    visited: list[Path] = []
+    real_walk = manpages.os.walk
+
+    def counting_walk(top, *args, **kwargs):
+        for entry in real_walk(top, *args, **kwargs):
+            visited.append(Path(entry[0]))
+            yield entry
+
+    monkeypatch.setattr(manpages.os, "walk", counting_walk)
+
+    assert find_install_root_manpages(tmp_path, "tool") == [manpage]
+    assert all("site-packages" not in path.parts for path in visited)
+    # Bounded by the real tree (root, lib, share, share/man, share/man/man1),
+    # not by the 50-level irrelevant tree below `lib/site-packages/`.
+    assert len(visited) < 10
+
+
 def test_find_installed_manpage_path_returns_first_hit(
     monkeypatch, tmp_path: Path
 ) -> None:
