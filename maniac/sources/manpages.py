@@ -3,6 +3,7 @@
 import bz2
 import fnmatch
 import gzip
+import io
 import lzma
 import os
 import re
@@ -12,6 +13,8 @@ from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from typing import TextIO
+
+import zstandard
 
 from ..exceptions import ManiacError
 from ..logging import logger
@@ -538,8 +541,24 @@ def _opener_for(path: Path) -> Callable[..., TextIO]:
             return bz2.open
         case ".xz" | ".lzma":
             return lzma.open
+        case ".zst":
+            return _zstd_open
         case _:
             return open
+
+
+def _zstd_open(path: Path, mode: str, *, encoding: str, errors: str) -> TextIO:
+    """Decompress a `.zst` manpage for text reading.
+
+    Streams through `ZstdDecompressor`, matching `discovery.py`'s own use of
+    the library, rather than the separate `zstandard.open` convenience
+    wrapper.
+    """
+    if mode != "rt":
+        raise ValueError(f"unsupported zstd open mode: {mode!r}")
+    decompressor = zstandard.ZstdDecompressor()
+    stream = decompressor.stream_reader(path.open("rb"))
+    return io.TextIOWrapper(stream, encoding=encoding, errors=errors)
 
 
 def _read_prefix(path: Path) -> str:
