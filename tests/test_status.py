@@ -121,7 +121,9 @@ def test_compute_status_maniac_managed_wins_even_with_an_install_root_page(
     cfg.man_dir.mkdir(parents=True)
     installed = cfg.man_dir / "tool.1"
     installed.write_text(".TH TOOL 1\n", encoding="utf-8")
-    manifest_module.record("tool", installed, Tier.INSTALL_ROOT, "src", config=cfg)
+    manifest_module.record(
+        "tool", installed, Tier.INSTALL_ROOT, "src", "abc123", config=cfg
+    )
 
     page = tmp_path / "install_root" / "tool.1"
     page.parent.mkdir(parents=True)
@@ -137,7 +139,9 @@ def test_compute_status_managed_page_can_be_compressed(tmp_path: Path) -> None:
     cfg.man_dir.mkdir(parents=True)
     installed = cfg.man_dir / "tool.1.gz"
     installed.write_bytes(b"\x1f\x8b")
-    manifest_module.record("tool", installed, Tier.INSTALL_ROOT, "src", config=cfg)
+    manifest_module.record(
+        "tool", installed, Tier.INSTALL_ROOT, "src", "abc123", config=cfg
+    )
 
     assert _state_for(None, None, "tool", cfg) is ActionState.MANAGED
 
@@ -161,7 +165,7 @@ def test_compute_status_manifest_entry_with_vanished_file_is_not_managed(
     is detected rather than blindly reported MANAGED."""
     cfg = _config(tmp_path)
     manifest_module.record(
-        "tool", cfg.man_dir / "tool.1", Tier.SYNTHESIS, "model", config=cfg
+        "tool", cfg.man_dir / "tool.1", Tier.SYNTHESIS, "model", "abc123", config=cfg
     )
 
     assert _state_for(None, None, "tool", cfg) is ActionState.NO_PAGE

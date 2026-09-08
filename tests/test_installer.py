@@ -56,7 +56,13 @@ def test_install_manpage_maniac_overwrite(tmp_path: Path) -> None:
     target_dir.mkdir(parents=True)
     existing_dest = target_dir / "tool.1"
     existing_dest.write_text(".TH TOOL 1 old", encoding="utf-8")
-    manifest_module.record("tool", existing_dest, Tier.SYNTHESIS, "old-model")
+    manifest_module.record(
+        "tool",
+        existing_dest,
+        Tier.SYNTHESIS,
+        "old-model",
+        manifest_module.checksum_of(existing_dest),
+    )
 
     src_file = tmp_path / "src" / "tool.1"
     src_file.parent.mkdir(parents=True)
@@ -203,7 +209,13 @@ def test_uninstall_manpage_and_restore_backup(tmp_path: Path) -> None:
 
     cfg = Config(man_dir=man_dir, output_dir=tmp_path / "data_manpages")
     manifest_module.record(
-        "tool", installed_file, Tier.SYNTHESIS, "model", backup=backup_file, config=cfg
+        "tool",
+        installed_file,
+        Tier.SYNTHESIS,
+        "model",
+        manifest_module.checksum_of(installed_file),
+        backup=backup_file,
+        config=cfg,
     )
     result = uninstall_manpage("tool", purge=False, config=cfg)
 
@@ -235,6 +247,7 @@ def test_uninstall_manpage_compressed_page_restores_backup(tmp_path: Path) -> No
         installed_file,
         Tier.INSTALL_ROOT,
         str(man_dir),
+        manifest_module.checksum_of(installed_file),
         backup=backup_file,
         config=cfg,
     )
@@ -257,7 +270,13 @@ def test_uninstall_manpage_null_backup_removes_and_restores_nothing(
 
     cfg = Config(man_dir=man_dir, output_dir=tmp_path / "data_manpages")
     manifest_module.record(
-        "tool", installed_file, Tier.SYNTHESIS, "model", backup=None, config=cfg
+        "tool",
+        installed_file,
+        Tier.SYNTHESIS,
+        "model",
+        manifest_module.checksum_of(installed_file),
+        backup=None,
+        config=cfg,
     )
     result = uninstall_manpage("tool", purge=False, config=cfg)
 
@@ -287,7 +306,14 @@ def test_uninstall_manpage_purge(tmp_path: Path) -> None:
     prompt_file.write_text("Prompt", encoding="utf-8")
 
     cfg = Config(man_dir=man_dir, output_dir=out_dir, intermediate_dir=inter_dir)
-    manifest_module.record("tool", installed_file, Tier.SYNTHESIS, "model", config=cfg)
+    manifest_module.record(
+        "tool",
+        installed_file,
+        Tier.SYNTHESIS,
+        "model",
+        manifest_module.checksum_of(installed_file),
+        config=cfg,
+    )
     result = uninstall_manpage("tool", purge=True, config=cfg)
 
     assert installed_file in result.removed
@@ -320,13 +346,78 @@ def test_uninstall_manpage_foreign_kept(tmp_path: Path) -> None:
     assert not stored_roff.exists()
 
 
+def test_uninstall_manpage_checksum_mismatch_is_kept_foreign(tmp_path: Path) -> None:
+    """A recorded page whose bytes changed after install is treated as foreign:
+    reuses `foreign_kept`, no new state, no restore, no forget."""
+    man_dir = tmp_path / "man1"
+    man_dir.mkdir(parents=True)
+    backup_dir = tmp_path / "backups"
+    backup_dir.mkdir(parents=True)
+
+    installed_file = man_dir / "tool.1"
+    installed_file.write_text(".TH TOOL 1 original", encoding="utf-8")
+    recorded_checksum = manifest_module.checksum_of(installed_file)
+
+    backup_file = backup_dir / "tool.1"
+    backup_file.write_text(".TH TOOL 1 vendor", encoding="utf-8")
+
+    cfg = Config(man_dir=man_dir, output_dir=tmp_path / "data_manpages")
+    manifest_module.record(
+        "tool",
+        installed_file,
+        Tier.SYNTHESIS,
+        "model",
+        recorded_checksum,
+        backup=backup_file,
+        config=cfg,
+    )
+
+    # Bytes changed after install -- no longer what MANIAC put there.
+    installed_file.write_text(".TH TOOL 1 edited by something else", encoding="utf-8")
+
+    result = uninstall_manpage("tool", purge=False, config=cfg)
+
+    assert result.foreign_kept == installed_file
+    assert result.removed == []
+    assert (
+        installed_file.read_text(encoding="utf-8")
+        == ".TH TOOL 1 edited by something else"
+    )
+    assert backup_file.exists()  # not restored
+    assert manifest_module.lookup("tool", config=cfg) is not None  # not forgotten
+
+
+def test_uninstall_manpage_force_overrides_checksum_mismatch(tmp_path: Path) -> None:
+    """`--force` removes a mismatched page anyway, mirroring `install_manpage --force`."""
+    man_dir = tmp_path / "man1"
+    man_dir.mkdir(parents=True)
+
+    installed_file = man_dir / "tool.1"
+    installed_file.write_text(".TH TOOL 1 original", encoding="utf-8")
+    recorded_checksum = manifest_module.checksum_of(installed_file)
+
+    cfg = Config(man_dir=man_dir, output_dir=tmp_path / "data_manpages")
+    manifest_module.record(
+        "tool", installed_file, Tier.SYNTHESIS, "model", recorded_checksum, config=cfg
+    )
+
+    installed_file.write_text(".TH TOOL 1 edited by something else", encoding="utf-8")
+
+    result = uninstall_manpage("tool", purge=False, force=True, config=cfg)
+
+    assert result.foreign_kept is None
+    assert installed_file in result.removed
+    assert not installed_file.exists()
+    assert manifest_module.lookup("tool", config=cfg) is None
+
+
 def test_uninstall_manpage_vanished_entry_is_forgotten(tmp_path: Path) -> None:
     """A manifest entry whose file is already gone is cleaned up, not reported as removed."""
     man_dir = tmp_path / "man1"
     man_dir.mkdir(parents=True)
     cfg = Config(man_dir=man_dir, output_dir=tmp_path / "data_manpages")
     manifest_module.record(
-        "tool", man_dir / "tool.1", Tier.SYNTHESIS, "model", config=cfg
+        "tool", man_dir / "tool.1", Tier.SYNTHESIS, "model", "deadbeef", config=cfg
     )
 
     result = uninstall_manpage("tool", purge=False, config=cfg)

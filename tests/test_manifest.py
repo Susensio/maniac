@@ -21,12 +21,15 @@ def test_record_lookup_forget_round_trip(tmp_path: Path) -> None:
     cfg = _config(tmp_path)
     page = tmp_path / "man1" / "tool.1"
 
-    manifest.record("tool", page, Tier.INSTALL_ROOT, "install-root-source", config=cfg)
+    manifest.record(
+        "tool", page, Tier.INSTALL_ROOT, "install-root-source", "abc123", config=cfg
+    )
     entry = manifest.lookup("tool", config=cfg)
     assert entry is not None
     assert entry.path == page
     assert entry.tier is Tier.INSTALL_ROOT
     assert entry.source == "install-root-source"
+    assert entry.checksum == "abc123"
 
     manifest.forget("tool", config=cfg)
     assert manifest.lookup("tool", config=cfg) is None
@@ -40,7 +43,9 @@ def test_forget_missing_tool_is_a_noop(tmp_path: Path) -> None:
 
 def test_record_persists_across_loads(tmp_path: Path) -> None:
     cfg = _config(tmp_path)
-    manifest.record("tool", tmp_path / "tool.1", Tier.SYNTHESIS, "model", config=cfg)
+    manifest.record(
+        "tool", tmp_path / "tool.1", Tier.SYNTHESIS, "model", "abc123", config=cfg
+    )
 
     document = json.loads(cfg.manifest_path.read_text(encoding="utf-8"))
     assert document["version"] == 1
@@ -77,12 +82,14 @@ def test_one_malformed_entry_is_skipped_not_the_whole_file(tmp_path: Path) -> No
                         "path": "/x/good.1",
                         "tier": "synthesis",
                         "source": "m",
+                        "checksum": "abc123",
                         "backup": None,
                     },
                     "bad_tier": {
                         "path": "/x/bad.1",
                         "tier": "not-a-real-tier",
                         "source": "m",
+                        "checksum": "abc123",
                         "backup": None,
                     },
                     "missing_field": {"path": "/x/missing.1", "tier": "synthesis"},
@@ -146,6 +153,7 @@ def test_migration_seeds_from_a_header_carrying_page(tmp_path: Path) -> None:
     assert entries["tool"].tier is Tier.SYNTHESIS
     assert entries["tool"].source == "Gemini 3.7 Flash"
     assert entries["tool"].path == man_dir / "tool.1"
+    assert entries["tool"].checksum == manifest.checksum_of(man_dir / "tool.1")
     # Migration persists so it never reruns.
     assert cfg.manifest_path.exists()
 

@@ -256,7 +256,9 @@ def test_cli_uninstall(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
 
     monkeypatch.setattr(
         "maniac.installer.uninstall_manpage",
-        lambda tool, purge, config: UninstallResult(removed=[tmp_path / f"{tool}.1"]),
+        lambda tool, purge, force, config: UninstallResult(
+            removed=[tmp_path / f"{tool}.1"]
+        ),
     )
     outcome = compute_uninstall("mytool")
     assert outcome.result == UninstallResult(removed=[tmp_path / "mytool.1"])
@@ -271,7 +273,7 @@ def test_cli_uninstall_not_found(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(
         "maniac.installer.uninstall_manpage",
-        lambda tool, purge, config: UninstallResult(),
+        lambda tool, purge, force, config: UninstallResult(),
     )
     outcome = compute_uninstall("nonexistent")
     assert outcome.result == UninstallResult()
@@ -295,7 +297,7 @@ def test_cli_uninstall_foreign_kept(
     foreign_path = tmp_path / "man1" / "mytool.1"
     monkeypatch.setattr(
         "maniac.installer.uninstall_manpage",
-        lambda tool, purge, config: UninstallResult(
+        lambda tool, purge, force, config: UninstallResult(
             removed=[tmp_path / f"{tool}.1"], foreign_kept=foreign_path
         ),
     )

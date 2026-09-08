@@ -64,6 +64,7 @@ def install_manpage(
     non-manpage file has no business in a directory `man`/`mandb` scan.
     """
     src = Path(source_file)
+    checksum = manifest.checksum_of(src)
     dest_dir = Path(target_dir).expanduser() if target_dir else Config().man_dir
     dest_dir.mkdir(parents=True, exist_ok=True)
 
@@ -96,7 +97,7 @@ def install_manpage(
     # Recorded before the copy: a crash between the two leaves a manifest
     # entry with no file, which `status` can detect, rather than a file on
     # disk that nothing can ever attribute (ADR-0017).
-    manifest.record(tool, dest_file, tier, source, backup=backup_path)
+    manifest.record(tool, dest_file, tier, source, checksum, backup=backup_path)
     try:
         shutil.copy2(src, dest_file)
     except Exception:
@@ -118,9 +119,19 @@ class UninstallResult:
 def uninstall_manpage(
     tool_name: str,
     purge: bool = False,
+    force: bool = False,
     config: Config | None = None,
 ) -> UninstallResult:
-    """Uninstall a MANIAC-generated manpage and restore backups if present."""
+    """Uninstall a MANIAC-generated manpage and restore backups if present.
+
+    A recorded page whose current bytes no longer match the checksum taken
+    at install is treated as foreign -- left in place, reported via the
+    same `foreign_kept` a page absent from the manifest gets, never a
+    fourth state -- unless `force` overrides the check, mirroring
+    `install_manpage`'s own `--force`. A page missing entirely is not a
+    mismatch: it is the crash window the entry-before-copy ordering
+    deliberately creates, so its entry is forgotten, not flagged foreign.
+    """
     cfg = config or Config()
     removed_paths: list[Path] = []
     foreign_kept: Path | None = None
@@ -134,17 +145,20 @@ def uninstall_manpage(
         installed_file = cfg.man_dir / f"{tool_name}.1"
         if installed_file.exists():
             foreign_kept = installed_file
+    elif not entry.path.exists():
+        manifest.forget(tool_name, config=cfg)
+    elif not force and manifest.checksum_of(entry.path) != entry.checksum:
+        foreign_kept = entry.path
     else:
         installed_file = entry.path
-        if installed_file.exists():
-            installed_file.unlink()
-            logger.info("Removed installed manpage", path=str(installed_file))
+        installed_file.unlink()
+        logger.info("Removed installed manpage", path=str(installed_file))
 
-            if entry.backup is not None and entry.backup.exists():
-                entry.backup.rename(installed_file)
-                logger.info("Restored vendor backup manpage", path=str(installed_file))
-            else:
-                removed_paths.append(installed_file)
+        if entry.backup is not None and entry.backup.exists():
+            entry.backup.rename(installed_file)
+            logger.info("Restored vendor backup manpage", path=str(installed_file))
+        else:
+            removed_paths.append(installed_file)
         manifest.forget(tool_name, config=cfg)
 
     # 2. XDG data storage (output_dir / <tool>.1)

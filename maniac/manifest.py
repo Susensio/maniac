@@ -6,6 +6,7 @@ verbatim and carry no marker of their own; a provenance header stays on
 tier-3 pages as informational metadata but is never read for this decision.
 """
 
+import hashlib
 import json
 from dataclasses import dataclass, replace
 from enum import Enum
@@ -15,6 +16,7 @@ from typing import Any
 from .config import Config
 
 SCHEMA_VERSION = 1
+_CHUNK_SIZE = 65_536
 
 
 class Tier(Enum):
@@ -27,17 +29,30 @@ class Tier(Enum):
 
 @dataclass(frozen=True, slots=True)
 class Entry:
-    """One tool's manifest record: where its page lives, and how it got there.
+    """One tool's manifest record: where its page lives, how it got there, and its bytes' hash.
 
     `backup` is the path of the vendor page `install_manpage --force` backed
     up before overwriting, under `Config.backup_dir` -- or None when install
     found the destination empty and took no backup, distinct from "unknown".
+    `checksum` is the sha256 hex digest taken from the source file before
+    the copy that installed it -- `shutil.copy2` is byte-identical, so it
+    is also the installed file's digest.
     """
 
     path: Path
     tier: Tier
     source: str
+    checksum: str
     backup: Path | None = None
+
+
+def checksum_of(path: str | Path) -> str:
+    """Return the sha256 hex digest of a file's contents."""
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as f:
+        for chunk in iter(lambda: f.read(_CHUNK_SIZE), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _manifest_path(config: Config | None) -> Path:
@@ -49,6 +64,7 @@ def _entry_to_row(entry: Entry) -> dict[str, Any]:
         "path": str(entry.path),
         "tier": entry.tier.value,
         "source": entry.source,
+        "checksum": entry.checksum,
         "backup": str(entry.backup) if entry.backup is not None else None,
     }
 
@@ -67,6 +83,7 @@ def _row_to_entry(row: Any) -> Entry | None:
             path=Path(row["path"]),
             tier=Tier(row["tier"]),
             source=row["source"],
+            checksum=row["checksum"],
             backup=Path(backup) if backup is not None else None,
         )
     except (KeyError, TypeError, ValueError):
@@ -90,7 +107,10 @@ def _seed_from_headers(config: Config | None) -> dict[str, Entry]:
     cfg = config or Config()
     entries = {
         item["tool"]: Entry(
-            path=item["path"], tier=Tier.SYNTHESIS, source=item["model"]
+            path=item["path"],
+            tier=Tier.SYNTHESIS,
+            source=item["model"],
+            checksum=checksum_of(item["path"]),
         )
         for item in list_installed_manpages(config)
         if item["path"].parent == cfg.man_dir
@@ -177,13 +197,16 @@ def record(
     path: Path,
     tier: Tier,
     source: str,
+    checksum: str,
     backup: Path | None = None,
     config: Config | None = None,
 ) -> None:
     """Record `tool`'s installed page. Called before the copy that places it, per ADR-0017."""
     manifest_path = _manifest_path(config)
     entries = load(config)
-    entries[tool] = Entry(path=Path(path), tier=tier, source=source, backup=backup)
+    entries[tool] = Entry(
+        path=Path(path), tier=tier, source=source, checksum=checksum, backup=backup
+    )
     _save(manifest_path, entries)
 
 

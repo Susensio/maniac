@@ -9,6 +9,7 @@ from ..config import Config
 from ..exceptions import ManiacError
 from ..installer import UninstallResult
 from . import app, console, default_cfg
+from .options import ForceOption
 
 
 @dataclass(frozen=True, slots=True)
@@ -20,14 +21,16 @@ class UninstallOutcome:
 
 
 def compute_uninstall(
-    tool: str, purge: bool = False, config: Config | None = None
+    tool: str, purge: bool = False, force: bool = False, config: Config | None = None
 ) -> UninstallOutcome:
     """Uninstall a MANIAC-managed manpage and report what happened."""
     from ..installer import uninstall_manpage
 
     return UninstallOutcome(
         tool=tool,
-        result=uninstall_manpage(tool, purge=purge, config=config or default_cfg),
+        result=uninstall_manpage(
+            tool, purge=purge, force=force, config=config or default_cfg
+        ),
     )
 
 
@@ -63,10 +66,11 @@ def uninstall_cmd(
             help="Also delete generated Markdown and intermediate context files.",
         ),
     ] = False,
+    force: ForceOption = False,
 ) -> None:
     """Uninstall a MANIAC-generated manpage and restore vendor backup if present."""
     try:
-        outcome = compute_uninstall(tool, purge=purge)
+        outcome = compute_uninstall(tool, purge=purge, force=force)
     except (OSError, RuntimeError, ManiacError) as e:
         console.print(
             f"[bold red]Error uninstalling manpage for {tool}: {e}[/bold red]"
