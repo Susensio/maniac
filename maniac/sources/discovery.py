@@ -1,11 +1,9 @@
 """Dynamic repository discovery via local metadata and Mise's registry."""
 
 import io
-import json
 import os
 import re
 import shutil
-import subprocess
 import tarfile
 import tomllib
 from functools import cache
@@ -65,62 +63,29 @@ def discover_candidate_source(binary_name: str) -> RepoSource | None:
 def _resolve_symlink_target(
     binary_name: str, bin_path: Path, *, allow_binary_registry_match: bool = True
 ) -> RepoSource | None:
-    """Inspect resolved path of symlinked binary for mise, local lib, or uv installs."""
-    resolved_path = bin_path.resolve()
-    resolved_str = str(resolved_path)
+    """Loop over registered providers (ADR-0015) for the one that claims this path."""
+    from .providers import registry  # deferred: providers import this module themselves
 
-    # Local lib directory (e.g. ~/.local/lib/<tool>)
-    if "/.local/lib/" in resolved_str:
-        return _resolve_local_lib(binary_name, resolved_path)
-
-    # uv tools (e.g. ~/.local/share/uv/tools/<tool>)
-    if "/.local/share/uv/tools/" in resolved_str:
-        local_proj = _find_uv_tool_local_dir(resolved_path)
-        if local_proj:
-            return RepoSource(
-                name=binary_name,
-                target=f"LOCAL:{local_proj}",
-                is_local=True,
-                local_path=local_proj,
-            )
-
-    # mise installs (e.g. ~/.local/share/mise/installs/<tool>/...)
-    if "/.local/share/mise/installs/" in resolved_str:
-        tool_id = _extract_mise_tool_id(resolved_path)
-        if tool_id:
+    for provider in registry:
+        inst = provider.detect(bin_path)
+        if inst is None:
+            continue
+        if inst.provider == "mise":
+            # allow_binary_registry_match has no home on the Provider protocol
+            # yet (Stage 3 replaces this prefix-guessing outright); thread it
+            # here instead of through MiseProvider.resolve_source.
             repo = _resolve_from_mise(
-                tool_id,
+                inst.package,
                 binary_name,
                 allow_binary_registry_match=allow_binary_registry_match,
             )
-            if repo:
-                return RepoSource(name=binary_name, target=repo, is_local=False)
-
+            return (
+                RepoSource(name=binary_name, target=repo, is_local=False)
+                if repo
+                else None
+            )
+        return provider.resolve_source(inst)
     return None
-
-
-def _resolve_local_lib(binary_name: str, resolved_path: Path) -> RepoSource:
-    """Resolve repository source from a ~/.local/lib installation."""
-    base_lib = Path.home() / ".local" / "lib"
-    tool_dir = resolved_path
-    if resolved_path.is_relative_to(base_lib):
-        while tool_dir.parent != base_lib and tool_dir != tool_dir.parent:
-            tool_dir = tool_dir.parent
-    else:
-        tool_dir = resolved_path.parent
-
-    if (tool_dir / ".git").exists():
-        git_remote = _get_git_remote(tool_dir)
-        if git_remote:
-            clean_repo = _clean_git_url(git_remote)
-            return RepoSource(name=binary_name, target=clean_repo, is_local=False)
-
-    return RepoSource(
-        name=binary_name,
-        target=f"LOCAL:{tool_dir}",
-        is_local=True,
-        local_path=tool_dir,
-    )
 
 
 def _check_mise_toml(cfg_path: Path, tool_id: str, binary_name: str) -> str | None:
@@ -323,49 +288,12 @@ def _mise_entry_repo(entry: dict[str, object]) -> str | None:
     return None
 
 
-def _get_git_remote(directory: Path) -> str | None:
-    try:
-        res = subprocess.run(
-            ["git", "-C", str(directory), "remote", "get-url", "origin"],
-            capture_output=True,
-            text=True,
-            timeout=3,
-            check=False,
-        )
-        if res.returncode == 0 and res.stdout.strip():
-            return res.stdout.strip()
-    except (OSError, subprocess.SubprocessError) as e:
-        logger.debug(
-            "Failed getting git remote", directory=str(directory), error=str(e)
-        )
-    return None
-
-
 def _clean_git_url(url: str) -> str:
     url = url.strip()
     match = re.search(r"github\.com[/:]([\w.-]+/[\w.-]+?)(?:\.git)?$", url)
     if match:
         return match.group(1)
     return url
-
-
-def _find_uv_tool_local_dir(resolved_path: Path) -> Path | None:
-    try:
-        dist_infos = list(
-            resolved_path.parents[1].glob("lib/**/site-packages/*.dist-info")
-        )
-        for d in dist_infos:
-            direct_url = d / "direct_url.json"
-            if direct_url.exists():
-                data = json.loads(direct_url.read_text(encoding="utf-8"))
-                raw_url = data.get("url", "")
-                if raw_url.startswith("file://"):
-                    p = Path(raw_url.removeprefix("file://"))
-                    if p.exists():
-                        return p
-    except (OSError, IndexError, json.JSONDecodeError) as e:
-        logger.debug("Error inspecting uv tool path", error=str(e))
-    return None
 
 
 def _extract_mise_tool_id(path: Path) -> str | None:

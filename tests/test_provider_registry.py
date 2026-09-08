@@ -22,9 +22,9 @@ class _FakeProvider:
         return []
 
 
-def test_the_module_registry_ships_empty() -> None:
-    """Stage 1 is additive only: no concrete provider registers into it yet."""
-    assert list(registry) == []
+def test_the_module_registry_holds_the_registered_providers() -> None:
+    """`local_lib`, `uv`, `mise` register in that order, mirroring the prior check order."""
+    assert [provider.name for provider in registry] == ["local_lib", "uv", "mise"]
 
 
 def test_register_appends_and_iteration_preserves_order() -> None:
