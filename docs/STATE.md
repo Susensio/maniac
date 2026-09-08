@@ -68,6 +68,8 @@ A named tool no provider claims still gets a row (`NO_PAGE`, unless a managed pa
 
 The unit is the binary, not the package: `pandoc`, `pandoc-lua` and `pandoc-server` are three separate `Installation`s from one mise install root, each getting its own `StatusRow`.
 Package identity (`Installation.package`) groups rows only for the Rich table's display -- `_grouped_for_display` collapses binaries sharing one `(provider, package, state)` into a single row, so `pandoc`'s already-managed row stays separate from its still-uninstalled `pandoc-lua`/`pandoc-server` siblings, which collapse together.
+A solo group renders as its one tool's bare name; a group of several renders as the package name with a count suffix (`python (12 binaries)`), not every sibling name comma-joined -- the joined form is unbounded and was breaking the reader's ability to track rows by eye down a table where one package exposes a dozen-plus binaries under one state.
+The table itself is two columns, `Tool` and `State`: `Action` and `Cost` were dropped as pure restatements of `State` (each of the three `ActionState` values maps to exactly one fixed `(action, cost)` pair via `_ACTION_AND_COST`, so showing all three said the same thing three times while widening the table for nothing).
 Redirected to anything but a terminal, `status` prints bare binary names -- one per line, deduplicated, via `print()` rather than the Rich console, never collapsed by package -- which is what makes `maniac status | xargs maniac install` work; `--names` forces the same output on a real terminal.
 
 `install` (`generate` renamed by ADR-0016) resolves through three tiers and always installs -- a `--install`/`--no-install` flag inherited from `generate` was dropped once the command's own name made `--no-install` self-contradictory; the tier-3 (synthesis) case's compiled markdown/roff still lands in the XDG output dir regardless, so it stays reviewable before trusting it.
@@ -163,5 +165,13 @@ A hand-placed `faketool.1` in the same manpath reported `no page anywhere` rathe
 ## Performance and capability
 
 Evidence from the development system: resolving 588 PATH symlinks through the provider registry takes 1.82s, compared to 1.96s to classify 5504 manpages by their structure (plus 0.84s of fixed interpreter startup), showing that the provider model buys capability, not speed, and the speed argument should not be made again.
+
+That measurement covered symlink resolution alone, not `status`'s own per-binary work, which grew two real bottlenecks the above evidence never exercised.
+Both are now fixed.
+`manpages._iter_install_root_manpage_files` (and its repo-checkout sibling) walked an install root's entire directory tree via `os.walk`, filtering to `man`/`doc`/`docs`/`share/man` only at yield time -- so a `uv`/`pipx`-managed tool's `site-packages` tree, or any other large unrelated subtree under an install root, was fully recursed into for nothing.
+It now prunes `os.walk`'s descent to only the directories a match could still come from (with the ADR-0016 wrapper-depth tolerance preserved), tolerating full recursion only once already inside a matched tree.
+`_detect_via_registry` separately called `Path.resolve()` once per provider tried against each `$PATH` binary (up to 8x for a binary no provider claims, which is most of a real `$PATH`).
+`maniac/sources/pathcache.py`'s `resolve_cached` now memoizes it process-wide so each binary is resolved once regardless of how many providers are tried.
+Measured together on the development system (66 detected binaries): `compute_status()` wall-clock went from 20.7s (`_iter_install_root_manpage_files` alone: 12.1s) to 2.16s.
 
 One known limitation: a tier-1/2 install copies the page as-is with no MANIAC provenance header (unlike synthesis), so `maniac uninstall <tool>` afterward cannot distinguish it from a pre-existing vendor page and reports it "foreign, kept in place" rather than removing it -- `install` and `uninstall` are not yet a full round trip for tiers 1-2.
