@@ -79,14 +79,21 @@ def _seed_from_headers(config: Config | None) -> dict[str, Entry]:
     Tiers 1 and 2 copy their page verbatim and carry no header, so they are
     not recoverable here -- accepted in ADR-0017 as the cost of migration,
     since they already reported foreign under the code this replaces.
+
+    `list_installed_manpages` also scans `output_dir`, a staging copy of
+    what synthesis produced, not proof anything is on the manpath -- a page
+    seeded from there rather than `man_dir` would report MANAGED for a tool
+    with nothing installed, so only a `man_dir` hit is kept.
     """
     from .installer import list_installed_manpages  # deferred: breaks the import cycle
 
+    cfg = config or Config()
     entries = {
         item["tool"]: Entry(
             path=item["path"], tier=Tier.SYNTHESIS, source=item["model"]
         )
         for item in list_installed_manpages(config)
+        if item["path"].parent == cfg.man_dir
     }
     _migrate_backups(entries, config)
     return entries

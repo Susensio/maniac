@@ -113,6 +113,25 @@ def test_empty_manifest_is_not_reseeded_from_headers(tmp_path: Path) -> None:
     assert manifest.load(config=full_cfg) == {}
 
 
+def test_migration_ignores_a_header_carrying_page_only_in_output_dir(
+    tmp_path: Path,
+) -> None:
+    """`output_dir` is a staging copy, not proof of an installed page (P2 fix)."""
+    man_dir = tmp_path / "man1"
+    man_dir.mkdir(parents=True)
+    output_dir = tmp_path / "output"
+    output_dir.mkdir(parents=True)
+    header = build_provenance_header("tool", model="Flash")
+    (output_dir / "tool.1").write_text(header + ".TH TOOL 1", encoding="utf-8")
+
+    cfg = Config(
+        manifest_path=tmp_path / "state" / "installed.json",
+        man_dir=man_dir,
+        output_dir=output_dir,
+    )
+    assert manifest.load(config=cfg) == {}
+
+
 def test_migration_seeds_from_a_header_carrying_page(tmp_path: Path) -> None:
     """No manifest file yet: a synthesized page's provenance header seeds tier=synthesis."""
     man_dir = tmp_path / "man1"

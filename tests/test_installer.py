@@ -130,6 +130,37 @@ def test_install_manpage_foreign_with_force_creates_backup(tmp_path: Path) -> No
     assert entry.backup.read_text(encoding="utf-8") == ".TH TOOL 1 Official vendor doc"
 
 
+def test_install_manpage_reinstall_over_own_page_preserves_prior_backup(
+    tmp_path: Path,
+) -> None:
+    """Reinstalling an owned page must not drop the vendor backup an earlier
+    `--force` install took (P2 fix): it would become unrestorable on uninstall."""
+    target_dir = tmp_path / "man1"
+    target_dir.mkdir(parents=True)
+    existing_dest = target_dir / "tool.1"
+    existing_dest.write_text(".TH TOOL 1 Official vendor doc", encoding="utf-8")
+
+    src_file = tmp_path / "src" / "tool.1"
+    src_file.parent.mkdir(parents=True)
+    src_file.write_text(".TH TOOL 1 v1", encoding="utf-8")
+
+    install_manpage(
+        src_file, "tool", Tier.SYNTHESIS, "model-v1", target_dir=target_dir, force=True
+    )
+    first_backup = manifest_module.lookup("tool")
+    assert first_backup is not None and first_backup.backup is not None
+
+    src_file.write_text(".TH TOOL 1 v2", encoding="utf-8")
+    install_manpage(
+        src_file, "tool", Tier.SYNTHESIS, "model-v2", target_dir=target_dir, force=False
+    )
+
+    entry = manifest_module.lookup("tool")
+    assert entry is not None
+    assert entry.backup == first_backup.backup
+    assert entry.backup.exists()
+
+
 def test_install_manpage_copy_failure_forgets_manifest_entry(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

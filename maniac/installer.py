@@ -73,7 +73,13 @@ def install_manpage(
     if dest_file.exists():
         existing = manifest.lookup(tool)
         owned = existing is not None and existing.path == dest_file
-        if not owned:
+        if owned:
+            # Reinstalling over our own page: carry the prior backup forward
+            # rather than dropping it, or a vendor page backed up on an
+            # earlier `--force` install becomes unrestorable on uninstall.
+            assert existing is not None
+            backup_path = existing.backup
+        else:
             if not force:
                 raise FileExistsError(
                     f"A foreign or vendor manpage already exists at '{dest_file}'. "
