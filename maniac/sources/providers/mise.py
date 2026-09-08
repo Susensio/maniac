@@ -69,7 +69,7 @@ def _read_backend_record(root: Path) -> tuple[str, str] | None:
     backend_path = root.parent / ".mise.backend.toml"
     try:
         data = tomllib.loads(backend_path.read_text(encoding="utf-8"))
-    except (OSError, tomllib.TOMLDecodeError) as e:
+    except (OSError, tomllib.TOMLDecodeError, UnicodeDecodeError) as e:
         logger.debug(
             "Error parsing mise backend record", path=str(backend_path), error=str(e)
         )

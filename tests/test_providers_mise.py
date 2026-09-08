@@ -164,6 +164,24 @@ def test_resolve_source_gives_up_on_a_backend_record_with_no_repo_shaped_identit
     assert provider.resolve_source(inst) is None
 
 
+def test_resolve_source_falls_back_when_the_backend_record_is_not_utf8(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A corrupt or oddly-encoded `.mise.backend.toml` must not crash discovery."""
+    bin_path = _make_mise_install(tmp_path, "helix", "25.07.1", "hx")
+    (bin_path.resolve().parents[2] / ".mise.backend.toml").write_bytes(b"\xff\xfe\x00")
+    provider = mise.MiseProvider()
+    inst = provider.detect(bin_path)
+    assert inst is not None
+    monkeypatch.setattr(
+        mise.discovery, "_resolve_from_mise", lambda *a, **k: "helix-editor/helix"
+    )
+
+    source = provider.resolve_source(inst)
+
+    assert source == RepoSource(name="hx", target="helix-editor/helix", is_local=False)
+
+
 def test_resolve_source_falls_back_to_the_registry_keyed_on_the_directory_name(
     tmp_path: Path, monkeypatch
 ) -> None:
