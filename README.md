@@ -129,7 +129,7 @@ man howdoi
 
 ### 2. Find Tools MANIAC Can Act On
 
-`status` reports three states by walking installer providers rather than scanning the manpath: *ships a page but not installed* (install it, zero cost), *no page anywhere* (synthesize, LLM cost), *MANIAC-managed* (inventory).
+`status` reports three states by walking installer providers rather than scanning the manpath: *available* (a page ships in the install root, not yet installed -- zero cost), *missing* (no page anywhere -- needs synthesis, LLM cost), *managed* (MANIAC already installed it -- inventory only).
 With no arguments, it reports every tool in your `$PATH`:
 
 ```bash
