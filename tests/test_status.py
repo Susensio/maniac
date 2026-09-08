@@ -14,6 +14,7 @@ from maniac.cli.status import (
     ActionState,
     StatusRow,
     _grouped_for_display,
+    _ProgressReporter,
     _render_status,
     _state_for,
     compute_status,
@@ -66,7 +67,7 @@ def test_compute_status_no_args_walks_providers_not_the_manpath(
     inst = _installation()
     monkeypatch.setattr(
         "maniac.cli.status.discovery.enumerate_installations",
-        lambda: [(provider, inst)],
+        lambda on_start=None, on_scan=None: [(provider, inst)],
     )
 
     rows = compute_status(config=_config(tmp_path))
@@ -203,6 +204,116 @@ def test_compute_status_named_tools_are_deduplicated(
     assert [row.tool for row in rows] == ["uv"]
 
 
+def test_compute_status_on_row_callbacks_are_optional_and_no_op_by_default(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Every caller besides the CLI (including every other test here) omits
+    the callbacks and must see unchanged behaviour."""
+    monkeypatch.setattr(
+        "maniac.cli.status.discovery.find_installation", lambda name, bin_dir=None: None
+    )
+
+    rows = compute_status(["uv"], config=_config(tmp_path))
+
+    assert [row.tool for row in rows] == ["uv"]
+
+
+def test_compute_status_named_tools_report_row_progress_but_no_discovery_phase(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The `tools` path never calls `discovery.enumerate_installations`, so
+    its discovery callbacks must never fire."""
+    monkeypatch.setattr(
+        "maniac.cli.status.discovery.find_installation", lambda name, bin_dir=None: None
+    )
+    row_starts: list[int] = []
+    row_scans = 0
+    discovery_starts: list[int] = []
+
+    def on_row_start(total: int) -> None:
+        row_starts.append(total)
+
+    def on_row_scan() -> None:
+        nonlocal row_scans
+        row_scans += 1
+
+    compute_status(
+        ["uv", "gh"],
+        config=_config(tmp_path),
+        on_discovery_start=discovery_starts.append,
+        on_row_start=on_row_start,
+        on_row_scan=on_row_scan,
+    )
+
+    assert row_starts == [2]
+    assert row_scans == 2
+    assert discovery_starts == []
+
+
+def test_compute_status_no_args_threads_both_phases_callbacks(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    provider = _FakeProvider()
+    inst = _installation()
+    discovery_starts: list[int] = []
+    row_starts: list[int] = []
+    row_scans = 0
+
+    def fake_enumerate(on_start=None, on_scan=None):
+        if on_start is not None:
+            on_start(5)
+        if on_scan is not None:
+            on_scan()
+        return [(provider, inst)]
+
+    monkeypatch.setattr(
+        "maniac.cli.status.discovery.enumerate_installations", fake_enumerate
+    )
+
+    def on_row_start(total: int) -> None:
+        row_starts.append(total)
+
+    def on_row_scan() -> None:
+        nonlocal row_scans
+        row_scans += 1
+
+    compute_status(
+        config=_config(tmp_path),
+        on_discovery_start=discovery_starts.append,
+        on_discovery_scan=lambda: None,
+        on_row_start=on_row_start,
+        on_row_scan=on_row_scan,
+    )
+
+    assert discovery_starts == [5]
+    assert row_starts == [1]
+    assert row_scans == 1
+
+
+def test_progress_reporter_advances_total_and_completed_across_both_phases() -> None:
+    """`_ProgressReporter` is `status()`'s single combined bar: each phase's
+    `on_phase_start` extends one shared total, each `on_scan` advances one
+    shared completed count."""
+    buf = io.StringIO()
+    test_console = Console(file=buf, force_terminal=True, no_color=True)
+    reporter = _ProgressReporter(test_console)
+
+    reporter.on_phase_start(3)  # discovery phase: 3 $PATH candidates
+    reporter.on_scan()
+    reporter.on_scan()
+    reporter.on_scan()
+    reporter.on_phase_start(2)  # row phase: 2 rows found by discovery
+    reporter.on_scan()
+    reporter.on_scan()
+
+    task = reporter._progress.tasks[0]
+    assert task.total == 5
+    assert task.completed == 5
+
+    reporter.stop()
+    assert reporter._progress.live.is_started is False
+
+
 def test_render_status_tty_shows_the_two_column_table() -> None:
     buf = io.StringIO()
     test_console = Console(file=buf, force_terminal=True, no_color=True)
@@ -224,6 +335,34 @@ def test_render_status_tty_shows_the_two_column_table() -> None:
     assert "pandoc" in output
     assert ActionState.SHIPS_UNINSTALLED.value in output
     assert "install it" not in output
+
+
+def test_render_status_colors_the_state_column_per_category() -> None:
+    buf = io.StringIO()
+    test_console = Console(file=buf, force_terminal=True, color_system="standard")
+
+    _render_status(
+        test_console,
+        [
+            StatusRow(
+                tool="pandoc",
+                package="pandoc",
+                provider="mise",
+                state=ActionState.SHIPS_UNINSTALLED,
+            ),
+            StatusRow(
+                tool="gum", package="gum", provider="mise", state=ActionState.NO_PAGE
+            ),
+            StatusRow(
+                tool="tmux", package="tmux", provider="mise", state=ActionState.MANAGED
+            ),
+        ],
+    )
+
+    output = buf.getvalue()
+    assert "\x1b[33mavailable\x1b[0m" in output
+    assert "\x1b[31mmissing\x1b[0m" in output
+    assert "\x1b[32mmanaged\x1b[0m" in output
     assert "zero" not in output
 
 
@@ -377,7 +516,9 @@ def test_cli_status_pipe_emits_bare_names(
     monkeypatch.setattr("maniac.cli.status.default_cfg", _config(tmp_path))
     monkeypatch.setattr(
         "maniac.cli.status.discovery.enumerate_installations",
-        lambda: [(_FakeProvider(), _installation(binary="gum"))],
+        lambda on_start=None, on_scan=None: [
+            (_FakeProvider(), _installation(binary="gum"))
+        ],
     )
 
     res = runner.invoke(app, ["status"])
@@ -394,7 +535,9 @@ def test_cli_status_tty_shows_table(
     monkeypatch.setattr("maniac.cli.status.default_cfg", _config(tmp_path))
     monkeypatch.setattr(
         "maniac.cli.status.discovery.enumerate_installations",
-        lambda: [(_FakeProvider(), _installation(binary="gum"))],
+        lambda on_start=None, on_scan=None: [
+            (_FakeProvider(), _installation(binary="gum"))
+        ],
     )
 
     res = runner.invoke(app, ["status"])
