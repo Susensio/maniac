@@ -150,21 +150,6 @@ def find_installed_manpage_path(man_bin: str, tool_name: str) -> Path | None:
     return Path(first_line) if first_line else None
 
 
-def find_managed_manpage(man_dir: Path, binary_name: str) -> Path | None:
-    """Locate `binary_name`'s page under MANIAC's own install directory, if any.
-
-    Section 1 only, matching the assumption `install_manpage`/`uninstall_manpage`
-    already make. Checks every compression suffix since `install` (ADR-0016
-    tiers 1-2) copies a page's filename verbatim, which can be compressed
-    (`pandoc.1.gz`) even though tier-3 synthesis always writes plain `.1`.
-    """
-    for suffix in _COMPRESSION_SUFFIXES:
-        candidate = man_dir / f"{binary_name}.1{suffix}"
-        if candidate.is_file():
-            return candidate
-    return None
-
-
 def read_manpage_source(path: Path) -> str:
     """Read and fully decompress an installed manpage's roff source."""
     with _opener_for(path)(path, "rt", encoding="utf-8", errors="replace") as file:

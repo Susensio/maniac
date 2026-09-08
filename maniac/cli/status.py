@@ -30,9 +30,10 @@ from typing import TYPE_CHECKING, Annotated, Any
 import typer
 from rich.table import Table
 
+from .. import manifest
 from ..config import Config
 from ..sources import discovery
-from ..sources.manpages import find_managed_manpage, select_primary_manpage
+from ..sources.manpages import select_primary_manpage
 from . import app, console, default_cfg
 
 if TYPE_CHECKING:
@@ -68,14 +69,21 @@ class StatusRow:
 def _state_for(
     provider: "Provider | None", inst: "Installation | None", tool: str, cfg: Config
 ) -> ActionState:
-    """Decide one binary's state: MANIAC's own install directory wins first.
+    """Decide one binary's state: the manifest wins first (ADR-0017).
 
     Checked before the install-root page, not after: an install already
     performed from tier 1 or 2 copies its source file verbatim (ADR-0016),
     carrying no MANIAC provenance header, so re-deriving "installed" from
     the install root every time would keep reporting it as not-yet-installed.
+    The manifest, not a location-and-filename guess, is what stops a page a
+    user hand-placed in `man_dir` from reporting as MANAGED. An entry whose
+    file has vanished -- a crash between recording it and the copy that
+    follows (ADR-0017), or the file removed by hand -- is not reported as
+    MANAGED either: nothing is there to inventory, so the binary falls
+    through to whatever the install root or provider can offer instead.
     """
-    if find_managed_manpage(cfg.man_dir, tool) is not None:
+    entry = manifest.lookup(tool, config=cfg)
+    if entry is not None and entry.path.exists():
         return ActionState.MANAGED
     if provider is not None and inst is not None:
         page = select_primary_manpage(provider.local_docs(inst), inst.binary)

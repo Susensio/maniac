@@ -10,12 +10,12 @@ happy path.
 """
 
 from dataclasses import dataclass
-from enum import Enum
 from pathlib import Path
 
 from ..config import Config
 from ..installer import install_manpage
 from ..logging import logger
+from ..manifest import Tier
 from ..models import Installation, PipelineResult
 from ..sources import discovery
 from ..sources.docs import discover_repo_manpage
@@ -26,13 +26,7 @@ from ..sources.manpages import (
 )
 from ..sources.providers.base import Provider
 
-
-class Tier(Enum):
-    """Which source answered an `install` request, or that none did."""
-
-    INSTALL_ROOT = "install_root"
-    REPOSITORY = "repository"
-    SYNTHESIS = "synthesis"
+__all__ = ["InstallOutcome", "Tier", "run_install"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -139,7 +133,9 @@ def _try_install_root(
     if page is None:
         return None
 
-    installed_path = install_manpage(page, force=force)
+    installed_path = install_manpage(
+        page, inst.binary, Tier.INSTALL_ROOT, str(inst.root), force=force
+    )
     detail = "upstream manpage from install root"
     if inst.version:
         detail += f" ({inst.version})"
@@ -191,7 +187,9 @@ def _try_repository(
         )
         return None
 
-    installed_path = install_manpage(page, force=force)
+    installed_path = install_manpage(
+        page, inst.binary, Tier.REPOSITORY, source.target, force=force
+    )
     detail = f"upstream manpage from repository ({inst.version})   [no synthesis]"
     return InstallOutcome(
         tool=inst.binary,

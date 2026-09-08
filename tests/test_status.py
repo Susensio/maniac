@@ -8,6 +8,7 @@ from rich.console import Console
 from typer.testing import CliRunner
 
 import maniac.cli as cli_module
+from maniac import manifest as manifest_module
 from maniac.cli import app
 from maniac.cli.status import (
     ActionState,
@@ -17,6 +18,7 @@ from maniac.cli.status import (
     compute_status,
 )
 from maniac.config import Config
+from maniac.manifest import Tier
 from maniac.models import Installation
 
 runner = CliRunner()
@@ -113,11 +115,13 @@ def test_compute_status_maniac_managed_wins_even_with_an_install_root_page(
     tmp_path: Path,
 ) -> None:
     """A tier-1/2 install copies its page verbatim, no provenance header --
-    checking MANIAC's own install directory first is what still recognises it.
+    checking the manifest first (ADR-0017) is what still recognises it.
     """
     cfg = _config(tmp_path)
     cfg.man_dir.mkdir(parents=True)
-    (cfg.man_dir / "tool.1").write_text(".TH TOOL 1\n", encoding="utf-8")
+    installed = cfg.man_dir / "tool.1"
+    installed.write_text(".TH TOOL 1\n", encoding="utf-8")
+    manifest_module.record("tool", installed, Tier.INSTALL_ROOT, "src", config=cfg)
 
     page = tmp_path / "install_root" / "tool.1"
     page.parent.mkdir(parents=True)
@@ -131,9 +135,36 @@ def test_compute_status_maniac_managed_wins_even_with_an_install_root_page(
 def test_compute_status_managed_page_can_be_compressed(tmp_path: Path) -> None:
     cfg = _config(tmp_path)
     cfg.man_dir.mkdir(parents=True)
-    (cfg.man_dir / "tool.1.gz").write_bytes(b"\x1f\x8b")
+    installed = cfg.man_dir / "tool.1.gz"
+    installed.write_bytes(b"\x1f\x8b")
+    manifest_module.record("tool", installed, Tier.INSTALL_ROOT, "src", config=cfg)
 
     assert _state_for(None, None, "tool", cfg) is ActionState.MANAGED
+
+
+def test_compute_status_unmanaged_page_in_man_dir_is_not_managed(
+    tmp_path: Path,
+) -> None:
+    """ADR-0017's stated correction: a page a user hand-placed in `man_dir`,
+    absent from the manifest, is no longer reported as MANIAC-managed."""
+    cfg = _config(tmp_path)
+    cfg.man_dir.mkdir(parents=True)
+    (cfg.man_dir / "tool.1").write_text(".TH TOOL 1\n", encoding="utf-8")
+
+    assert _state_for(None, None, "tool", cfg) is ActionState.NO_PAGE
+
+
+def test_compute_status_manifest_entry_with_vanished_file_is_not_managed(
+    tmp_path: Path,
+) -> None:
+    """A manifest entry recorded before a crash between record and copy (ADR-0017)
+    is detected rather than blindly reported MANAGED."""
+    cfg = _config(tmp_path)
+    manifest_module.record(
+        "tool", cfg.man_dir / "tool.1", Tier.SYNTHESIS, "model", config=cfg
+    )
+
+    assert _state_for(None, None, "tool", cfg) is ActionState.NO_PAGE
 
 
 def test_compute_status_with_tools_is_unfiltered_and_resolves_each_by_name(
@@ -299,11 +330,14 @@ def test_render_status_names_forces_bare_output_on_a_terminal(
     assert buf.getvalue() == ""
 
 
-def test_cli_status_pipe_emits_bare_names(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_cli_status_pipe_emits_bare_names(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     """Smoke test: `status` through the full CLI, piped, is bare names -- nothing else."""
     monkeypatch.setattr(
         cli_module.console, "_instance", Console(force_terminal=False, no_color=True)
     )
+    monkeypatch.setattr("maniac.cli.status.default_cfg", _config(tmp_path))
     monkeypatch.setattr(
         "maniac.cli.status.discovery.enumerate_installations",
         lambda: [(_FakeProvider(), _installation(binary="gum"))],
@@ -314,10 +348,13 @@ def test_cli_status_pipe_emits_bare_names(monkeypatch: pytest.MonkeyPatch) -> No
     assert res.output == "gum\n"
 
 
-def test_cli_status_tty_shows_table(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_cli_status_tty_shows_table(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     monkeypatch.setattr(
         cli_module.console, "_instance", Console(force_terminal=True, no_color=True)
     )
+    monkeypatch.setattr("maniac.cli.status.default_cfg", _config(tmp_path))
     monkeypatch.setattr(
         "maniac.cli.status.discovery.enumerate_installations",
         lambda: [(_FakeProvider(), _installation(binary="gum"))],

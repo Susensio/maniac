@@ -415,28 +415,6 @@ def test_find_installed_manpage_path_missing_returns_none(monkeypatch) -> None:
     assert find_installed_manpage_path("/usr/bin/man", "nonexistent") is None
 
 
-def test_find_managed_manpage_finds_a_plain_page(tmp_path: Path) -> None:
-    (tmp_path / "tool.1").write_text(".TH TOOL 1\n", encoding="utf-8")
-
-    assert manpages.find_managed_manpage(tmp_path, "tool") == tmp_path / "tool.1"
-
-
-def test_find_managed_manpage_finds_a_compressed_page(tmp_path: Path) -> None:
-    (tmp_path / "pandoc.1.gz").write_bytes(b"\x1f\x8b")
-
-    assert manpages.find_managed_manpage(tmp_path, "pandoc") == tmp_path / "pandoc.1.gz"
-
-
-def test_find_managed_manpage_ignores_an_unrelated_sibling(tmp_path: Path) -> None:
-    (tmp_path / "pandoc-lua.1").write_text(".TH PANDOC-LUA 1\n", encoding="utf-8")
-
-    assert manpages.find_managed_manpage(tmp_path, "pandoc") is None
-
-
-def test_find_managed_manpage_missing_returns_none(tmp_path: Path) -> None:
-    assert manpages.find_managed_manpage(tmp_path, "nonexistent") is None
-
-
 def test_read_manpage_source_decompresses_gzip(tmp_path: Path) -> None:
     manpage = tmp_path / "tool.1.gz"
     content = ".TH TOOL 1\n.SH NAME\ntool \\- demo\n"

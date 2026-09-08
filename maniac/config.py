@@ -146,6 +146,10 @@ class Config:
         default_factory=lambda: _XDG_STATE / "maniac" / "intermediate"
     )
     bench_dir: Path = field(default_factory=lambda: _XDG_STATE / "maniac" / "bench")
+    manifest_path: Path = field(
+        default_factory=lambda: _XDG_STATE / "maniac" / "installed.json"
+    )
+    backup_dir: Path = field(default_factory=lambda: _XDG_STATE / "maniac" / "backups")
     llm_api_key: str | None = field(
         default_factory=lambda: os.environ.get("MANIAC_LLM_API_KEY")
     )

@@ -9,6 +9,7 @@ from ..generation.llm import run_llm_synthesis
 from ..generation.prompts import build_synthesis_prompt, load_system_prompt
 from ..installer import install_manpage
 from ..logging import logger
+from ..manifest import Tier
 from ..models import PipelineResult
 from ..sources.crawler import find_subcommands, format_help_block
 from ..sources.discovery import discover_repo
@@ -130,7 +131,9 @@ def run_pipeline(
 
     installed_path = None
     if install and actual_roff_path and actual_roff_path.exists():
-        installed_path = install_manpage(actual_roff_path, force=force)
+        installed_path = install_manpage(
+            actual_roff_path, tool_name, Tier.SYNTHESIS, selected_model, force=force
+        )
 
     return PipelineResult(
         tool_name=tool_name,

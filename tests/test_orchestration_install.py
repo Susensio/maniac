@@ -58,7 +58,7 @@ def test_run_install_uses_the_install_root_page_first(
     )
     monkeypatch.setattr(
         "maniac.orchestration.install.install_manpage",
-        lambda source_file, force=False: Path("/installed/tool.1"),
+        lambda *args, **kwargs: Path("/installed/tool.1"),
     )
 
     outcome = run_install("tool")
@@ -88,7 +88,7 @@ def test_run_install_falls_through_to_repository_when_no_install_root_page(
     )
     monkeypatch.setattr(
         "maniac.orchestration.install.install_manpage",
-        lambda source_file, force=False: Path("/installed/tool.1"),
+        lambda *args, **kwargs: Path("/installed/tool.1"),
     )
 
     outcome = run_install("tool")
@@ -252,7 +252,7 @@ def test_no_generate_installs_a_tier_1_page_with_no_llm_call(
     )
     monkeypatch.setattr(
         "maniac.orchestration.install.install_manpage",
-        lambda source_file, force=False: Path("/installed/tool.1"),
+        lambda *args, **kwargs: Path("/installed/tool.1"),
     )
 
     outcome = run_install("tool", no_generate=True)
