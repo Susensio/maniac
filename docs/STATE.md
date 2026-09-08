@@ -77,25 +77,21 @@ Every command computes a result dataclass (`EvalOutcome`, `CompareOutcome`, `Uni
 `tests/test_cli.py`, `tests/test_eval.py` and `tests/test_compare.py` do this now; a handful of `CliRunner`-based smoke tests remain per module, checking only short fixed strings that cannot wrap at any terminal width.
 The `_plain_console` fixture's `width=400` pin and its `TODO:` are gone with it -- no remaining assertion depends on how Rich wraps a long dynamic value such as a path.
 
-`status [TOOL...] [--candidates]` replaces `list` and `list-missing`.
-The threshold `--candidates` selects on is `[classification] min_words_per_flag` in `maniac/defaults.toml`, overridable in the user's `config.toml`; ADR-0014 records why it is configuration rather than a command-line option.
-With no arguments it reads `classification.collect_facts()` (never recomputing classification) and keeps pages with a resolvable source or that MANIAC already manages; with tool names it reports exactly those, unfiltered.
+`status [TOOL...]` replaces `list` and `list-missing`.
+`--candidates` and its `[classification] min_words_per_flag` threshold are gone as of ADR-0016 Stage 7 (below) -- judging an existing page's quality left scope, so `status` reports a fact about installation per binary, never a verdict on quality.
+With no arguments it walks `discovery.enumerate_installations()` ($PATH, resolved through the provider registry); with tool names it resolves exactly those via `discovery.find_installation`, unfiltered.
+The manpath is never scanned; `classification.py`'s `collect_facts`/`ManpageFacts`/`absent_facts` (ADR-0012) are no longer called from `status` and now have no production caller, only their own tests and `python -m maniac.classification dump`.
 
-A named tool the manpath scan never saw now reports an absence row rather than nothing -- `maniac status uv` was silent, which is the common case MANIAC exists to serve.
-`classification.absent_facts(tool)` builds it: source resolved through the same `discover_candidate_source` `_classify_page` uses, so the row still shows what MANIAC would generate from, and every measured fact left at its zero or empty value.
-`ManpageFacts.path` stays a non-optional `Path`, filled with an `ABSENT_PATH = Path("<absent>")` sentinel; widening it to `Path | None` would have forced a `None` branch through `_facts_to_row`/`_row_to_facts` for a value that can never reach the cache, and `Path()` was rejected because it stringifies to `.` and would read as the cwd in `python -m maniac.classification dump`.
-Absence rows are built outside `collect_facts` and never cached -- the cache is keyed on `(path, mtime, size)` and an absent page has none of the three -- so `CACHE_SCHEMA_VERSION` is unchanged.
-Three decisions this closed: only named arguments produce absence rows, since enumerating uninstalled tools would mean reinstating the bin-dir scan ADR-0013 removed; a named tool yields an absence row without checking whether its binary exists, for the same reason; and the table renders `-` for Section, Words and Flag entries on an absent page (`_observed`), never `0`, so an unmeasured absence cannot be misread as a measured zero.
-`--candidates` needed no change: `candidates.select_candidate` already returns `SELECTED` for `not facts.exists`.
-`--candidates` filters further to `candidates.select_candidate(...) is SELECTED` against `Config.min_words_per_flag`, never a CLI-exposed threshold, per ADR-0014.
-Columns are observations only (word count, flag-entry count, ownership, source), never a verdict.
-Redirected to anything but a terminal, `status` prints bare tool names -- one per line, deduplicated across sections, via `print()` rather than the Rich console -- which is what makes `maniac status --candidates | xargs maniac install` and `maniac install $(maniac status --candidates)` work; `--names` forces the same output on a real terminal.
+Every binary falls into one of ADR-0016's three states (`ActionState`): `SHIPS_UNINSTALLED` (the install root ships a page for it and MANIAC hasn't installed one), `NO_PAGE` (neither), or `MANAGED` (a page already sits at `Config.man_dir` for it).
+`_state_for` checks `manpages.find_managed_manpage(cfg.man_dir, tool)` before the install-root page, not after: a tier-1/2 install (ADR-0016) copies its source file verbatim and carries no MANIAC provenance header, so a page already installed there would otherwise keep reporting `SHIPS_UNINSTALLED` forever.
+A named tool no provider claims still gets a row (`NO_PAGE`, unless a managed page already covers it) rather than nothing, matching ADR-0013's rule that a named tool always reports something.
+
+The unit is the binary, not the package: `pandoc`, `pandoc-lua` and `pandoc-server` are three separate `Installation`s from one mise install root, each getting its own `StatusRow`.
+Package identity (`Installation.package`) groups rows only for the Rich table's display -- `_grouped_for_display` collapses binaries sharing one `(provider, package, state)` into a single row, so `pandoc`'s already-managed row stays separate from its still-uninstalled `pandoc-lua`/`pandoc-server` siblings, which collapse together.
+Redirected to anything but a terminal, `status` prints bare binary names -- one per line, deduplicated, via `print()` rather than the Rich console, never collapsed by package -- which is what makes `maniac status | xargs maniac install` work; `--names` forces the same output on a real terminal.
 
 `install` (`generate` renamed, ADR-0016 -- see "Stage 6" below) resolves through three tiers and installs by default, with `--no-install` to stop after the tier-3 (synthesis) case's compile step.
-`install` with zero tool names exits 0 quietly rather than raising Typer's missing-argument error, since a `$(maniac status --candidates)` expansion can legitimately be empty.
-
-Verified for real on the development system: `maniac status --candidates` selects `gum`, `gh`, `pastel`, `just` and excludes `usage`, `aichat`, `tmux`, `bat`, `fish-lsp`, matching ADR-0014's numbers; `maniac status --candidates | cat` prints the four names bare, one per line.
-`maniac status uv hx bat` renders `uv` and `hx` with `-` in Section/Words/Flag entries and live sources (`astral-sh/uv`, `helix-editor/helix`) while `bat` keeps its measured `1919`/`0`; `maniac status uv hx --candidates | cat` prints `uv` and `hx`, so the pipe into `xargs maniac install` reaches tools with no page at all.
+`install` with zero tool names exits 0 quietly rather than raising Typer's missing-argument error, since a `$(maniac status)` expansion can legitimately be empty.
 
 ## Verification performed
 
@@ -187,3 +183,12 @@ A real defect surfaced only by the live run, not the unit tests: `_render_instal
 Fixed by `rich.markup.escape`ing the detail before interpolation; `tests/test_cli.py::test_render_install_does_not_swallow_bracketed_detail` locks it in.
 
 Left open, in scope for later stages rather than closed here: a tier-1/2 install copies the page as-is with no MANIAC provenance header (unlike a synthesized page), so `maniac uninstall <tool>` afterward cannot tell it apart from a pre-existing vendor page at the same path and reports it "foreign, kept in place" rather than removing it -- `install` and `uninstall` are not yet a full round trip for tiers 1-2. `just check` passes at 346 tests (327 baseline + 19: 5 `manpages.py`, 6 `docs.py`, 7 `orchestration/install.py`, 1 `cli.py` render-escaping regression).
+
+Stage 7 landed, the roadmap's last stage: `status` inverts enumeration from scanning the manpath to `discovery.enumerate_installations()` (new: walks every `$PATH` entry once, deduplicating by name at its first occurrence -- the binary that actually runs, ADR-0016's tie-break -- then resolves each through the provider registry) and reports ADR-0016's three states per binary instead of a word/flag-count table; see "CLI command surface" above for `ActionState`, `_state_for` and the package-collapsing display.
+`--candidates`, `candidates.py`, and `Config.min_words_per_flag`/`[classification]` in `maniac/defaults.toml` and `config.toml` are deleted outright, not deprecated -- nothing else used them.
+`manpages.find_managed_manpage(man_dir, binary_name)` is new: checks every compression suffix at `<man_dir>/<binary>.1[.suffix]`, section 1 only, matching `install_manpage`/`uninstall_manpage`'s own assumption.
+
+Verified live on the development system (65 binaries across all eight providers): 2 `SHIPS_UNINSTALLED` (`pandoc-lua`, `pandoc-server` -- `pandoc` itself already `MANAGED` from Stage 6's live run), 21 `MANAGED`, 42 `NO_PAGE`.
+The pipe survives end to end, not only in a unit test: `maniac status pandoc-lua pandoc-server | xargs maniac install --no-generate --no-install` installed-root-resolved both siblings (`upstream manpage from install root (3.10.2)`) with no LLM reached.
+The table view groups `pandoc-lua, pandoc-server` into one row while keeping `pandoc` on its own, confirming `_grouped_for_display`'s `(provider, package, state)` key -- not `(provider, package)` alone -- is what lets a partially-installed package's siblings still collapse together.
+`just check` passes at 335 tests (346 minus 19 from the deleted `test_candidates.py` minus 15 rewritten out of the old `test_status.py`, plus 16 new `test_status.py` cases, 4 for `find_managed_manpage`, 3 for `enumerate_installations`).
