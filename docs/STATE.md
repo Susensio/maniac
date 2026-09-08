@@ -54,8 +54,8 @@ All eight providers' `local_docs()` (`maniac/sources/providers/*.py`) call it wi
 Verified live on the development system: `pandoc` returns its three pages (`man pandoc` itself reports no manual entry), `fzf` 1, `just` 1, `zoxide` 6, `pastel` 23, `gh` 220 -- all six match ADR-0016's predicted counts, `gh` and `pastel` only after the wrapper-directory tolerance above was added (both returned 0 without it, since mise nests their `share/man`/`man` trees one level deeper than a plain package root).
 `local_docs()` is wired into the `install` command's tier-1 check for authoritative pages; `status` enumerates installations via the provider registry and reports management state per binary.
 
-One gap remains open, recorded in `docs/BACKLOG.md`: `_opener_for` has no zstd branch, so a `.zst` page now matches by filename but cannot be read, and `find_repo_manpage`'s `is_help2man_manpage` gate fails open on it (moot for `find_install_root_manpages`, which never calls that gate).
-No such page has been observed on the development system.
+`_opener_for` decompresses `.zst` through `zstandard.ZstdDecompressor.stream_reader` (`_zstd_open`, matching `discovery.py`'s use of the library rather than the `zstandard.open` wrapper), so a `.zst` page that matches by filename can now be read and `find_repo_manpage`'s `is_help2man_manpage` gate no longer fails open on one; `read_manpage_source` shares the opener and gains the same.
+No such page has been observed on the development system, so this closed a latent gap rather than a live defect.
 
 ## Installed-vs-generated manpage comparison
 
