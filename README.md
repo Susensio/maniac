@@ -130,24 +130,17 @@ man howdoi
 
 ### 2. Find Tools MANIAC Can Act On
 
-`status` reports, with no arguments, every tool with a source MANIAC can reach plus every tool it already manages.
-Columns are observations only -- word count, flag-entry count, page ownership, discovered source -- never a verdict:
+`status` reports three states by walking installer providers rather than scanning the manpath: *ships a page but not installed* (install it, zero cost), *no page anywhere* (synthesize, LLM cost), *MANIAC-managed* (inventory).
+With no arguments, it reports every tool in your `$PATH`:
 
 ```bash
 maniac status
 ```
 
-Name tools explicitly to report on exactly those, regardless of source or ownership:
+Name tools explicitly to report on exactly those:
 
 ```bash
 maniac status hx uv bat
-```
-
-`--candidates` narrows the listing to pages MANIAC's internal heuristic flags as worth improving.
-The heuristic and its threshold are internal (tunable via `config.toml`, never a CLI flag) — the columns above are what make a borderline page visible even when it isn't selected:
-
-```bash
-maniac status --candidates
 ```
 
 ### 3. Bulk-Install via Piping
@@ -156,9 +149,9 @@ There is no bulk install command: piping `status`'s output into `install` is the
 Redirected to anything other than a terminal, `status` prints bare tool names, one per line, with no table, colour, or header:
 
 ```bash
-maniac status --candidates | xargs maniac install
+maniac status | xargs maniac install
 # or, equivalently
-maniac install $(maniac status --candidates)
+maniac install $(maniac status)
 ```
 
 `install` with zero tool names exits quietly, so an empty expansion is harmless.
@@ -279,7 +272,4 @@ and any of them can be overridden:
 provider = "gemini"            # picked by API key if unset
 model = "gemini/gemini-flash-latest"
 reasoning_effort = "low"
-
-[classification]
-min_words_per_flag = 15        # threshold `status --candidates` selects on
 ```
