@@ -32,10 +32,11 @@ def discover_repo(binary_name: str, bin_dir: str | Path | None = None) -> RepoSo
         if which_path:
             bin_path = Path(which_path)
 
-    # Resolve through symlink inspection if applicable; a binary with no
-    # provider claiming it is unresolvable (ADR-0015) rather than a guess
-    # from its bare name against the Mise registry.
-    if bin_path.is_symlink():
+    # Detection is no longer gated on a symlink (ADR-0015 Stage 4) -- cargo
+    # and go install real files. A binary with no provider claiming it is
+    # unresolvable rather than a guess from its bare name against the Mise
+    # registry.
+    if bin_path.exists():
         source = _resolve_symlink_target(binary_name, bin_path)
         if source:
             return source
@@ -49,10 +50,9 @@ def discover_candidate_source(binary_name: str) -> RepoSource | None:
     which_path = shutil.which(binary_name)
     if which_path is None:
         return None
-    bin_path = Path(which_path)
-    if not bin_path.is_symlink():
-        return None
-    return _resolve_symlink_target(binary_name, bin_path)
+    # Detection is no longer gated on a symlink (ADR-0015 Stage 4); each
+    # provider decides its own evidence.
+    return _resolve_symlink_target(binary_name, Path(which_path))
 
 
 def _resolve_symlink_target(binary_name: str, bin_path: Path) -> RepoSource | None:

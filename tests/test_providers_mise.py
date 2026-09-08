@@ -145,11 +145,12 @@ def test_resolve_source_treats_github_backend_the_same_as_aqua(
     )
 
 
-def test_resolve_source_gives_up_on_a_backend_record_with_no_repo_shaped_identity(
+def test_resolve_source_gives_up_when_the_composed_npm_package_json_is_missing(
     tmp_path: Path,
 ) -> None:
-    """npm/pipx/"core" package identities aren't "owner/repo" -- resolving those
-    is Stage 4's job (a dedicated npm/pipx provider), not a guess made here.
+    """The npm backend composes a parent installation (Stage 4), but delegation
+    still yields nothing when the composed location has no `package.json` to
+    read -- `NpmProvider` returns `None` rather than guessing.
     """
     bin_path = _make_mise_install(
         tmp_path, "npm-yaml-language-server", "1.24.0", "yaml-language-server"
@@ -211,3 +212,99 @@ def test_local_docs_is_not_yet_wired(tmp_path: Path) -> None:
     assert inst is not None
 
     assert provider.local_docs(inst) == []
+
+
+def test_detect_composes_a_parent_for_an_npm_backend(tmp_path: Path) -> None:
+    """Real shape from the development system: mise's npm backend places the
+    package's own `package.json` under `node_modules/<pkg>/`, not directly at
+    the install root -- that root holds mise's own wrapper package instead.
+    """
+    bin_path = _make_mise_install(
+        tmp_path, "npm-yaml-language-server", "1.24.0", "yaml-language-server"
+    )
+    root = bin_path.resolve().parents[1]
+    (root.parent / ".mise.backend.toml").write_text(
+        'full = "npm:yaml-language-server"\n', encoding="utf-8"
+    )
+    package_dir = root / "node_modules" / "yaml-language-server"
+    package_dir.mkdir(parents=True)
+    (package_dir / "package.json").write_text(
+        '{"name": "yaml-language-server", "version": "1.24.0", '
+        '"repository": {"type": "git", '
+        '"url": "git+https://github.com/redhat-developer/yaml-language-server.git"}}',
+        encoding="utf-8",
+    )
+    provider = mise.MiseProvider()
+
+    inst = provider.detect(bin_path)
+
+    assert inst is not None
+    assert inst.parent is not None
+    assert inst.parent.provider == "npm"
+    assert inst.parent.package == "yaml-language-server"
+    assert inst.parent.root == package_dir
+
+    source = provider.resolve_source(inst)
+
+    assert source == RepoSource(
+        name="yaml-language-server",
+        target="redhat-developer/yaml-language-server",
+        is_local=False,
+    )
+
+
+def test_detect_composes_a_parent_for_a_pipx_backend(tmp_path: Path) -> None:
+    """Real shape from the development system: mise's pipx backend nests the
+    venv one level below its own install root, named after the package.
+    """
+    bin_path = _make_mise_install(tmp_path, "pipx-tlp-ui", "1.10.1", "tlpui")
+    root = bin_path.resolve().parents[1]
+    (root.parent / ".mise.backend.toml").write_text(
+        'full = "pipx:tlp-ui"\n', encoding="utf-8"
+    )
+    venv_root = root / "tlp-ui"
+    dist_info = (
+        venv_root / "lib" / "python3.12" / "site-packages" / "tlp_ui-1.10.1.dist-info"
+    )
+    dist_info.mkdir(parents=True)
+    (dist_info / "METADATA").write_text(
+        "Metadata-Version: 2.4\n"
+        "Name: tlp-ui\n"
+        "Version: 1.10.1\n"
+        "Project-URL: Repository, https://github.com/d4nj1/TLPUI\n",
+        encoding="utf-8",
+    )
+    provider = mise.MiseProvider()
+
+    inst = provider.detect(bin_path)
+
+    assert inst is not None
+    assert inst.parent is not None
+    assert inst.parent.provider == "pipx"
+    assert inst.parent.package == "tlp-ui"
+    assert inst.parent.root == venv_root
+
+    source = provider.resolve_source(inst)
+
+    assert source == RepoSource(name="tlpui", target="d4nj1/TLPUI", is_local=False)
+
+
+def test_detect_leaves_parent_none_for_a_backend_with_no_composed_shape(
+    tmp_path: Path,
+) -> None:
+    """`.mise.backend.toml` names a backend (mise's own "core") with neither a
+    direct-repo shape nor a registered provider to delegate to -- no parent,
+    and resolution stays unresolved rather than guessed.
+    """
+    bin_path = _make_mise_install(tmp_path, "python", "3.13.0", "python3")
+    root = bin_path.resolve().parents[1]
+    (root.parent / ".mise.backend.toml").write_text(
+        'full = "core:python"\n', encoding="utf-8"
+    )
+    provider = mise.MiseProvider()
+
+    inst = provider.detect(bin_path)
+
+    assert inst is not None
+    assert inst.parent is None
+    assert provider.resolve_source(inst) is None

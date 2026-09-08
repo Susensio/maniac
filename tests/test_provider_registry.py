@@ -23,8 +23,21 @@ class _FakeProvider:
 
 
 def test_the_module_registry_holds_the_registered_providers() -> None:
-    """`local_lib`, `uv`, `mise` register in that order, mirroring the prior check order."""
-    assert [provider.name for provider in registry] == ["local_lib", "uv", "mise"]
+    """`local_lib`, `uv`, `mise` register first, mirroring the prior check order;
+    Stage 4 appends npm, pipx, cargo, go, Homebrew -- registration order settles
+    nothing between providers (ADR-0015: `$PATH` order breaks ties), only the
+    diff staying a pure append.
+    """
+    assert [provider.name for provider in registry] == [
+        "local_lib",
+        "uv",
+        "mise",
+        "npm",
+        "pipx",
+        "cargo",
+        "go",
+        "homebrew",
+    ]
 
 
 def test_register_appends_and_iteration_preserves_order() -> None:
