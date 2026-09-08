@@ -13,6 +13,7 @@ from maniac.cli import app
 from maniac.cli.status import (
     ActionState,
     StatusRow,
+    _grouped_for_display,
     _render_status,
     _state_for,
     compute_status,
@@ -202,7 +203,7 @@ def test_compute_status_named_tools_are_deduplicated(
     assert [row.tool for row in rows] == ["uv"]
 
 
-def test_render_status_tty_shows_the_three_state_table() -> None:
+def test_render_status_tty_shows_the_two_column_table() -> None:
     buf = io.StringIO()
     test_console = Console(file=buf, force_terminal=True, no_color=True)
 
@@ -221,11 +222,14 @@ def test_render_status_tty_shows_the_three_state_table() -> None:
     output = buf.getvalue()
     assert "Manpage Status" in output
     assert "pandoc" in output
-    assert "install it" in output
-    assert "zero" in output
+    assert ActionState.SHIPS_UNINSTALLED.value in output
+    assert "install it" not in output
+    assert "zero" not in output
 
 
-def test_render_status_collapses_siblings_sharing_a_package_and_state() -> None:
+def test_render_status_collapses_siblings_sharing_a_package_and_state_by_count() -> (
+    None
+):
     buf = io.StringIO()
     test_console = Console(file=buf, force_terminal=True, no_color=True, width=200)
 
@@ -242,8 +246,37 @@ def test_render_status_collapses_siblings_sharing_a_package_and_state() -> None:
 
     lines = [line for line in buf.getvalue().splitlines() if "pandoc" in line]
     assert len(lines) == 1
-    assert "pandoc-lua" in lines[0]
-    assert "pandoc-server" in lines[0]
+    assert "pandoc (3 binaries)" in lines[0]
+    assert "pandoc-lua" not in lines[0]
+    assert "pandoc-server" not in lines[0]
+
+
+def test_grouped_for_display_solo_tool_keeps_its_own_name() -> None:
+    rows = [
+        StatusRow(
+            tool="pandoc",
+            package="pandoc",
+            provider="mise",
+            state=ActionState.SHIPS_UNINSTALLED,
+        )
+    ]
+
+    assert _grouped_for_display(rows) == [("pandoc", ActionState.SHIPS_UNINSTALLED)]
+
+
+def test_grouped_for_display_many_siblings_render_as_package_and_count() -> None:
+    """A package exposing many binaries under one state must not blow up the label."""
+    rows = [
+        StatusRow(
+            tool=name,
+            package="python",
+            provider="mise",
+            state=ActionState.MANAGED,
+        )
+        for name in ("python3", "pip", "pydoc", "idle", "2to3")
+    ]
+
+    assert _grouped_for_display(rows) == [("python (5 binaries)", ActionState.MANAGED)]
 
 
 def test_render_status_does_not_collapse_siblings_in_different_states() -> None:
