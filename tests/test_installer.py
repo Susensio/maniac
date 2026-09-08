@@ -167,6 +167,48 @@ def test_install_manpage_reinstall_over_own_page_preserves_prior_backup(
     assert entry.backup.exists()
 
 
+def test_install_manpage_reinstall_copy_failure_restores_prior_entry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failed reinstall over an owned page must not orphan its vendor backup
+    by forgetting the entry that is the only record of where it went (P2 fix)."""
+    target_dir = tmp_path / "man1"
+    target_dir.mkdir(parents=True)
+    existing_dest = target_dir / "tool.1"
+    existing_dest.write_text(".TH TOOL 1 Official vendor doc", encoding="utf-8")
+
+    src_file = tmp_path / "src" / "tool.1"
+    src_file.parent.mkdir(parents=True)
+    src_file.write_text(".TH TOOL 1 v1", encoding="utf-8")
+
+    install_manpage(
+        src_file, "tool", Tier.SYNTHESIS, "model-v1", target_dir=target_dir, force=True
+    )
+    first_entry = manifest_module.lookup("tool")
+    assert first_entry is not None and first_entry.backup is not None
+
+    def _boom(*args: object, **kwargs: object) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr("maniac.installer.shutil.copy2", _boom)
+
+    src_file.write_text(".TH TOOL 1 v2", encoding="utf-8")
+    with pytest.raises(OSError):
+        install_manpage(
+            src_file,
+            "tool",
+            Tier.SYNTHESIS,
+            "model-v2",
+            target_dir=target_dir,
+            force=False,
+        )
+
+    entry = manifest_module.lookup("tool")
+    assert entry == first_entry
+    assert entry is not None and entry.backup is not None
+    assert entry.backup.exists()
+
+
 def test_install_manpage_copy_failure_forgets_manifest_entry(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

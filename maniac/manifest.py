@@ -8,6 +8,7 @@ tier-3 pages as informational metadata but is never read for this decision.
 
 import hashlib
 import json
+import shutil
 from dataclasses import dataclass, replace
 from enum import Enum
 from pathlib import Path
@@ -139,7 +140,10 @@ def _migrate_backups(entries: dict[str, Entry], config: Config | None) -> None:
             continue
         cfg.backup_dir.mkdir(parents=True, exist_ok=True)
         destination = cfg.backup_dir / original_name
-        backup_file.rename(destination)
+        # shutil.move, not Path.rename: man_dir (XDG_DATA_HOME) and
+        # backup_dir (XDG_STATE_HOME) can be separate mounts, where a bare
+        # rename raises EXDEV.
+        shutil.move(backup_file, destination)
         entries[tool] = replace(entries[tool], backup=destination)
 
 
