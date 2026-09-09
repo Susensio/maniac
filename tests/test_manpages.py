@@ -283,3 +283,15 @@ def test_manpage_documents_matches_mdoc_title() -> None:
 
 def test_manpage_documents_no_title_is_false() -> None:
     assert manpage_documents("no macros here\n", "pandoc") is False
+
+
+def test_compression_suffixes_and_openers_cannot_drift() -> None:
+    """`_COMPRESSION_SUFFIXES` (the glob set) and `_opener_for` (the decompressor
+    picker) both read `_COMPRESSION_OPENERS`; pins that they cannot re-diverge
+    the way `_COMPRESSION_SUFFIXES` and `_opener_for` once did over `.lzma`."""
+    assert set(manpages._COMPRESSION_SUFFIXES) == {""} | set(
+        manpages._COMPRESSION_OPENERS
+    )
+    for suffix, opener in manpages._COMPRESSION_OPENERS.items():
+        assert manpages._opener_for(Path(f"tool.1{suffix}")) is opener
+    assert manpages._opener_for(Path("tool.1")) is open

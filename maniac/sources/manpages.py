@@ -26,7 +26,6 @@ REPO_MANPAGE_DIRS: tuple[tuple[str, ...], ...] = (
     ("docs",),
     ("share", "man"),
 )
-_COMPRESSION_SUFFIXES = ("", ".gz", ".bz2", ".xz", ".zst")
 
 
 def find_installed_manpage_path(man_bin: str, tool_name: str) -> Path | None:
@@ -255,21 +254,6 @@ def _iter_install_root_manpage_files(root: Path) -> Iterator[Path]:
             yield Path(path, filename)
 
 
-def _opener_for(path: Path) -> Callable[..., TextIO]:
-    """Pick the file opener for a plain or standard-compressed manpage."""
-    match path.suffix:
-        case ".gz":
-            return gzip.open
-        case ".bz2":
-            return bz2.open
-        case ".xz" | ".lzma":
-            return lzma.open
-        case ".zst":
-            return _zstd_open
-        case _:
-            return open
-
-
 def _zstd_open(path: Path, mode: str, *, encoding: str, errors: str) -> TextIO:
     """Decompress a `.zst` manpage for text reading.
 
@@ -282,6 +266,26 @@ def _zstd_open(path: Path, mode: str, *, encoding: str, errors: str) -> TextIO:
     decompressor = zstandard.ZstdDecompressor()
     stream = decompressor.stream_reader(path.open("rb"))
     return io.TextIOWrapper(stream, encoding=encoding, errors=errors)
+
+
+# Single source of truth for every compression format a manpage may be
+# stored in. `_opener_for` and `_COMPRESSION_SUFFIXES` both read this rather
+# than each keeping their own list, which is what let them drift apart
+# before (`.lzma` was openable but never matched by the glob).
+_COMPRESSION_OPENERS: dict[str, Callable[..., TextIO]] = {
+    ".gz": gzip.open,
+    ".bz2": bz2.open,
+    ".xz": lzma.open,
+    ".lzma": lzma.open,
+    ".zst": _zstd_open,
+}
+# "" for an uncompressed page, plus every suffix `_COMPRESSION_OPENERS` opens.
+_COMPRESSION_SUFFIXES = ("", *_COMPRESSION_OPENERS)
+
+
+def _opener_for(path: Path) -> Callable[..., TextIO]:
+    """Pick the file opener for a plain or standard-compressed manpage."""
+    return _COMPRESSION_OPENERS.get(path.suffix, open)
 
 
 def _read_prefix(path: Path) -> str:
