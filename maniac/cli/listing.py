@@ -24,8 +24,9 @@ axis and intersect across axes; no flags means no filtering. There is no
 no action.
 
 Upstream resolution (`git ls-remote` against an installation-derived clone
-URL, tier 2 of ADR-0016) is explicitly out of this pass's scope, split into
-its own backlog entry; this module makes no network call on any path.
+URL, tier 2 of ADR-0016) runs on every row per ADR-0018 -- a binary with no
+installation-derived repository makes no network call, but one that does
+is resolved regardless of what state `man` already gave it.
 """
 
 from collections.abc import Callable
@@ -48,7 +49,6 @@ from ..sources.manpages import (
     select_primary_manpage,
 )
 from ..sources.pathcache import resolve_cached
-from ..sources.providers.mise import MiseProvider
 from . import app, console, default_cfg
 from .render import _repo_cell
 
@@ -225,21 +225,9 @@ def _classify(
 def _resolve_upstream(
     provider: "Provider | None", inst: "Installation | None"
 ) -> RepoSource | None:
-    """Resolve `inst`'s upstream repository, offline only.
-
-    Every other provider's `resolve_source` is pure filesystem/subprocess
-    (verified by reading each implementation); mise's alone can fall back to
-    a network fetch of the cached Mise registry archive
-    (`discovery._query_mise_registry`) on a cache miss or a stale TTL.
-    `MiseProvider.resolve_source`'s `offline` keyword skips only that
-    fallback, keeping its local-config resolution (`.mise.backend.toml`,
-    `_resolve_from_mise`'s TOML scan) intact -- most of a mise-heavy
-    machine's binaries resolve from there alone (`docs/BACKLOG.md`).
-    """
+    """Resolve `inst`'s upstream repository."""
     if provider is None or inst is None:
         return None
-    if isinstance(provider, MiseProvider):
-        return provider.resolve_source(inst, offline=True)
     return provider.resolve_source(inst)
 
 

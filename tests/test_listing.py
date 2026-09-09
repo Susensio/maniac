@@ -2,6 +2,7 @@
 
 import io
 from pathlib import Path
+from urllib.error import URLError
 
 import pytest
 from rich.console import Console
@@ -25,6 +26,7 @@ from maniac.cli.listing import (
 from maniac.config import Config
 from maniac.manifest import Tier
 from maniac.models import Installation, RepoSource
+from maniac.sources import discovery
 from maniac.sources.providers import mise as mise_module
 
 runner = CliRunner()
@@ -543,7 +545,10 @@ def test_classify_managed_file_present_but_unreachable_by_man_is_not_managed(
     )
 
 
-# -- _resolve_upstream: offline-only, mise resolved from local config only --
+# -- _resolve_upstream: calls provider.resolve_source uniformly (mise's
+# registry fallback included) -- ADR-0018 lifted the offline gate, so this
+# now proves resolution still works end-to-end and still degrades to a
+# blank Upstream rather than crashing `list` when the network call fails.
 
 
 def test_resolve_upstream_calls_provider_resolve_source() -> None:
@@ -554,15 +559,12 @@ def test_resolve_upstream_calls_provider_resolve_source() -> None:
     assert _resolve_upstream(provider, inst) is source
 
 
-def test_resolve_upstream_mise_never_touches_the_network_and_still_resolves(
+def test_resolve_upstream_mise_resolves_from_local_config_without_offline_flag(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Proves ADR-0018's zero-network-I/O constraint: `urlopen` is made to
-    raise, and a full `_resolve_upstream` pass over a real `MiseProvider`
-    installation must still resolve the repo from mise's own local TOML
-    config, pure filesystem, without ever reaching `urlopen` -- what the
-    previous blanket `provider.name == "mise"` gate discarded along with
-    the network call it was avoiding.
+    """`list` no longer passes `offline=True` (ADR-0018 lifted); a real
+    `MiseProvider` installation with a local config match still resolves
+    from it, same as before the gate was lifted.
     """
     mise_dir = tmp_path / "config" / "mise"
     mise_dir.mkdir(parents=True)
@@ -570,11 +572,6 @@ def test_resolve_upstream_mise_never_touches_the_network_and_still_resolves(
         "[tool_alias]\nripgrep = 'github:private/rg'\n", encoding="utf-8"
     )
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
-
-    def exploding_urlopen(*args: object, **kwargs: object) -> None:
-        raise AssertionError("must not touch the network")
-
-    monkeypatch.setattr("maniac.sources.discovery.urlopen", exploding_urlopen)
 
     provider = mise_module.MiseProvider()
     inst = Installation(
@@ -592,18 +589,22 @@ def test_resolve_upstream_mise_never_touches_the_network_and_still_resolves(
     assert source == RepoSource(name="rg", target="private/rg", is_local=False)
 
 
-def test_resolve_upstream_mise_with_nothing_locally_resolvable_returns_none(
+def test_resolve_upstream_mise_registry_failure_degrades_to_none(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """No local config match: unresolved rather than falling through to the
-    registry -- the network path stays untaken even on a config miss.
+    """No local config match falls through to the mise registry (the gate
+    lifted); `urlopen` raising must not surface as a `list` crash --
+    `_read_mise_registry_archive` already catches `URLError`/`OSError`, so
+    the whole chain degrades to a blank Upstream, proving the property that
+    matters now that the network call actually happens.
     """
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "empty-config"))
 
-    def exploding_urlopen(*args: object, **kwargs: object) -> None:
-        raise AssertionError("must not touch the network")
+    def raising_urlopen(*args: object, **kwargs: object) -> None:
+        raise URLError("network unreachable")
 
-    monkeypatch.setattr("maniac.sources.discovery.urlopen", exploding_urlopen)
+    monkeypatch.setattr("maniac.sources.discovery.urlopen", raising_urlopen)
+    discovery._load_mise_registry.cache_clear()
 
     provider = mise_module.MiseProvider()
     inst = Installation(
@@ -617,6 +618,7 @@ def test_resolve_upstream_mise_with_nothing_locally_resolvable_returns_none(
     )
 
     assert _resolve_upstream(provider, inst) is None
+    discovery._load_mise_registry.cache_clear()
 
 
 def test_resolve_upstream_none_without_provider_or_installation() -> None:
