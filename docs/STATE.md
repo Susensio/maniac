@@ -52,7 +52,36 @@ The mise offline gate is gone. `list` calls `provider.resolve_source(inst)` unif
 Verified end to end on the development system: regenerating `aichat` produced a tag-matched clone at `v0.30.0` and a manifest entry recording `"version": "0.30.0"`, and the page renders correctly through `man`.
 
 **Unfinished:** `ty` was not regenerated. Four attempts returned `litellm.ServiceUnavailableError` — Gemini 503, "experiencing high demand" — so its entry still reads `version: null` and it cannot show `outdated`.
-Nothing is broken; the work simply did not complete. Re-run `maniac install --generate ty` when the API recovers.
+Nothing is broken; the work simply did not complete. Re-run plain `maniac install ty` when the API recovers.
+Use the unflagged form, not `--generate`: ADR-0016 orders the tiers authoritative-first, and tiers 1 and 2 record a version too, so forcing synthesis can only ever buy a worse page for an LLM call it did not need to spend.
+For these two tools specifically it makes no difference — `maniac install --no-generate ty aichat` reported no install-root or repository page for either, so tier 3 is genuinely the only path. That was checked rather than assumed.
 The pre-regeneration pages and manifest were snapshotted to the session scratchpad, which does not survive indefinitely — `ty`'s page on disk is untouched, so nothing needs restoring.
 
 `just check` passes: 384 tests.
+
+## ADR-0020: decided, unimplemented
+
+[ADR-0020](adr/0020-login-shell-path-refuse-contextual.md) was accepted this session and none of it is built. Read that record first; this section is only the work.
+
+Three pieces, in dependency order.
+
+**1. Take `$PATH` from a login shell.**
+`discovery.enumerate_installations` currently walks the inherited `$PATH`. It should walk the output of `$SHELL -lc 'printenv PATH'` run with `cwd=$HOME`.
+`printenv`, not `echo $PATH` — fish prints the list space-separated, and fish is installed here even though `$SHELL` is `/bin/bash`, so getting this wrong is reachable, not theoretical.
+Resolve once per process and thread it, rather than spawning a shell per binary; ~66 lookups at 57ms each would be catastrophic where one is free.
+Decide deliberately what happens when `$SHELL` is unset or the shell fails — ADR-0020's Consequences names container/CI as the unexamined case, so this should degrade to the inherited `$PATH` rather than crash, and say so.
+
+**2. Refuse a binary the login `$PATH` cannot reach.**
+In `install`, before any tier runs. The message must name the reason — reachable only from the current environment, and the page would be global and permanent — because a silent refusal is the failure ADR-0018 exists to correct.
+Note this is the one place the login `$PATH` is used as a *predicate* rather than as an enumeration source: a named tool is resolved by `find_installation`, which does not consult it.
+
+**3. Record `--version` for unclaimed synthesis.**
+When no provider claims the binary, `run_pipeline` currently passes `version=None` and the page reads `ok` forever. It should run `<tool> --version`, store the output verbatim, and treat any change as `outdated`. No parsing — change is the only question.
+Where this lands matters: `install_manpage` already takes a `version`, so the work is in `run_pipeline` deciding what to pass, alongside the ADR-0019 tag-matched path that already exists there.
+
+Not part of this work, and deliberately so: no `$PATH` fall-through past an unclaimed first hit, no origin-binary field on the manifest, and no fifth `ActionState`. Each was proposed during the discussion and rejected on the record — ADR-0020 says why, and re-proposing one should start by reading that.
+
+### Verification this needs
+
+The development system is a poor place to measure any of it: running through `uv run` inside this repository puts `.venv/bin` at the front of `$PATH`, which is the exact distortion ADR-0020 removes. Check from an installed entry point, or with the repo's venv off `$PATH`, or the result will describe the bug rather than the fix.
+The concrete before/after to look for: `ty` currently resolves to this repo's 0.0.75 dev dependency and is unclaimed; afterwards it should resolve to the mise-installed 0.0.78 and be claimed by the mise provider.
