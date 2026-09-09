@@ -129,28 +129,30 @@ man howdoi
 
 ### 2. Find Tools MANIAC Can Act On
 
-`status` reports three states by walking installer providers rather than scanning the manpath: *available* (a page ships in the install root, not yet installed -- zero cost), *missing* (no page anywhere -- needs synthesis, LLM cost), *managed* (MANIAC already installed it -- inventory only).
+`list` reports four states by checking manpage reachability: *ok* (a page resolves, nothing suggests it is stale), *outdated* (MANIAC installed it but the version no longer matches), *available* (nothing resolves, but a page can be had without LLM synthesis), *missing* (nothing resolves and no free page is known).
+The table carries four columns: Tool, State, Source, and Upstream.
 With no arguments, it reports every tool in your `$PATH`:
 
 ```bash
-maniac status
+maniac list
 ```
 
 Name tools explicitly to report on exactly those:
 
 ```bash
-maniac status hx uv bat
+maniac list hx uv bat
 ```
 
 ### 3. Bulk-Install via Piping
 
-There is no bulk install command: piping `status`'s output into `install` is the bulk path.
-Redirected to anything other than a terminal, `status` prints bare tool names, one per line, with no table, colour, or header:
+There is no bulk install command: piping `list`'s output into `install` is the bulk path.
+Redirected to anything other than a terminal, `list` prints bare tool names, one per line, with no table, colour, or header.
+Narrowing to actionable rows requires an explicit filter:
 
 ```bash
-maniac status | xargs maniac install
+maniac list --available --missing | xargs maniac install
 # or, equivalently
-maniac install $(maniac status)
+maniac install $(maniac list --available --missing)
 ```
 
 `install` with zero tool names exits quietly, so an empty expansion is harmless.
@@ -186,7 +188,7 @@ maniac eval howdoi --against-installed
 
 ### 5. Manage Installed Manpages
 
-`status` doubles as the inventory view -- a tool MANIAC manages is marked in its Owner column.
+`list` doubles as the inventory view -- a tool MANIAC manages reads `maniac` in its Source column, and `--managed` narrows to exactly those.
 Uninstall safely restores any vendor backup:
 
 ```bash
