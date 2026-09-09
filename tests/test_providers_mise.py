@@ -76,9 +76,10 @@ def test_resolve_source_wraps_resolve_from_mise(tmp_path: Path, monkeypatch) -> 
     assert inst is not None
     observed: dict[str, object] = {}
 
-    def fake_resolve(tool_id: str, binary_name: str) -> str:
+    def fake_resolve(tool_id: str, binary_name: str, *, offline: bool = False) -> str:
         observed["tool_id"] = tool_id
         observed["binary_name"] = binary_name
+        observed["offline"] = offline
         return "helix-editor/helix"
 
     monkeypatch.setattr(mise.discovery, "_resolve_from_mise", fake_resolve)
@@ -86,7 +87,7 @@ def test_resolve_source_wraps_resolve_from_mise(tmp_path: Path, monkeypatch) -> 
     source = provider.resolve_source(inst)
 
     assert source == RepoSource(name="hx", target="helix-editor/helix", is_local=False)
-    assert observed == {"tool_id": "helix", "binary_name": "hx"}
+    assert observed == {"tool_id": "helix", "binary_name": "hx", "offline": False}
 
 
 def test_resolve_source_returns_none_when_mise_registry_has_nothing(
@@ -202,6 +203,54 @@ def test_resolve_source_falls_back_to_the_registry_keyed_on_the_directory_name(
     # The registry only has an entry under the bare binary name, not the
     # installation-derived directory name -- restrictive resolution must miss.
     assert provider.resolve_source(inst) is None
+
+
+def test_resolve_source_offline_skips_the_registry_but_keeps_local_config(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """`offline=True` (ADR-0018) must never reach `_query_mise_registry` --
+    proven here by making it raise -- while a local `tool_alias`/`tools`
+    match still resolves.
+    """
+    bin_path = _make_mise_install(tmp_path, "ripgrep", "14.1.0", "rg")
+    provider = mise.MiseProvider()
+    inst = provider.detect(bin_path)
+    assert inst is not None
+    mise_dir = tmp_path / "config" / "mise"
+    mise_dir.mkdir(parents=True)
+    (mise_dir / "config.toml").write_text(
+        "[tool_alias]\nripgrep = 'github:private/rg'\n", encoding="utf-8"
+    )
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+
+    def fail_if_called(*args: object, **kwargs: object) -> None:
+        raise AssertionError("registry fallback must not run when offline")
+
+    monkeypatch.setattr(mise.discovery, "_query_mise_registry", fail_if_called)
+
+    source = provider.resolve_source(inst, offline=True)
+
+    assert source == RepoSource(name="rg", target="private/rg", is_local=False)
+
+
+def test_resolve_source_offline_returns_none_rather_than_query_the_registry(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """No local config match, `offline=True`: unresolved, not a registry query."""
+    bin_path = _make_mise_install(
+        tmp_path, "cargo-https-github-com-nushell-nufmt", "HEAD", "nufmt"
+    )
+    provider = mise.MiseProvider()
+    inst = provider.detect(bin_path)
+    assert inst is not None
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "empty-config"))
+
+    def fail_if_called(*args: object, **kwargs: object) -> None:
+        raise AssertionError("registry fallback must not run when offline")
+
+    monkeypatch.setattr(mise.discovery, "_query_mise_registry", fail_if_called)
+
+    assert provider.resolve_source(inst, offline=True) is None
 
 
 def test_local_docs_finds_manpage_under_install_root(tmp_path: Path) -> None:

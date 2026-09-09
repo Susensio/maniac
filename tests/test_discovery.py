@@ -287,6 +287,23 @@ def test_resolve_from_mise_checks_all_local_config_before_registry(
     assert _resolve_from_mise("rg", "rg") == "private/rg"
 
 
+def test_resolve_from_mise_offline_skips_the_registry(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """`offline=True` (ADR-0018's `maniac list`) must never reach
+    `_query_mise_registry` -- proven by making it raise -- even when local
+    config has nothing either.
+    """
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "empty-config"))
+
+    def fail_if_called(tool: str) -> str | None:
+        raise AssertionError("registry fallback must not run when offline")
+
+    monkeypatch.setattr(discovery, "_query_mise_registry", fail_if_called)
+
+    assert _resolve_from_mise("rg", "rg", offline=True) is None
+
+
 def test_parse_mise_registry_resolves_short_names_aliases_and_bins() -> None:
     entry = (
         b'backends = ["aqua:BurntSushi/ripgrep"]\n'

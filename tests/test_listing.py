@@ -25,6 +25,7 @@ from maniac.cli.listing import (
 from maniac.config import Config
 from maniac.manifest import Tier
 from maniac.models import Installation, RepoSource
+from maniac.sources.providers import mise as mise_module
 
 runner = CliRunner()
 
@@ -542,7 +543,7 @@ def test_classify_managed_file_present_but_unreachable_by_man_is_not_managed(
     )
 
 
-# -- _resolve_upstream: offline-only, mise gated out -------------------------
+# -- _resolve_upstream: offline-only, mise resolved from local config only --
 
 
 def test_resolve_upstream_calls_provider_resolve_source() -> None:
@@ -553,17 +554,67 @@ def test_resolve_upstream_calls_provider_resolve_source() -> None:
     assert _resolve_upstream(provider, inst) is source
 
 
-def test_resolve_upstream_gates_mise_out_without_calling_resolve_source() -> None:
-    """`MiseProvider.resolve_source` can fall back to a network fetch of the
-    Mise registry archive on a cache miss; this pass must make no network
-    call, so the mise provider is excluded here rather than risking it."""
+def test_resolve_upstream_mise_never_touches_the_network_and_still_resolves(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Proves ADR-0018's zero-network-I/O constraint: `urlopen` is made to
+    raise, and a full `_resolve_upstream` pass over a real `MiseProvider`
+    installation must still resolve the repo from mise's own local TOML
+    config, pure filesystem, without ever reaching `urlopen` -- what the
+    previous blanket `provider.name == "mise"` gate discarded along with
+    the network call it was avoiding.
+    """
+    mise_dir = tmp_path / "config" / "mise"
+    mise_dir.mkdir(parents=True)
+    (mise_dir / "config.toml").write_text(
+        "[tool_alias]\nripgrep = 'github:private/rg'\n", encoding="utf-8"
+    )
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
 
-    class _ExplodingMiseProvider(_FakeProvider):
-        def resolve_source(self, inst: Installation) -> RepoSource | None:
-            raise AssertionError("resolve_source must not be called for mise")
+    def exploding_urlopen(*args: object, **kwargs: object) -> None:
+        raise AssertionError("must not touch the network")
 
-    provider = _ExplodingMiseProvider(name="mise")
-    inst = _installation()
+    monkeypatch.setattr("maniac.sources.discovery.urlopen", exploding_urlopen)
+
+    provider = mise_module.MiseProvider()
+    inst = Installation(
+        binary="rg",
+        bin_path=tmp_path / "bin" / "rg",
+        real_path=tmp_path / "bin" / "rg",
+        provider="mise",
+        package="ripgrep",
+        version="14.1.0",
+        root=tmp_path / "installs" / "ripgrep" / "14.1.0",
+    )
+
+    source = _resolve_upstream(provider, inst)
+
+    assert source == RepoSource(name="rg", target="private/rg", is_local=False)
+
+
+def test_resolve_upstream_mise_with_nothing_locally_resolvable_returns_none(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No local config match: unresolved rather than falling through to the
+    registry -- the network path stays untaken even on a config miss.
+    """
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "empty-config"))
+
+    def exploding_urlopen(*args: object, **kwargs: object) -> None:
+        raise AssertionError("must not touch the network")
+
+    monkeypatch.setattr("maniac.sources.discovery.urlopen", exploding_urlopen)
+
+    provider = mise_module.MiseProvider()
+    inst = Installation(
+        binary="nufmt",
+        bin_path=tmp_path / "bin" / "nufmt",
+        real_path=tmp_path / "bin" / "nufmt",
+        provider="mise",
+        package="cargo-https-github-com-nushell-nufmt",
+        version="HEAD",
+        root=tmp_path / "installs" / "cargo-https-github-com-nushell-nufmt" / "HEAD",
+    )
 
     assert _resolve_upstream(provider, inst) is None
 

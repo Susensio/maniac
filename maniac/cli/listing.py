@@ -48,6 +48,7 @@ from ..sources.manpages import (
     select_primary_manpage,
 )
 from ..sources.pathcache import resolve_cached
+from ..sources.providers.mise import MiseProvider
 from . import app, console, default_cfg
 from .render import _repo_cell
 
@@ -226,16 +227,19 @@ def _resolve_upstream(
 ) -> RepoSource | None:
     """Resolve `inst`'s upstream repository, offline only.
 
-    `MiseProvider.resolve_source` falls back to the cached Mise registry
-    archive (`discovery._query_mise_registry`), which downloads on a cache
-    miss or a stale TTL -- a real, if infrequent, network call hidden
-    behind the `Provider` protocol's "may consult a registry" note. This
-    pass commits to making none, so the mise provider is gated out here
-    rather than risking it; every other provider's `resolve_source` is
-    pure filesystem/subprocess (verified by reading each implementation).
+    Every other provider's `resolve_source` is pure filesystem/subprocess
+    (verified by reading each implementation); mise's alone can fall back to
+    a network fetch of the cached Mise registry archive
+    (`discovery._query_mise_registry`) on a cache miss or a stale TTL.
+    `MiseProvider.resolve_source`'s `offline` keyword skips only that
+    fallback, keeping its local-config resolution (`.mise.backend.toml`,
+    `_resolve_from_mise`'s TOML scan) intact -- most of a mise-heavy
+    machine's binaries resolve from there alone (`docs/BACKLOG.md`).
     """
-    if provider is None or inst is None or provider.name == "mise":
+    if provider is None or inst is None:
         return None
+    if isinstance(provider, MiseProvider):
+        return provider.resolve_source(inst, offline=True)
     return provider.resolve_source(inst)
 
 

@@ -186,7 +186,9 @@ def _check_mise_toml(cfg_path: Path, tool_id: str, binary_name: str) -> str | No
     return None
 
 
-def _resolve_from_mise(tool_id: str, binary_name: str) -> str | None:
+def _resolve_from_mise(
+    tool_id: str, binary_name: str, *, offline: bool = False
+) -> str | None:
     """Infer a repository from Mise configuration files, then the registry.
 
     `tool_id` is looked up as-is -- no fallback to `binary_name` in the
@@ -194,6 +196,12 @@ def _resolve_from_mise(tool_id: str, binary_name: str) -> str | None:
     is `MiseProvider.resolve_source`, keying on the install directory name
     it detected, never a bare command-line name with no installation behind
     it (ADR-0015's ruling on Stage 2's gap).
+
+    `offline` skips `_query_mise_registry`, the one step here that can reach
+    the network (`_read_mise_registry_archive`'s `urlopen`, on a cache miss
+    or a stale TTL) -- `maniac list` (ADR-0018) sets it to keep that command
+    at zero network I/O; `install` leaves it at the default and may still
+    hit the network.
     """
     xdg_config = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
     mise_cfg_dir = xdg_config / "mise"
@@ -203,6 +211,8 @@ def _resolve_from_mise(tool_id: str, binary_name: str) -> str | None:
             if found:
                 return found
 
+    if offline:
+        return None
     return _query_mise_registry(tool_id)
 
 

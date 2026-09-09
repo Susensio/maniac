@@ -58,7 +58,14 @@ class MiseProvider:
             parent=_build_parent(bin_path, resolved, root),
         )
 
-    def resolve_source(self, inst: Installation) -> RepoSource | None:
+    def resolve_source(
+        self, inst: Installation, *, offline: bool = False
+    ) -> RepoSource | None:
+        """`offline`, used by `maniac list` (ADR-0018), skips only the mise-registry
+        network fallback inside `discovery._resolve_from_mise` -- the parent
+        delegation and `.mise.backend.toml` read below are pure filesystem
+        already, so neither branch needs it.
+        """
         if inst.parent is not None:
             provider = _find_provider(inst.parent.provider)
             return provider.resolve_source(inst.parent) if provider else None
@@ -70,7 +77,7 @@ class MiseProvider:
                 if repo
                 else None
             )
-        repo = discovery._resolve_from_mise(inst.package, inst.binary)
+        repo = discovery._resolve_from_mise(inst.package, inst.binary, offline=offline)
         return (
             RepoSource(name=inst.binary, target=repo, is_local=False) if repo else None
         )
