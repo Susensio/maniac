@@ -98,9 +98,10 @@ def test_cli_source_docs(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     monkeypatch.setattr(
         "maniac.sources.docs.fetch_and_extract_docs",
-        lambda source, cache_dir, **kwargs: [
-            DocFile(rel_path="README.md", content="Content")
-        ],
+        lambda source, cache_dir, **kwargs: (
+            [DocFile(rel_path="README.md", content="Content")],
+            False,
+        ),
     )
     result = runner.invoke(app, ["source", "docs", "mytool"])
     assert result.exit_code == 0
@@ -119,9 +120,10 @@ def test_cli_install_dry_run(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) ->
     )
     monkeypatch.setattr(
         "maniac.orchestration.pipeline.fetch_and_extract_docs",
-        lambda source, cache_dir, **kwargs: [
-            DocFile(rel_path="README.md", content="# Tool")
-        ],
+        lambda source, cache_dir, **kwargs: (
+            [DocFile(rel_path="README.md", content="# Tool")],
+            False,
+        ),
     )
 
     result = runner.invoke(

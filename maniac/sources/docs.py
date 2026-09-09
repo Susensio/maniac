@@ -72,24 +72,40 @@ def fetch_and_extract_docs(
     cache_dir: str | Path | None = None,
     max_total_chars: int = MAX_TOTAL_DOC_CHARS,
     config: Config | None = None,
-) -> list[DocFile]:
-    """Fetch repository (if remote and not cached) and extract prioritized documentation files."""
+    version: str | None = None,
+) -> tuple[list[DocFile], bool]:
+    """Fetch repository (if remote and not cached) and extract prioritized documentation files.
+
+    Returns the docs alongside whether they are version-matched. With
+    `version`, tries `resolve_repo_dir` at the tag naming it first (ADR-0019,
+    same path ADR-0016 tier 2 uses); the wiki (`_fetch_github_wiki_docs`)
+    stays in the context either way, since it carries no version of its own
+    to disagree with. Falling back to the default branch on no match, rather
+    than returning no docs, is what tier 2 refuses and tier 3 -- the last
+    resort -- does not: the page is still worth having, only the version
+    claim is not.
+    """
     cfg = config or Config()
     cache_dir_path = Path(cache_dir) if cache_dir is not None else cfg.cache_dir
-    target_path = resolve_repo_dir(source, cache_dir_path, cfg)
+    target_path = resolve_repo_dir(source, cache_dir_path, cfg, version=version)
+    matched = version is not None and target_path is not None
+    if target_path is None and version is not None:
+        target_path = resolve_repo_dir(source, cache_dir_path, cfg)
     if target_path is None:
-        return []
+        return [], False
 
     doc_files = extract_docs_from_dir(target_path, max_total_chars=max_total_chars)
     if source.is_local:
-        return doc_files
+        return doc_files, matched
 
     remaining_chars = max_total_chars - sum(len(doc.content) for doc in doc_files)
     if remaining_chars <= 0:
-        return doc_files
+        return doc_files, matched
 
-    return doc_files + _fetch_github_wiki_docs(
-        source, cache_dir_path, cfg, remaining_chars
+    return (
+        doc_files
+        + _fetch_github_wiki_docs(source, cache_dir_path, cfg, remaining_chars),
+        matched,
     )
 
 

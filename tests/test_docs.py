@@ -61,10 +61,11 @@ def test_fetch_and_extract_docs_local(tmp_path: Path) -> None:
         local_path=tmp_path,
     )
 
-    doc_files = fetch_and_extract_docs(source)
+    doc_files, matched = fetch_and_extract_docs(source)
     assert len(doc_files) == 1
     assert doc_files[0].rel_path == "README.md"
     assert doc_files[0].content == "# Local Project"
+    assert matched is False
 
 
 def test_fetch_and_extract_docs_includes_github_wiki(
@@ -86,8 +87,9 @@ def test_fetch_and_extract_docs_includes_github_wiki(
     monkeypatch.setattr(docs_module, "_clone_repository", fake_clone)
     source = RepoSource(name="tool", target="owner/tool", is_local=False)
 
-    doc_files = fetch_and_extract_docs(source, cache_dir=tmp_path)
+    doc_files, matched = fetch_and_extract_docs(source, cache_dir=tmp_path)
 
+    assert matched is False
     assert [(doc.rel_path, doc.content) for doc in doc_files] == [
         ("README.md", "# Repo"),
         ("wiki/Home.md", "# Wiki"),
@@ -107,8 +109,11 @@ def test_fetch_and_extract_docs_limits_repo_and_wiki_to_total_characters(
     (wiki_dir / "Home.md").write_text("abcdefgh", encoding="utf-8")
     source = RepoSource(name="tool", target="owner/tool", is_local=False)
 
-    doc_files = fetch_and_extract_docs(source, cache_dir=tmp_path, max_total_chars=10)
+    doc_files, matched = fetch_and_extract_docs(
+        source, cache_dir=tmp_path, max_total_chars=10
+    )
 
+    assert matched is False
     assert [doc.rel_path for doc in doc_files] == ["README.md", "wiki/Home.md"]
     assert sum(len(doc.content) for doc in doc_files) == 10
 
@@ -138,8 +143,9 @@ def test_fetch_and_extract_docs_git_error(
         target="test/remote_tool",
         is_local=False,
     )
-    docs = fetch_and_extract_docs(source, cache_dir=tmp_path)
+    docs, matched = fetch_and_extract_docs(source, cache_dir=tmp_path)
     assert docs == []
+    assert matched is False
 
 
 def test_discover_repo_manpage_local(tmp_path: Path) -> None:
@@ -197,8 +203,9 @@ def test_fetch_and_extract_docs_no_clone_url() -> None:
         is_local=True,
         local_path=Path("/nonexistent"),
     )
-    docs = fetch_and_extract_docs(source)
+    docs, matched = fetch_and_extract_docs(source)
     assert docs == []
+    assert matched is False
 
 
 def test_find_matching_tag_prefers_v_prefixed(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -290,6 +297,70 @@ def test_resolve_repo_dir_with_version_no_matching_tag_returns_none(
     source = RepoSource(name="tool", target="owner/tool", is_local=False)
 
     assert resolve_repo_dir(source, tmp_path, Config(), version="9.9.9") is None
+
+
+def test_fetch_and_extract_docs_with_version_matched_tag(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """ADR-0019: a matching upstream tag makes the docs version-matched."""
+    from maniac.sources import docs as docs_module
+
+    monkeypatch.setattr(
+        docs_module, "_find_matching_tag", lambda url, version, timeout: "v1.2.3"
+    )
+
+    def fake_clone(
+        clone_url: str, dest_dir: Path, cfg: object, **kwargs: object
+    ) -> bool:
+        dest_dir.mkdir()
+        (dest_dir / ".git").mkdir()
+        (dest_dir / "README.md").write_text("# Tagged", encoding="utf-8")
+        return True
+
+    monkeypatch.setattr(docs_module, "_clone_repository", fake_clone)
+    monkeypatch.setattr(docs_module, "_fetch_github_wiki_docs", lambda *a, **kw: [])
+    source = RepoSource(name="tool", target="owner/tool", is_local=False)
+
+    doc_files, matched = fetch_and_extract_docs(
+        source, cache_dir=tmp_path, version="1.2.3"
+    )
+
+    assert matched is True
+    assert [d.rel_path for d in doc_files] == ["README.md"]
+
+
+def test_fetch_and_extract_docs_with_version_falls_back_when_unmatched(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """ADR-0019: tier 3 falls back to the default branch on no matching tag --
+    unlike tier 2's `resolve_repo_dir`, which refuses -- and reports `matched`
+    False so the caller records no version rather than stamping one nobody
+    checked.
+    """
+    from maniac.sources import docs as docs_module
+
+    monkeypatch.setattr(
+        docs_module, "_find_matching_tag", lambda url, version, timeout: None
+    )
+
+    def fake_clone(
+        clone_url: str, dest_dir: Path, cfg: object, **kwargs: object
+    ) -> bool:
+        dest_dir.mkdir()
+        (dest_dir / ".git").mkdir()
+        (dest_dir / "README.md").write_text("# Default branch", encoding="utf-8")
+        return True
+
+    monkeypatch.setattr(docs_module, "_clone_repository", fake_clone)
+    monkeypatch.setattr(docs_module, "_fetch_github_wiki_docs", lambda *a, **kw: [])
+    source = RepoSource(name="tool", target="owner/tool", is_local=False)
+
+    doc_files, matched = fetch_and_extract_docs(
+        source, cache_dir=tmp_path, version="9.9.9"
+    )
+
+    assert matched is False
+    assert [d.rel_path for d in doc_files] == ["README.md"]
 
 
 def test_discover_repo_manpage_with_version_uses_the_tagged_checkout(

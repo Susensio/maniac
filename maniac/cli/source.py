@@ -54,7 +54,7 @@ def docs(
         console.print(
             f"[bold green]Discovered repository source:[/bold green] {source.target} (local={source.is_local})"
         )
-        doc_files = fetch_and_extract_docs(source, cache_dir=cache_dir)
+        doc_files, _ = fetch_and_extract_docs(source, cache_dir=cache_dir)
         console.print(
             f"[bold green]Found {len(doc_files)} documentation files:[/bold green]"
         )

@@ -12,7 +12,7 @@ from ..logging import logger
 from ..manifest import Tier
 from ..models import PipelineResult
 from ..sources.crawler import find_subcommands, format_help_block
-from ..sources.discovery import discover_repo
+from ..sources.discovery import discover_repo, find_installation
 from ..sources.docs import fetch_and_extract_docs, format_docs_section
 
 
@@ -52,12 +52,23 @@ def run_pipeline(
         if bin_dir is not None
         else discover_repo(tool_name)
     )
-    doc_files = (
+    # Resolved separately from `source` above: shares `find_installation`'s
+    # own bin-path resolution rather than `source`'s, since only the
+    # `Installation` carries the version tier-3 extraction needs to match a
+    # tag against (ADR-0019). A caller with an `Installation` already in
+    # hand (`run_install`'s tiers 1-2) has none to thread down when
+    # `--generate` skips straight to tier 3, so this stays self-contained.
+    found = find_installation(tool_name, bin_dir=bin_dir)
+    installed_version = found[1].version if found is not None else None
+    doc_files, version_matched = (
         fetch_and_extract_docs(
-            source, cache_dir=c_dir, max_total_chars=cfg.max_total_doc_chars
+            source,
+            cache_dir=c_dir,
+            max_total_chars=cfg.max_total_doc_chars,
+            version=installed_version,
         )
         if source is not None
-        else []
+        else ([], False)
     )
     docs_block = format_docs_section(doc_files)
 
@@ -132,7 +143,15 @@ def run_pipeline(
     installed_path = None
     if install and actual_roff_path and actual_roff_path.exists():
         installed_path = install_manpage(
-            actual_roff_path, tool_name, Tier.SYNTHESIS, selected_model, force=force
+            actual_roff_path,
+            tool_name,
+            Tier.SYNTHESIS,
+            selected_model,
+            force=force,
+            # `version_matched` -- not `installed_version is not None` -- is
+            # the recorded fact (ADR-0019): a page built from default-branch
+            # docs must record no version even though the binary has one.
+            version=installed_version if version_matched else None,
         )
 
     return PipelineResult(
