@@ -45,7 +45,7 @@ def main(
 
 
 # Imported for side effects: each module registers its commands on `app`.
-from . import evaluate, install, source, status, uninstall  # noqa: F401
+from . import evaluate, install, listing, source, uninstall  # noqa: F401
 
 # Re-exported for backward-compatible imports (tests, `python -m maniac.cli`).
 from .render import _render_eval_table, _repo_cell  # noqa: F401

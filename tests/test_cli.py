@@ -42,7 +42,7 @@ def test_cli_help() -> None:
     assert "source" in result.output
     assert "install" in result.output
     assert "eval" in result.output
-    assert "status" in result.output
+    assert "list" in result.output
 
 
 def test_repo_cell_links_known_repo_and_labels_unknown() -> None:

@@ -4,13 +4,19 @@ from pathlib import Path
 from typing import Any
 
 
-def _repo_cell(source: Any) -> Any:
-    """Render a discovered repository as a terminal link or an explicit fallback."""
+def _repo_cell(source: Any, *, blank_when_unresolvable: bool = False) -> Any:
+    """Render a discovered repository as a terminal link or an explicit fallback.
+
+    `blank_when_unresolvable` swaps the "Unknown" placeholder for an empty
+    cell (ADR-0018's `list`: blank means nothing was resolvable, the same
+    explanation a `missing` row's Source column carries). The eval table's
+    own caller omits the flag and keeps "Unknown" unchanged.
+    """
     from rich.style import Style
     from rich.text import Text
 
     if not source.is_local and source.target == source.name:
-        return Text("Unknown", style="dim")
+        return Text("" if blank_when_unresolvable else "Unknown", style="dim")
 
     clone_url = source.clone_url
     if clone_url is None:
