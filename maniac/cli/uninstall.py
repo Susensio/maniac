@@ -36,7 +36,11 @@ def compute_uninstall(
 
 def _render_uninstall(target_console: Any, outcome: UninstallOutcome) -> None:
     result = outcome.result
-    if not result.removed and result.foreign_kept is None:
+    if (
+        not result.removed
+        and result.foreign_kept is None
+        and result.modified_kept is None
+    ):
         target_console.print(
             f"[yellow]No installed manpage found for '{outcome.tool}'.[/yellow]"
         )
@@ -53,6 +57,13 @@ def _render_uninstall(target_console: Any, outcome: UninstallOutcome) -> None:
         target_console.print(
             f"[yellow]⚠ Left non-MANIAC manpage in place at "
             f"{result.foreign_kept} (not ours to remove).[/yellow]"
+        )
+
+    if result.modified_kept is not None:
+        target_console.print(
+            f"[yellow]⚠ Left {result.modified_kept} in place: MANIAC installed "
+            f"it, but its bytes have changed since. Use --force to remove it "
+            f"anyway.[/yellow]"
         )
 
 

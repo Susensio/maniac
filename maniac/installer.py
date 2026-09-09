@@ -135,8 +135,15 @@ class UninstallResult:
     """Outcome of an `uninstall_manpage()` call."""
 
     removed: list[Path] = field(default_factory=list)
-    # Set when a non-MANIAC page occupies the installed slot and was left in place.
+    # Set when no manifest entry names this tool: MANIAC never installed the
+    # occupying page, so it was left in place. Distinct from `modified_kept`
+    # below -- conflating the two told the caller a page MANIAC did install
+    # was foreign, which it was not.
     foreign_kept: Path | None = None
+    # Set when the manifest entry exists but the page's bytes no longer match
+    # the checksum taken at install: ours, but changed since, so left in
+    # place unless `--force` overrides the check.
+    modified_kept: Path | None = None
 
 
 def uninstall_manpage(
@@ -148,16 +155,18 @@ def uninstall_manpage(
     """Uninstall a MANIAC-generated manpage and restore backups if present.
 
     A recorded page whose current bytes no longer match the checksum taken
-    at install is treated as foreign -- left in place, reported via the
-    same `foreign_kept` a page absent from the manifest gets, never a
-    fourth state -- unless `force` overrides the check, mirroring
-    `install_manpage`'s own `--force`. A page missing entirely is not a
-    mismatch: it is the crash window the entry-before-copy ordering
-    deliberately creates, so its entry is forgotten, not flagged foreign.
+    at install is left in place unless `force` overrides the check,
+    mirroring `install_manpage`'s own `--force` -- but reported via
+    `modified_kept`, not `foreign_kept`: the manifest entry proves MANIAC
+    installed it (ADR-0017), so it is ours, only changed since. A page
+    missing entirely is not a mismatch: it is the crash window the
+    entry-before-copy ordering deliberately creates, so its entry is
+    forgotten, not flagged.
     """
     cfg = config or Config()
     removed_paths: list[Path] = []
     foreign_kept: Path | None = None
+    modified_kept: Path | None = None
 
     # 1. Active installed manpage, wherever the manifest says MANIAC put it --
     # the manifest's recorded path, not a `<tool>.1` guess, is what closes
@@ -171,7 +180,7 @@ def uninstall_manpage(
     elif not entry.path.exists():
         manifest.forget(tool_name, config=cfg)
     elif not force and manifest.checksum_of(entry.path) != entry.checksum:
-        foreign_kept = entry.path
+        modified_kept = entry.path
     else:
         installed_file = entry.path
         installed_file.unlink()
@@ -209,7 +218,9 @@ def uninstall_manpage(
             inter_prompt.unlink()
             removed_paths.append(inter_prompt)
 
-    return UninstallResult(removed=removed_paths, foreign_kept=foreign_kept)
+    return UninstallResult(
+        removed=removed_paths, foreign_kept=foreign_kept, modified_kept=modified_kept
+    )
 
 
 def list_installed_manpages(

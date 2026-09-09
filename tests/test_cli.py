@@ -313,6 +313,29 @@ def test_cli_uninstall_foreign_kept(
     assert "Left non-MANIAC manpage in place" in res.output
 
 
+def test_cli_uninstall_modified_kept(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A manifest-owned page whose bytes changed since install renders a
+    message distinct from `foreign_kept`'s -- it must say --force removes
+    it, and must not claim the file is non-MANIAC's."""
+    from maniac.cli.uninstall import compute_uninstall
+
+    modified_path = tmp_path / "man1" / "mytool.1"
+    monkeypatch.setattr(
+        "maniac.installer.uninstall_manpage",
+        lambda tool, purge, force, config: UninstallResult(modified_kept=modified_path),
+    )
+    outcome = compute_uninstall("mytool")
+    assert outcome.result.foreign_kept is None
+    assert outcome.result.modified_kept == modified_path
+
+    res = runner.invoke(app, ["uninstall", "mytool"])
+    assert res.exit_code == 0
+    assert "--force" in res.output
+    assert "non-MANIAC" not in res.output
+
+
 def test_cli_install_multiple_all_fail_exits_nonzero(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

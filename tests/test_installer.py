@@ -430,14 +430,16 @@ def test_uninstall_manpage_foreign_kept(tmp_path: Path) -> None:
     result = uninstall_manpage("tool", purge=False, config=cfg)
 
     assert result.foreign_kept == foreign_file
+    assert result.modified_kept is None
     assert foreign_file.exists()  # untouched
     assert stored_roff in result.removed
     assert not stored_roff.exists()
 
 
-def test_uninstall_manpage_checksum_mismatch_is_kept_foreign(tmp_path: Path) -> None:
-    """A recorded page whose bytes changed after install is treated as foreign:
-    reuses `foreign_kept`, no new state, no restore, no forget."""
+def test_uninstall_manpage_checksum_mismatch_is_kept_modified(tmp_path: Path) -> None:
+    """A recorded page whose bytes changed after install is ours, not foreign:
+    reported via `modified_kept`, distinct from `foreign_kept`, which stays
+    unset -- no new state, no restore, no forget."""
     man_dir = tmp_path / "man1"
     man_dir.mkdir(parents=True)
     backup_dir = tmp_path / "backups"
@@ -466,7 +468,8 @@ def test_uninstall_manpage_checksum_mismatch_is_kept_foreign(tmp_path: Path) -> 
 
     result = uninstall_manpage("tool", purge=False, config=cfg)
 
-    assert result.foreign_kept == installed_file
+    assert result.modified_kept == installed_file
+    assert result.foreign_kept is None
     assert result.removed == []
     assert (
         installed_file.read_text(encoding="utf-8")
@@ -477,7 +480,7 @@ def test_uninstall_manpage_checksum_mismatch_is_kept_foreign(tmp_path: Path) -> 
 
 
 def test_uninstall_manpage_force_overrides_checksum_mismatch(tmp_path: Path) -> None:
-    """`--force` removes a mismatched page anyway, mirroring `install_manpage --force`."""
+    """`--force` removes a modified page anyway, mirroring `install_manpage --force`."""
     man_dir = tmp_path / "man1"
     man_dir.mkdir(parents=True)
 
@@ -495,6 +498,7 @@ def test_uninstall_manpage_force_overrides_checksum_mismatch(tmp_path: Path) -> 
     result = uninstall_manpage("tool", purge=False, force=True, config=cfg)
 
     assert result.foreign_kept is None
+    assert result.modified_kept is None
     assert installed_file in result.removed
     assert not installed_file.exists()
     assert manifest_module.lookup("tool", config=cfg) is None
