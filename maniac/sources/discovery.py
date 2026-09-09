@@ -27,14 +27,21 @@ MISE_REGISTRY_TTL_SECONDS = 3_600
 
 
 def _resolve_bin_path(binary_name: str, bin_dir: str | Path | None) -> Path | None:
-    """Locate a binary's path: an explicit directory first, then `$PATH`."""
-    target_bin_dir = Path(bin_dir) if bin_dir else Path.home() / ".local" / "bin"
-    bin_path = target_bin_dir / binary_name
-    if not bin_path.exists():
-        which_path = shutil.which(binary_name)
-        if which_path:
-            bin_path = Path(which_path)
-    return bin_path if bin_path.exists() else None
+    """Locate a binary's path: an explicit directory first, then `$PATH`.
+
+    With no `bin_dir`, resolution is exactly `shutil.which` -- nothing
+    else. `enumerate_installations` applies the identical first-`$PATH`-
+    entry-wins rule in bulk, by walking `$PATH` itself once for every
+    name rather than calling `shutil.which` once per name; that walk, not
+    a second notion of "which binary a name means", is the only reason
+    the mechanics differ here.
+    """
+    if bin_dir is not None:
+        explicit_path = Path(bin_dir) / binary_name
+        if explicit_path.exists():
+            return explicit_path
+    which_path = shutil.which(binary_name)
+    return Path(which_path) if which_path else None
 
 
 def discover_repo(
@@ -54,16 +61,6 @@ def discover_repo(
     if bin_path is None:
         return None
     return _resolve_symlink_target(binary_name, bin_path)
-
-
-def discover_candidate_source(binary_name: str) -> RepoSource | None:
-    """Return a source proven by an installed executable, if one is available."""
-    which_path = shutil.which(binary_name)
-    if which_path is None:
-        return None
-    # Detection is no longer gated on a symlink (ADR-0015 Stage 4); each
-    # provider decides its own evidence.
-    return _resolve_symlink_target(binary_name, Path(which_path))
 
 
 def find_installation(
@@ -97,11 +94,11 @@ def enumerate_installations(
     binary that actually runs when two providers claim the same name
     (ADR-0016's tie-break).
 
-    `on_start`/`on_scan`, both `None` by default, mirror
-    `manpages.find_help_derived_manpages`'s instrumentation: `on_start` fires
-    once with the candidate count, right after the directory scan and before
-    the per-candidate `_detect_via_registry` loop that dominates the cost;
-    `on_scan` fires once per candidate processed in that loop.
+    `on_start`/`on_scan`, both `None` by default, split the work into two
+    phases to instrument: `on_start` fires once with the candidate count,
+    right after the directory scan and before the per-candidate
+    `_detect_via_registry` loop that dominates the cost; `on_scan` fires
+    once per candidate processed in that loop.
     """
     seen: dict[str, Path] = {}
     for entry in os.environ.get("PATH", "").split(os.pathsep):

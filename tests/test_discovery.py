@@ -7,7 +7,7 @@ from urllib.request import Request
 import pytest
 import zstandard
 
-from maniac.models import Installation, RepoSource
+from maniac.models import Installation
 from maniac.sources import discovery
 from maniac.sources.discovery import (
     _check_mise_toml,
@@ -17,7 +17,6 @@ from maniac.sources.discovery import (
     _parse_mise_registry,
     _read_mise_registry_archive,
     _resolve_from_mise,
-    discover_candidate_source,
     discover_repo,
     enumerate_installations,
 )
@@ -99,14 +98,30 @@ def test_discover_repo_fallback(monkeypatch, tmp_path: Path) -> None:
     assert discover_repo("nonexistent_unknown_tool", bin_dir=tmp_path) is None
 
 
+def test_discover_repo_has_no_implicit_local_bin_default(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """With no explicit `bin_dir`, resolution is `$PATH` (`shutil.which`)
+    alone -- a binary sitting where the old default pointed, `~/.local/bin`,
+    is not picked up just because it is there.
+    """
+    fake_home = tmp_path / "home"
+    decoy_dir = fake_home / ".local" / "bin"
+    decoy_dir.mkdir(parents=True)
+    (decoy_dir / "tool").touch()
+    monkeypatch.setenv("HOME", str(fake_home))
+    monkeypatch.setattr(discovery.shutil, "which", lambda name: None)
+
+    assert discover_repo("tool") is None
+
+
 def test_discover_repo_does_not_use_the_registry_without_an_installation(
     monkeypatch, tmp_path: Path
 ) -> None:
     """ADR-0015's ruling on Stage 2's gap: name-only registry matching is gone
-    everywhere, not only from `discover_candidate_source`. A binary with no
-    detected installation stays unresolved even where the registry would
-    have matched it by bare name -- this is `discover_repo("envsubst")`
-    ceasing to return "a8m/envsubst".
+    everywhere. A binary with no detected installation stays unresolved even
+    where the registry would have matched it by bare name -- this is
+    `discover_repo("envsubst")` ceasing to return "a8m/envsubst".
     """
     monkeypatch.setattr(discovery.shutil, "which", lambda name: None)
     monkeypatch.setattr(
@@ -116,40 +131,6 @@ def test_discover_repo_does_not_use_the_registry_without_an_installation(
     )
 
     assert discover_repo("envsubst", bin_dir=tmp_path) is None
-
-
-def test_discover_candidate_source_does_not_guess_from_a_system_binary(
-    monkeypatch, tmp_path: Path
-) -> None:
-    system_binary = tmp_path / "fmt"
-    system_binary.touch()
-    monkeypatch.setattr(discovery.shutil, "which", lambda name: str(system_binary))
-    monkeypatch.setattr(discovery, "_load_mise_registry", lambda: {"fmt": "wrong/fmt"})
-
-    assert discover_candidate_source("fmt") is None
-
-
-def test_discover_candidate_source_delegates_to_the_provider_registry(
-    monkeypatch, tmp_path: Path
-) -> None:
-    target = tmp_path / "target"
-    target.touch()
-    binary = tmp_path / "candidate"
-    binary.symlink_to(target)
-    monkeypatch.setattr(discovery.shutil, "which", lambda name: str(binary))
-    observed: dict[str, object] = {}
-
-    def resolve(name: str, path: Path) -> RepoSource:
-        observed["name"] = name
-        observed["path"] = path
-        return RepoSource(name=name, target="owner/tool", is_local=False)
-
-    monkeypatch.setattr(discovery, "_resolve_symlink_target", resolve)
-
-    source = discover_candidate_source("candidate")
-    assert source is not None
-    assert source.target == "owner/tool"
-    assert observed == {"name": "candidate", "path": binary}
 
 
 def _fake_installation(binary: str) -> Installation:
