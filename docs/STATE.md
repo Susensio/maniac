@@ -26,8 +26,8 @@ ADR-0018 commits to going further and checking upstream for a page at a matching
 So `available` currently means "a page ships in the install root", never "upstream has one".
 
 Mise is the one provider whose `resolve_source` can reach the network, through `_query_mise_registry`'s registry fallback on a cache miss.
-It is called with `offline=True` from `list` only, so the local `.mise.backend.toml` scan still runs and the registry fallback is skipped; `install` is unchanged and may still use the network.
-A test pins this by making `urlopen` raise and asserting a full pass still resolves.
+It was initially called with `offline=True` from `list`, to hold the offline property this pass was scoped around; that gate was lifted shortly after — see the ADR-0019 section below, which records what replaced it.
+The `offline` parameter itself stays on `_resolve_from_mise` and `MiseProvider.resolve_source`, unused by `list` but tested, because ADR-0018's deferred tier-2 work has to decide about it deliberately.
 
 ### Behaviour change worth knowing
 
@@ -37,10 +37,22 @@ More generally, two machines with identical binaries and different `MANPATH` set
 
 ### Verified
 
-`just check` passes: 379 tests, ~14s.
-Live on the development system, 70 rows: 5 `ok`, 0 `outdated`, 14 `available`, 51 `missing`, with 45 of 70 carrying an Upstream.
-A full run makes no network call, confirmed by making `discovery.urlopen` raise and observing the run complete with Upstream still populated.
-Wall clock is ~3.5-3.8s for the full CLI invocation (~3.0-3.3s in `compute_rows`), against ~1.4-1.6s for the `$PATH` walk alone.
+Measured at the point the offline core landed, before the gate was lifted: 70 rows, 5 `ok`, 0 `outdated`, 14 `available`, 51 `missing`, 45 of 70 carrying an Upstream, no network call at all, ~3.5-3.8s for a full CLI invocation (~3.0-3.3s in `compute_rows`) against ~1.4-1.6s for the `$PATH` walk alone.
+Those figures were taken through `uv run` inside this repo, where `.venv/bin` shadows some real binaries — `docs/BACKLOG.md` records the caveat and the resolver divergence behind it.
 
-`outdated` reads 0 and cannot currently be anything else on this machine: both live manifest entries predate the version field, and the tier-3 synthesis path still records no version at all.
-Both are backlog entries. The state itself is reachable and tested — it is the data that is missing, not the code.
+## ADR-0019: implemented, one page left to regenerate
+
+[ADR-0019](adr/0019-earn-synthesized-page-version.md) closed the gap ADR-0018 left: tier-3 synthesis extracted repository documentation from the default branch while claiming to document the installed binary's version.
+Tier 3 now resolves and clones the matching tag, records the version when one is found, and records none when it is not.
+`fetch_and_extract_docs` returns `(docs, matched)` so the "was it tag-matched" fact has a single source of truth rather than being inferred from `inst.version`.
+
+The mise offline gate is gone. `list` calls `provider.resolve_source(inst)` uniformly, so the registry fallback may reach the network; measured at 45→49 of 70 rows gaining an Upstream, one ~90KB fetch per run, `timeout=10` already configured, and every failure mode degrading to a blank Upstream rather than erroring.
+`list` is therefore no longer guaranteed offline, which is what ADR-0018 anticipated and accepted.
+
+Verified end to end on the development system: regenerating `aichat` produced a tag-matched clone at `v0.30.0` and a manifest entry recording `"version": "0.30.0"`, and the page renders correctly through `man`.
+
+**Unfinished:** `ty` was not regenerated. Four attempts returned `litellm.ServiceUnavailableError` — Gemini 503, "experiencing high demand" — so its entry still reads `version: null` and it cannot show `outdated`.
+Nothing is broken; the work simply did not complete. Re-run `maniac install --generate ty` when the API recovers.
+The pre-regeneration pages and manifest were snapshotted to the session scratchpad, which does not survive indefinitely — `ty`'s page on disk is untouched, so nothing needs restoring.
+
+`just check` passes: 384 tests.
