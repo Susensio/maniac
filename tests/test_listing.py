@@ -775,6 +775,58 @@ def test_grouped_for_display_key_includes_source_and_upstream() -> None:
     assert len(_grouped_for_display(rows)) == 2
 
 
+def test_grouped_for_display_siblings_collapse_despite_differing_reposource_name() -> (
+    None
+):
+    """Siblings resolving to one repository collapse, though each `RepoSource`
+    carries its own binary name.
+
+    Observed live: `pandoc`, `pandoc-lua` and `pandoc-server` all render
+    `jgm/pandoc` in Upstream but rendered as three rows, because the group
+    key included `RepoSource.name` -- a field the table never shows.
+    """
+    rows = [
+        ToolRow(
+            tool=name,
+            package="pandoc",
+            provider="mise",
+            state=ActionState.AVAILABLE,
+            source=PageSource.INSTALL_ROOT,
+            upstream=RepoSource(name=name, target="jgm/pandoc", is_local=False),
+        )
+        for name in ("pandoc", "pandoc-lua", "pandoc-server")
+    ]
+
+    grouped = _grouped_for_display(rows)
+    assert len(grouped) == 1
+    assert grouped[0][0] == "pandoc (3 binaries)"
+
+
+def test_grouped_for_display_differing_upstream_targets_still_split() -> None:
+    """The collapse above must not go too far: a different rendered target
+    is a visible difference and still separates rows."""
+    rows = [
+        ToolRow(
+            tool="pandoc",
+            package="pandoc",
+            provider="mise",
+            state=ActionState.AVAILABLE,
+            source=PageSource.INSTALL_ROOT,
+            upstream=RepoSource(name="pandoc", target="jgm/pandoc", is_local=False),
+        ),
+        ToolRow(
+            tool="pandoc-lua",
+            package="pandoc",
+            provider="mise",
+            state=ActionState.AVAILABLE,
+            source=PageSource.INSTALL_ROOT,
+            upstream=RepoSource(name="pandoc-lua", target="other/fork", is_local=False),
+        ),
+    ]
+
+    assert len(_grouped_for_display(rows)) == 2
+
+
 # -- Rendering -----------------------------------------------------------------
 
 

@@ -321,11 +321,20 @@ def _bare_names(rows: list[ToolRow]) -> list[str]:
     return list(seen)
 
 
-def _upstream_key(upstream: RepoSource | None) -> tuple[str, str, bool] | None:
-    """Hashable identity of a `RepoSource`, standing in for the object itself in a dict key."""
+def _upstream_key(upstream: RepoSource | None) -> tuple[str, bool] | None:
+    """Hashable identity of a `RepoSource` by what the Upstream column renders.
+
+    `RepoSource.name` is deliberately excluded: it carries the *binary*
+    name, which is never displayed, so including it split groups that
+    render identically. `pandoc`, `pandoc-lua` and `pandoc-server` all
+    resolve to `jgm/pandoc` and showed as three separate rows purely
+    because their `name` fields differed. Two rows may collapse only when
+    every cell a reader can see agrees, so the key is exactly the rendered
+    cell and nothing behind it.
+    """
     if upstream is None:
         return None
-    return (upstream.name, upstream.target, upstream.is_local)
+    return (upstream.target, upstream.is_local)
 
 
 def _grouped_for_display(rows: list[ToolRow]) -> list[tuple[str, ToolRow]]:
