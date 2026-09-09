@@ -35,6 +35,51 @@ def test_record_lookup_forget_round_trip(tmp_path: Path) -> None:
     assert manifest.lookup("tool", config=cfg) is None
 
 
+def test_record_lookup_round_trip_preserves_version(tmp_path: Path) -> None:
+    cfg = _config(tmp_path)
+    page = tmp_path / "man1" / "tool.1"
+
+    manifest.record(
+        "tool",
+        page,
+        Tier.INSTALL_ROOT,
+        "install-root-source",
+        "abc123",
+        config=cfg,
+        version="1.2.3",
+    )
+    entry = manifest.lookup("tool", config=cfg)
+    assert entry is not None
+    assert entry.version == "1.2.3"
+
+
+def test_row_missing_version_key_loads_as_none(tmp_path: Path) -> None:
+    """A row written before the field existed reads version=None, not dropped or raised (ADR-0018)."""
+    cfg = _config(tmp_path)
+    cfg.manifest_path.parent.mkdir(parents=True)
+    cfg.manifest_path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "entries": {
+                    "tool": {
+                        "path": "/x/tool.1",
+                        "tier": "synthesis",
+                        "source": "m",
+                        "checksum": "abc123",
+                        "backup": None,
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    entries = manifest.load(config=cfg)
+    assert set(entries) == {"tool"}
+    assert entries["tool"].version is None
+
+
 def test_forget_missing_tool_is_a_noop(tmp_path: Path) -> None:
     cfg = _config(tmp_path)
     manifest.forget("nonexistent", config=cfg)  # must not raise

@@ -134,7 +134,12 @@ def _try_install_root(
         return None
 
     installed_path = install_manpage(
-        page, inst.binary, Tier.INSTALL_ROOT, str(inst.root), force=force
+        page,
+        inst.binary,
+        Tier.INSTALL_ROOT,
+        str(inst.root),
+        force=force,
+        version=inst.version,
     )
     detail = "upstream manpage from install root"
     if inst.version:
@@ -188,7 +193,12 @@ def _try_repository(
         return None
 
     installed_path = install_manpage(
-        page, inst.binary, Tier.REPOSITORY, source.target, force=force
+        page,
+        inst.binary,
+        Tier.REPOSITORY,
+        source.target,
+        force=force,
+        version=inst.version,
     )
     detail = f"upstream manpage from repository ({inst.version})   [no synthesis]"
     return InstallOutcome(

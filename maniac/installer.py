@@ -53,6 +53,8 @@ def install_manpage(
     source: str,
     target_dir: str | Path | None = None,
     force: bool = False,
+    *,
+    version: str | None = None,
 ) -> Path:
     """Copy compiled roff manpage into man directory with conflict guard and backup.
 
@@ -99,7 +101,9 @@ def install_manpage(
     # Recorded before the copy: a crash between the two leaves a manifest
     # entry with no file, which `status` can detect, rather than a file on
     # disk that nothing can ever attribute (ADR-0017).
-    manifest.record(tool, dest_file, tier, source, checksum, backup=backup_path)
+    manifest.record(
+        tool, dest_file, tier, source, checksum, backup=backup_path, version=version
+    )
     try:
         shutil.copy2(src, dest_file)
     except Exception:
@@ -107,6 +111,9 @@ def install_manpage(
             # A reinstall over our own page failed mid-copy: restore the
             # prior entry rather than forgetting it outright, or its
             # vendor backup (still on disk, still valid) becomes orphaned.
+            # previous_entry.version, not the new `version` param: the copy
+            # never happened, so the old page (and the version it documents)
+            # is still what's on disk.
             manifest.record(
                 tool,
                 previous_entry.path,
@@ -114,6 +121,7 @@ def install_manpage(
                 previous_entry.source,
                 previous_entry.checksum,
                 backup=previous_entry.backup,
+                version=previous_entry.version,
             )
         else:
             manifest.forget(tool)

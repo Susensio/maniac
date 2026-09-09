@@ -16,6 +16,9 @@ from typing import Any
 
 from .config import Config
 
+# Unbumped for the `version` field (ADR-0018): a mismatch here empties the
+# whole manifest on load, and an absent `version` already reads None on its
+# own -- no migration is needed to make a missing key readable.
 SCHEMA_VERSION = 1
 _CHUNK_SIZE = 65_536
 
@@ -38,6 +41,9 @@ class Entry:
     `checksum` is the sha256 hex digest taken from the source file before
     the copy that installed it -- `shutil.copy2` is byte-identical, so it
     is also the installed file's digest.
+    `version` is the tool version the page documents, None where nothing
+    was known to record -- including every entry written before this field
+    existed (ADR-0018).
     """
 
     path: Path
@@ -45,6 +51,7 @@ class Entry:
     source: str
     checksum: str
     backup: Path | None = None
+    version: str | None = None
 
 
 def checksum_of(path: str | Path) -> str:
@@ -67,6 +74,7 @@ def _entry_to_row(entry: Entry) -> dict[str, Any]:
         "source": entry.source,
         "checksum": entry.checksum,
         "backup": str(entry.backup) if entry.backup is not None else None,
+        "version": entry.version,
     }
 
 
@@ -86,6 +94,9 @@ def _row_to_entry(row: Any) -> Entry | None:
             source=row["source"],
             checksum=row["checksum"],
             backup=Path(backup) if backup is not None else None,
+            # .get, not []: absent on every row written before this field
+            # existed (ADR-0018), and that must read as None, not fail to parse.
+            version=row.get("version"),
         )
     except (KeyError, TypeError, ValueError):
         return None
@@ -204,12 +215,19 @@ def record(
     checksum: str,
     backup: Path | None = None,
     config: Config | None = None,
+    *,
+    version: str | None = None,
 ) -> None:
     """Record `tool`'s installed page. Called before the copy that places it, per ADR-0017."""
     manifest_path = _manifest_path(config)
     entries = load(config)
     entries[tool] = Entry(
-        path=Path(path), tier=tier, source=source, checksum=checksum, backup=backup
+        path=Path(path),
+        tier=tier,
+        source=source,
+        checksum=checksum,
+        backup=backup,
+        version=version,
     )
     _save(manifest_path, entries)
 

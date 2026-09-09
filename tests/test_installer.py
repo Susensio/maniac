@@ -209,6 +209,53 @@ def test_install_manpage_reinstall_copy_failure_restores_prior_entry(
     assert entry.backup.exists()
 
 
+def test_install_manpage_reinstall_copy_failure_restores_prior_version(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The restore path carries the previous entry's version forward, not the
+    new install's -- the copy never happened, so the old page (and the version
+    it documents) is still what's on disk (ADR-0018)."""
+    target_dir = tmp_path / "man1"
+    target_dir.mkdir(parents=True)
+    existing_dest = target_dir / "tool.1"
+    existing_dest.write_text(".TH TOOL 1 Official vendor doc", encoding="utf-8")
+
+    src_file = tmp_path / "src" / "tool.1"
+    src_file.parent.mkdir(parents=True)
+    src_file.write_text(".TH TOOL 1 v1", encoding="utf-8")
+
+    install_manpage(
+        src_file,
+        "tool",
+        Tier.SYNTHESIS,
+        "model-v1",
+        target_dir=target_dir,
+        force=True,
+        version="1.0",
+    )
+
+    def _boom(*args: object, **kwargs: object) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr("maniac.installer.shutil.copy2", _boom)
+
+    src_file.write_text(".TH TOOL 1 v2", encoding="utf-8")
+    with pytest.raises(OSError):
+        install_manpage(
+            src_file,
+            "tool",
+            Tier.SYNTHESIS,
+            "model-v2",
+            target_dir=target_dir,
+            force=False,
+            version="2.0",
+        )
+
+    entry = manifest_module.lookup("tool")
+    assert entry is not None
+    assert entry.version == "1.0"
+
+
 def test_install_manpage_copy_failure_forgets_manifest_entry(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
