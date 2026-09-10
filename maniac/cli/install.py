@@ -12,7 +12,7 @@ from typing import Annotated, Any
 import typer
 
 from ..exceptions import ManiacError
-from ..orchestration.install import InstallOutcome
+from ..orchestration.install import InstallOutcome, InstallRefused
 from . import app, console, default_cfg
 from .options import (
     CacheDirOption,
@@ -101,6 +101,10 @@ def install(
                     dry_run=dry_run,
                 )
             _render_install(console, outcome)
+        except InstallRefused as e:
+            # A refusal, not a failure: no tier ran, so nothing failed --
+            # rendered like the tier=None case above, not like an error.
+            console.print(f"[yellow]{tool}   {e}[/yellow]")
         except (OSError, RuntimeError, ManiacError) as e:
             console.print(f"[bold red]Install failed for {tool}: {e}[/bold red]")
             failures += 1

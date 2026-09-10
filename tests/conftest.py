@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 
 import maniac.config as config_module
+from maniac.sources.loginpath import login_path
 from maniac.sources.pathcache import resolve_cached
 
 
@@ -12,8 +13,13 @@ def _clear_resolve_cache() -> None:
     a resolution across tests if two ever produced the same `Path` string
     for different underlying filesystem state (unlikely given `tmp_path` is
     unique per test, but cheap to rule out).
+
+    `login_path` is cleared alongside it for the same reason: also
+    process-lifetime, and a test that patches `$SHELL` or `os.environ` would
+    otherwise see a prior test's cached result instead of its own.
     """
     resolve_cached.cache_clear()
+    login_path.cache_clear()
 
 
 @pytest.fixture(autouse=True)
