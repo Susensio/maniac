@@ -1,5 +1,5 @@
 [providers]              # declaration order is sniffing precedence
-gemini    = "gemini/gemini-flash-latest"
+gemini    = "gemini/gemini-3.7-flash"
 anthropic = "anthropic/claude-sonnet-4-6"
 openai    = "openai/gpt-5.1-chat-latest"
 
