@@ -99,7 +99,7 @@ def run_install(
         found = discovery.find_installation(tool_name, bin_dir=bin_dir)
         if found is not None:
             provider, inst = found
-            outcome = _try_install_root(provider, inst, force=force)
+            outcome = _try_install_root(provider, inst, cfg=cfg, force=force)
             if outcome is not None:
                 return outcome
             outcome = _try_repository(
@@ -154,7 +154,7 @@ def run_install(
 
 
 def _try_install_root(
-    provider: Provider, inst: Installation, *, force: bool
+    provider: Provider, inst: Installation, *, cfg: Config, force: bool
 ) -> InstallOutcome | None:
     """Tier 1: a page already inside the install root, the installed version by construction."""
     page = select_primary_manpage(provider.local_docs(inst), inst.binary)
@@ -168,6 +168,7 @@ def _try_install_root(
         str(inst.root),
         force=force,
         version=inst.version,
+        config=cfg,
     )
     detail = "upstream manpage from install root"
     if inst.version:
@@ -227,6 +228,7 @@ def _try_repository(
         source.target,
         force=force,
         version=inst.version,
+        config=cfg,
     )
     detail = f"upstream manpage from repository ({inst.version})   [no synthesis]"
     return InstallOutcome(

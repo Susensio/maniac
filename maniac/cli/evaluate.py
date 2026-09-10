@@ -15,25 +15,28 @@ from typing import Annotated, Any
 
 import typer
 
+from ..config import Config
 from ..exceptions import ManiacError
 from ..models import ComparisonResult, EvaluationResult
-from . import app, console, default_cfg
+from . import app, console, get_config
 from .options import ModelOption
 from .render import _render_comparison, _render_eval_table
 
 
 def _resolve_manpage_and_context(
-    tool: str, manpage_file: Path | None, context_file: Path | None
+    tool: str,
+    manpage_file: Path | None,
+    context_file: Path | None,
+    config: Config | None = None,
 ) -> tuple[Path, Path]:
+    cfg = config or Config()
     manpage = (
-        manpage_file
-        if manpage_file is not None
-        else default_cfg.output_dir / f"{tool}.1.md"
+        manpage_file if manpage_file is not None else cfg.output_dir / f"{tool}.1.md"
     )
     context = (
         context_file
         if context_file is not None
-        else default_cfg.intermediate_dir / f"{tool}_context.md"
+        else cfg.intermediate_dir / f"{tool}_context.md"
     )
     return manpage, context
 
@@ -53,10 +56,11 @@ def compute_eval(
     context_file: Path | None = None,
     model: str | None = None,
     min_score: int = 70,
+    config: Config | None = None,
 ) -> EvalOutcome:
     """Score a generated manpage against its extracted context. Never raises."""
     target_manpage, target_context = _resolve_manpage_and_context(
-        tool, manpage_file, context_file
+        tool, manpage_file, context_file, config
     )
 
     if not target_manpage.exists():
@@ -75,6 +79,7 @@ def compute_eval(
             context_text=target_context.read_text(encoding="utf-8"),
             model=model,
             pass_threshold=min_score,
+            config=config,
         )
     except (OSError, RuntimeError, ManiacError) as e:
         return EvalOutcome(tool=tool, error=str(e))
@@ -116,10 +121,11 @@ def compute_compare(
     context_file: Path | None = None,
     model: str | None = None,
     min_score: int = 70,
+    config: Config | None = None,
 ) -> CompareOutcome:
     """Judge a generated manpage against the one installed on this system. Never raises."""
     target_manpage, target_context = _resolve_manpage_and_context(
-        tool, manpage_file, context_file
+        tool, manpage_file, context_file, config
     )
 
     if not target_manpage.exists():
@@ -157,6 +163,7 @@ def compute_compare(
             context_text=target_context.read_text(encoding="utf-8"),
             model=model,
             pass_threshold=min_score,
+            config=config,
         )
     except (OSError, RuntimeError, ManiacError) as e:
         return CompareOutcome(tool=tool, error=str(e))
@@ -177,6 +184,7 @@ def _render_compare_outcome(target_console: Any, outcome: CompareOutcome) -> Non
 
 @app.command("eval")
 def eval_cmd(
+    ctx: typer.Context,
     tool: Annotated[str, typer.Argument(help="Name of the tool to evaluate.")],
     manpage_file: Annotated[
         Path | None,
@@ -210,7 +218,7 @@ def eval_cmd(
     if against_installed:
         with console.status(f"[bold green]Comparing manpages for {tool}..."):
             compare_outcome = compute_compare(
-                tool, manpage_file, context_file, model, min_score
+                tool, manpage_file, context_file, model, min_score, get_config(ctx)
             )
 
         _render_compare_outcome(console, compare_outcome)
@@ -220,7 +228,9 @@ def eval_cmd(
         return
 
     with console.status(f"[bold green]Evaluating manpage for {tool}..."):
-        outcome = compute_eval(tool, manpage_file, context_file, model, min_score)
+        outcome = compute_eval(
+            tool, manpage_file, context_file, model, min_score, get_config(ctx)
+        )
 
     _render_eval_outcome(console, outcome)
 

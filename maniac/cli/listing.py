@@ -50,7 +50,7 @@ from ..sources.manpages import (
     select_primary_manpage,
 )
 from ..sources.pathcache import resolve_cached
-from . import app, console, default_cfg
+from . import app, console, get_config
 from .render import _repo_cell
 
 if TYPE_CHECKING:
@@ -207,7 +207,7 @@ def _classify(
         # that is owned, carries a recorded version, and has no
         # `Installation` may pay for the subprocess this triggers.
         if owned and entry is not None and entry.version is not None and inst is None:
-            current_version = get_version([tool])
+            current_version = get_version([tool], config=cfg)
         else:
             current_version = inst.version if inst is not None else None
 
@@ -271,7 +271,7 @@ def compute_rows(
     rather than batched, since `man -w a b c` only prints found pages and
     their basenames do not map back to query names.
     """
-    cfg = config or default_cfg
+    cfg = config or Config()
 
     if tools:
         unique_tools = list(dict.fromkeys(tools))
@@ -483,6 +483,7 @@ def _render_list(
 
 @app.command(name="list")
 def list_tools(
+    ctx: typer.Context,
     tools: Annotated[
         list[str] | None,
         typer.Argument(
@@ -525,6 +526,7 @@ def list_tools(
     try:
         rows = compute_rows(
             tools,
+            config=get_config(ctx),
             on_discovery_start=reporter.on_phase_start if reporter else None,
             on_discovery_scan=reporter.on_scan if reporter else None,
             on_row_start=reporter.on_phase_start if reporter else None,

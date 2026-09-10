@@ -1,4 +1,7 @@
 import io
+import subprocess
+import sys
+import textwrap
 from pathlib import Path
 
 import pytest
@@ -7,6 +10,7 @@ from typer.testing import CliRunner
 
 import maniac.cli as cli_module
 from maniac.cli import _render_eval_table, _repo_cell, app
+from maniac.config import Config
 from maniac.installer import UninstallResult
 from maniac.models import DocFile, EvaluationResult, RepoSource
 
@@ -43,6 +47,51 @@ def test_cli_help() -> None:
     assert "install" in result.output
     assert "eval" in result.output
     assert "list" in result.output
+
+
+def test_importing_cli_does_not_construct_config() -> None:
+    script = textwrap.dedent(
+        """
+        import maniac.config
+
+        class FailingConfig:
+            def __init__(self):
+                raise AssertionError("CLI import constructed Config")
+
+        maniac.config.Config = FailingConfig
+        import maniac.cli
+        """
+    )
+
+    result = subprocess.run(
+        [sys.executable, "-c", script], capture_output=True, text=True, check=False
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_cli_constructs_and_threads_one_config(monkeypatch: pytest.MonkeyPatch) -> None:
+    constructed: list[Config] = []
+
+    class CountingConfig(Config):
+        def __init__(self) -> None:
+            super().__init__()
+            constructed.append(self)
+
+    observed: list[Config] = []
+    monkeypatch.setattr(cli_module, "Config", CountingConfig)
+    monkeypatch.setattr(
+        "maniac.sources.crawler.find_subcommands",
+        lambda cmd, **kwargs: (
+            observed.append(kwargs["config"]) or {"> tool --help": "tool help"}
+        ),
+    )
+
+    result = runner.invoke(app, ["source", "crawl", "tool"])
+
+    assert result.exit_code == 0
+    assert len(constructed) == 1
+    assert observed == constructed
 
 
 def test_repo_cell_links_known_repo_and_labels_unknown() -> None:
@@ -83,7 +132,7 @@ def test_repo_cell_non_github_backend_prefix_renders_as_plain_text() -> None:
 def test_cli_source_crawl(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         "maniac.sources.crawler.find_subcommands",
-        lambda cmd: {"> git --help": "git help content"},
+        lambda cmd, **kwargs: {"> git --help": "git help content"},
     )
     result = runner.invoke(app, ["source", "crawl", "git"])
     assert result.exit_code == 0
@@ -116,7 +165,7 @@ def test_cli_install_dry_run(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) ->
     )
     monkeypatch.setattr(
         "maniac.orchestration.pipeline.find_subcommands",
-        lambda cmd: {"> tool --help": "Usage: tool"},
+        lambda cmd, **kwargs: {"> tool --help": "Usage: tool"},
     )
     monkeypatch.setattr(
         "maniac.orchestration.pipeline.discover_repo",

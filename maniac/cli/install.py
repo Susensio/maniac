@@ -13,13 +13,11 @@ import typer
 
 from ..exceptions import ManiacError
 from ..orchestration.install import InstallOutcome, InstallRefused
-from . import app, console, default_cfg
+from . import app, console, get_config
 from .options import (
-    CacheDirOption,
     DryRunOption,
     ForceOption,
     ModelOption,
-    OutputDirOption,
 )
 
 
@@ -37,12 +35,17 @@ def _render_install(target_console: Any, outcome: InstallOutcome) -> None:
 
 @app.command()
 def install(
+    ctx: typer.Context,
     tools: Annotated[
         list[str] | None,
         typer.Argument(help="List of tool names to install manpages for."),
     ] = None,
-    output_dir: OutputDirOption = str(default_cfg.output_dir),
-    cache_dir: CacheDirOption = str(default_cfg.cache_dir),
+    output_dir: Annotated[
+        str | None, typer.Option(help="Directory to save generated manpage.")
+    ] = None,
+    cache_dir: Annotated[
+        str | None, typer.Option(help="Directory for cached repository clones.")
+    ] = None,
     prompt_file: Annotated[
         Path | None,
         typer.Option(help="Path to custom system prompt file (tier-3 synthesis only)."),
@@ -75,6 +78,10 @@ def install(
     if not tools:
         return
 
+    cfg = get_config(ctx)
+    output_dir = output_dir or str(cfg.output_dir)
+    cache_dir = cache_dir or str(cfg.cache_dir)
+
     if generate and no_generate:
         console.print(
             "[bold red]--generate and --no-generate are mutually exclusive.[/bold red]"
@@ -99,6 +106,7 @@ def install(
                     no_generate=no_generate,
                     force=force,
                     dry_run=dry_run,
+                    config=cfg,
                 )
             _render_install(console, outcome)
         except InstallRefused as e:

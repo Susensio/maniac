@@ -8,7 +8,7 @@ import typer
 from ..config import Config
 from ..exceptions import ManiacError
 from ..installer import UninstallResult
-from . import app, console, default_cfg
+from . import app, console, get_config
 from .options import ForceOption
 
 
@@ -29,7 +29,7 @@ def compute_uninstall(
     return UninstallOutcome(
         tool=tool,
         result=uninstall_manpage(
-            tool, purge=purge, force=force, config=config or default_cfg
+            tool, purge=purge, force=force, config=config or Config()
         ),
     )
 
@@ -69,6 +69,7 @@ def _render_uninstall(target_console: Any, outcome: UninstallOutcome) -> None:
 
 @app.command("uninstall")
 def uninstall_cmd(
+    ctx: typer.Context,
     tool: Annotated[str, typer.Argument(help="Tool name to uninstall.")],
     purge: Annotated[
         bool,
@@ -81,7 +82,9 @@ def uninstall_cmd(
 ) -> None:
     """Uninstall a MANIAC-generated manpage and restore vendor backup if present."""
     try:
-        outcome = compute_uninstall(tool, purge=purge, force=force)
+        outcome = compute_uninstall(
+            tool, purge=purge, force=force, config=get_config(ctx)
+        )
     except (OSError, RuntimeError, ManiacError) as e:
         console.print(
             f"[bold red]Error uninstalling manpage for {tool}: {e}[/bold red]"

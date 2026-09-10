@@ -43,7 +43,7 @@ def run_pipeline(
 
     logger.info("Extracting CLI help and subcommands", tool=tool_name)
     executable = Path(bin_dir) / tool_name if bin_dir is not None else tool_name
-    tree = find_subcommands([str(executable)])
+    tree = find_subcommands([str(executable)], config=cfg)
     help_block = format_help_block(tree)
 
     logger.info("Discovering source and extracting documentation", tool=tool_name)
@@ -66,6 +66,7 @@ def run_pipeline(
             cache_dir=c_dir,
             max_total_chars=cfg.max_total_doc_chars,
             version=installed_version,
+            config=cfg,
         )
         if source is not None
         else ([], False)
@@ -136,7 +137,11 @@ def run_pipeline(
     roff_file = out_dir / f"{tool_name}.1"
     selected_model = cfg.model_for_metadata(model)
     compiled = compile_to_man(
-        markdown_content, roff_file, tool_name=tool_name, model=selected_model
+        markdown_content,
+        roff_file,
+        tool_name=tool_name,
+        model=selected_model,
+        config=cfg,
     )
     actual_roff_path = roff_file if compiled else None
 
@@ -156,7 +161,7 @@ def run_pipeline(
             # documents exactly the binary that was crawled, so that
             # binary's own version report is matched evidence, more directly
             # than a tag match is.
-            recorded_version = get_version([str(executable)])
+            recorded_version = get_version([str(executable)], config=cfg)
         installed_path = install_manpage(
             actual_roff_path,
             tool_name,
@@ -164,6 +169,7 @@ def run_pipeline(
             selected_model or "unknown",
             force=force,
             version=recorded_version,
+            config=cfg,
         )
 
     return PipelineResult(

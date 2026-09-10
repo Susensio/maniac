@@ -55,7 +55,7 @@ def _mock_synthesis(
 def test_run_pipeline_dry_run(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setattr(
         "maniac.orchestration.pipeline.find_subcommands",
-        lambda cmd: {"> testtool --help": "Usage: testtool"},
+        lambda cmd, **kwargs: {"> testtool --help": "Usage: testtool"},
     )
     monkeypatch.setattr(
         "maniac.orchestration.pipeline.discover_repo",
@@ -99,7 +99,7 @@ def test_run_pipeline_uses_custom_bin_dir(
     bin_dir.mkdir()
     observed: dict[str, object] = {}
 
-    def _find_subcommands(cmd: list[str]) -> dict[str, str]:
+    def _find_subcommands(cmd: list[str], **kwargs: object) -> dict[str, str]:
         observed["command"] = cmd
         return {"> testtool --help": "Usage: testtool"}
 
@@ -131,7 +131,7 @@ def test_run_pipeline_rejects_root_help_without_other_context(
 ) -> None:
     monkeypatch.setattr(
         "maniac.orchestration.pipeline.find_subcommands",
-        lambda cmd: {"> testtool --help": "Usage: testtool"},
+        lambda cmd, **kwargs: {"> testtool --help": "Usage: testtool"},
     )
     monkeypatch.setattr(
         "maniac.orchestration.pipeline.discover_repo",
@@ -152,7 +152,7 @@ def test_run_pipeline_records_the_matched_tag_version(
     """ADR-0019: docs that came from a version-matched tag earn a recorded version."""
     monkeypatch.setattr(
         "maniac.orchestration.pipeline.find_subcommands",
-        lambda cmd: {"> testtool --help": "Usage: testtool"},
+        lambda cmd, **kwargs: {"> testtool --help": "Usage: testtool"},
     )
     monkeypatch.setattr(
         "maniac.orchestration.pipeline.discover_repo",
@@ -194,7 +194,7 @@ def test_run_pipeline_records_no_version_when_tag_unmatched(
     """
     monkeypatch.setattr(
         "maniac.orchestration.pipeline.find_subcommands",
-        lambda cmd: {"> testtool --help": "Usage: testtool"},
+        lambda cmd, **kwargs: {"> testtool --help": "Usage: testtool"},
     )
     monkeypatch.setattr(
         "maniac.orchestration.pipeline.discover_repo",
@@ -229,7 +229,7 @@ def test_run_pipeline_no_installation_records_no_version(
     """
     monkeypatch.setattr(
         "maniac.orchestration.pipeline.find_subcommands",
-        lambda cmd: {"> testtool --help": "Usage: testtool"},
+        lambda cmd, **kwargs: {"> testtool --help": "Usage: testtool"},
     )
     monkeypatch.setattr(
         "maniac.orchestration.pipeline.discover_repo",
@@ -271,7 +271,7 @@ def test_run_pipeline_unclaimed_binary_records_its_own_version_output(
     """
     monkeypatch.setattr(
         "maniac.orchestration.pipeline.find_subcommands",
-        lambda cmd: {"> testtool --help": "Usage: testtool"},
+        lambda cmd, **kwargs: {"> testtool --help": "Usage: testtool"},
     )
     monkeypatch.setattr(
         "maniac.orchestration.pipeline.discover_repo",
@@ -296,7 +296,10 @@ def test_run_pipeline_unclaimed_binary_records_its_own_version_output(
         observed_cmd["cmd"] = cmd
         return "testtool 9.9.9-custom"
 
-    monkeypatch.setattr("maniac.orchestration.pipeline.get_version", _get_version)
+    monkeypatch.setattr(
+        "maniac.orchestration.pipeline.get_version",
+        lambda cmd, **kwargs: _get_version(cmd),
+    )
     recorded = _mock_synthesis(monkeypatch, tmp_path)
 
     run_pipeline(tool_name="testtool", output_dir=tmp_path, install=True, dry_run=False)
@@ -314,7 +317,7 @@ def test_run_pipeline_unclaimed_binary_with_no_version_output_records_none(
     """
     monkeypatch.setattr(
         "maniac.orchestration.pipeline.find_subcommands",
-        lambda cmd: {"> testtool --help": "Usage: testtool"},
+        lambda cmd, **kwargs: {"> testtool --help": "Usage: testtool"},
     )
     monkeypatch.setattr(
         "maniac.orchestration.pipeline.discover_repo",
@@ -333,7 +336,9 @@ def test_run_pipeline_unclaimed_binary_with_no_version_output_records_none(
             False,
         ),
     )
-    monkeypatch.setattr("maniac.orchestration.pipeline.get_version", lambda cmd: None)
+    monkeypatch.setattr(
+        "maniac.orchestration.pipeline.get_version", lambda cmd, **kwargs: None
+    )
     recorded = _mock_synthesis(monkeypatch, tmp_path)
 
     run_pipeline(tool_name="testtool", output_dir=tmp_path, install=True, dry_run=False)

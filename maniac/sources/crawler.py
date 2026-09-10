@@ -244,13 +244,14 @@ def find_subcommands(
         cmd = cmd.split()
     results = {} if results is None else results
     visited_outputs = set() if visited_outputs is None else visited_outputs
+    cfg = config or Config()
 
     key = f"> {' '.join(cmd)} --help"
     if key in results:
         return results
 
     try:
-        help_text = get_help(cmd, timeout=timeout, config=config)
+        help_text = get_help(cmd, timeout=timeout, config=cfg)
     except CrawlerError:
         if not results:
             raise
@@ -269,7 +270,7 @@ def find_subcommands(
             results,
             visited_outputs=visited_outputs,
             timeout=timeout,
-            config=config,
+            config=cfg,
         )
 
     return results

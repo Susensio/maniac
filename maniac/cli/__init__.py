@@ -1,6 +1,6 @@
 """Maniac CLI entry point, split into one module per command group."""
 
-from typing import Annotated, Any
+from typing import Annotated, Any, cast
 
 import typer
 
@@ -23,11 +23,16 @@ class _LazyConsole:
 
 
 console = _LazyConsole()
-default_cfg = Config()
+
+
+def get_config(ctx: typer.Context) -> Config:
+    """Return the configuration constructed for this CLI invocation."""
+    return cast(Config, ctx.obj)
 
 
 @app.callback()
 def main(
+    ctx: typer.Context,
     verbose: Annotated[
         bool,
         typer.Option(
@@ -41,6 +46,7 @@ def main(
     """Initialize CLI logging settings."""
     from ..logging import setup_logging
 
+    ctx.obj = Config()
     setup_logging(verbose=verbose)
 
 

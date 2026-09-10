@@ -492,7 +492,7 @@ def test_classify_outdated_when_unclaimed_binarys_own_version_differs(
         "maniac.cli.listing.find_installed_manpage_path",
         lambda man_bin, tool_name: installed,
     )
-    monkeypatch.setattr("maniac.cli.listing.get_version", lambda cmd: "2.0.0")
+    monkeypatch.setattr("maniac.cli.listing.get_version", lambda cmd, **kwargs: "2.0.0")
 
     assert _classify(None, None, "tool", cfg) == (
         ActionState.OUTDATED,
@@ -520,7 +520,7 @@ def test_classify_ok_when_unclaimed_binarys_own_version_matches(
         "maniac.cli.listing.find_installed_manpage_path",
         lambda man_bin, tool_name: installed,
     )
-    monkeypatch.setattr("maniac.cli.listing.get_version", lambda cmd: "1.0.0")
+    monkeypatch.setattr("maniac.cli.listing.get_version", lambda cmd, **kwargs: "1.0.0")
 
     assert _classify(None, None, "tool", cfg) == (ActionState.OK, PageSource.MANIAC)
 
@@ -547,7 +547,7 @@ def test_classify_ok_when_unclaimed_binarys_version_is_unavailable(
         "maniac.cli.listing.find_installed_manpage_path",
         lambda man_bin, tool_name: installed,
     )
-    monkeypatch.setattr("maniac.cli.listing.get_version", lambda cmd: None)
+    monkeypatch.setattr("maniac.cli.listing.get_version", lambda cmd, **kwargs: None)
 
     assert _classify(None, None, "tool", cfg) == (ActionState.OK, PageSource.MANIAC)
 
@@ -560,7 +560,7 @@ def test_classify_no_subprocess_for_unowned_or_versionless_row(
     an owned-but-versionless one must never reach it, keeping a full `list`
     walk's cost bounded to the handful of rows that qualify."""
 
-    def _unexpected_call(cmd: list[str]) -> str | None:
+    def _unexpected_call(cmd: list[str], **kwargs: object) -> str | None:
         raise AssertionError(f"get_version must not be called for this row: {cmd}")
 
     monkeypatch.setattr("maniac.cli.listing.get_version", _unexpected_call)
@@ -818,7 +818,7 @@ def test_cli_list_pipe_emits_exactly_the_filtered_set(
     monkeypatch.setattr(
         cli_module.console, "_instance", Console(force_terminal=False, no_color=True)
     )
-    monkeypatch.setattr("maniac.cli.listing.default_cfg", _config(tmp_path))
+    monkeypatch.setattr(cli_module, "Config", lambda: _config(tmp_path))
 
     available_page = tmp_path / "install_root" / "gum.1"
     available_page.parent.mkdir(parents=True)
@@ -1150,7 +1150,7 @@ def test_cli_list_pipe_emits_bare_names(
     monkeypatch.setattr(
         cli_module.console, "_instance", Console(force_terminal=False, no_color=True)
     )
-    monkeypatch.setattr("maniac.cli.listing.default_cfg", _config(tmp_path))
+    monkeypatch.setattr(cli_module, "Config", lambda: _config(tmp_path))
     monkeypatch.setattr(
         "maniac.cli.listing.discovery.enumerate_installations",
         lambda on_start=None, on_scan=None: [
@@ -1169,7 +1169,7 @@ def test_cli_list_tty_shows_table(
     monkeypatch.setattr(
         cli_module.console, "_instance", Console(force_terminal=True, no_color=True)
     )
-    monkeypatch.setattr("maniac.cli.listing.default_cfg", _config(tmp_path))
+    monkeypatch.setattr(cli_module, "Config", lambda: _config(tmp_path))
     monkeypatch.setattr(
         "maniac.cli.listing.discovery.enumerate_installations",
         lambda on_start=None, on_scan=None: [

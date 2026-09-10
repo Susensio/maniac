@@ -121,14 +121,15 @@ def check_standard_sections(
 
 
 def check_pandoc_compilation(
-    markdown_text: str, timeout: int | None = None
+    markdown_text: str, timeout: int | None = None, config: Config | None = None
 ) -> tuple[bool, str | None]:
     """Validate Pandoc roff compilation (`pandoc -s -f markdown-smart -t man`)."""
     pandoc_bin = shutil.which("pandoc")
     if not pandoc_bin:
         return True, None
 
-    timeout_sec = timeout if timeout is not None else Config().timeout_pandoc
+    cfg = config or Config()
+    timeout_sec = timeout if timeout is not None else cfg.timeout_pandoc
     try:
         res = subprocess.run(
             [pandoc_bin, "-s", "-f", "markdown-smart", "-t", "man"],
@@ -228,6 +229,7 @@ def run_deterministic_checks(
     tool_name: str | None = None,
     context_text: str | None = None,
     cov: CoverageStats | None = None,
+    config: Config | None = None,
 ) -> tuple[bool, list[str]]:
     """Run all deterministic checks and collect defects.
 
@@ -246,7 +248,7 @@ def run_deterministic_checks(
     if not sections_ok:
         hard_defects.extend(section_errs)
 
-    pandoc_ok, pandoc_err = check_pandoc_compilation(markdown_text)
+    pandoc_ok, pandoc_err = check_pandoc_compilation(markdown_text, config=config)
     if not pandoc_ok and pandoc_err:
         hard_defects.append(pandoc_err)
 
@@ -268,7 +270,7 @@ def run_deterministic_checks(
 
 
 def render_manpage_to_terminal(
-    markdown_text: str, timeout: int | None = None
+    markdown_text: str, timeout: int | None = None, config: Config | None = None
 ) -> tuple[str, str] | None:
     """Render markdown manpage to terminal formatted text.
 
@@ -283,7 +285,8 @@ def render_manpage_to_terminal(
     if not pandoc_bin:
         return None
 
-    timeout_sec = timeout if timeout is not None else Config().timeout_pandoc
+    cfg = config or Config()
+    timeout_sec = timeout if timeout is not None else cfg.timeout_pandoc
     try:
         if markdown_text.strip().startswith(('.\\"', ".TH", "'\\\"")):
             roff_text = markdown_text
@@ -334,6 +337,7 @@ def build_evaluation_prompt(
     context_text: str,
     cov: CoverageStats | None = None,
     pass_threshold: int = 70,
+    config: Config | None = None,
 ) -> str:
     """Construct structured evaluation prompt for LLM judge with automated coverage analysis and rendered output."""
     raw_prompt = get_default_eval_prompt()
@@ -343,7 +347,7 @@ def build_evaluation_prompt(
         if cov is not None
         else (compute_coverage(manpage_text, context_text) if context_text else None)
     )
-    rendered = render_manpage_to_terminal(manpage_text)
+    rendered = render_manpage_to_terminal(manpage_text, config=config)
 
     if coverage:
         coverage_summary = (
@@ -488,6 +492,7 @@ def run_llm_judge(
     model: str | None = None,
     pass_threshold: int = 70,
     cov: CoverageStats | None = None,
+    config: Config | None = None,
 ) -> EvaluationResult:
     """Run LLM-as-a-Judge quality evaluation against reference context."""
     prompt = build_evaluation_prompt(
@@ -496,12 +501,14 @@ def run_llm_judge(
         context_text,
         cov=cov,
         pass_threshold=pass_threshold,
+        config=config,
     )
     raw_output = run_llm_synthesis(
         prompt=prompt,
         tool_name=tool_name,
         model=model,
         clean_header=False,
+        config=config,
     )
     try:
         result = parse_evaluation_json(raw_output)
@@ -532,13 +539,18 @@ def evaluate_manpage(
     context_text: str,
     model: str | None = None,
     pass_threshold: int = 70,
+    config: Config | None = None,
 ) -> EvaluationResult:
     """Run deterministic checks and LLM-as-a-Judge quality evaluation."""
     cov = compute_coverage(manpage_text, context_text) if context_text else None
 
     # 1. Deterministic checks
     det_passed, det_defects = run_deterministic_checks(
-        manpage_text, tool_name=tool_name, context_text=context_text, cov=cov
+        manpage_text,
+        tool_name=tool_name,
+        context_text=context_text,
+        cov=cov,
+        config=config,
     )
 
     # 2. LLM Judge
@@ -549,6 +561,7 @@ def evaluate_manpage(
         model=model,
         pass_threshold=pass_threshold,
         cov=cov,
+        config=config,
     )
 
     result.deterministic_passed = det_passed
@@ -575,12 +588,13 @@ def build_comparison_prompt(
     installed_text: str,
     generated_text: str,
     context_text: str,
+    config: Config | None = None,
 ) -> str:
     """Construct head-to-head comparison prompt for LLM judge from both rendered pages."""
     system_prompt = get_default_compare_prompt()
 
     def render_section(label: str, raw_text: str) -> str:
-        rendered = render_manpage_to_terminal(raw_text)
+        rendered = render_manpage_to_terminal(raw_text, config=config)
         if rendered is None:
             return (
                 f"=== {label} (RAW SOURCE -- TERMINAL RENDERING UNAVAILABLE) ===\n"
@@ -637,16 +651,18 @@ def run_comparison_judge(
     generated_text: str,
     context_text: str,
     model: str | None = None,
+    config: Config | None = None,
 ) -> dict[str, Any]:
     """Run LLM-as-a-Judge head-to-head comparison between installed and generated manpages."""
     prompt = build_comparison_prompt(
-        tool_name, installed_text, generated_text, context_text
+        tool_name, installed_text, generated_text, context_text, config
     )
     raw_output = run_llm_synthesis(
         prompt=prompt,
         tool_name=tool_name,
         model=model,
         clean_header=False,
+        config=config,
     )
     try:
         return parse_comparison_json(raw_output)
@@ -668,6 +684,7 @@ def compare_manpages(
     context_text: str,
     model: str | None = None,
     pass_threshold: int = 70,
+    config: Config | None = None,
 ) -> ComparisonResult:
     """Score an installed manpage and MANIAC's generated one against the same rubric,
     then judge them head-to-head for a prose comparison.
@@ -682,6 +699,7 @@ def compare_manpages(
         context_text=context_text,
         model=model,
         pass_threshold=pass_threshold,
+        config=config,
     )
     installed_result = run_llm_judge(
         tool_name=tool_name,
@@ -689,6 +707,7 @@ def compare_manpages(
         context_text=context_text,
         model=model,
         pass_threshold=pass_threshold,
+        config=config,
     )
     comparison = run_comparison_judge(
         tool_name=tool_name,
@@ -696,6 +715,7 @@ def compare_manpages(
         generated_text=generated_text,
         context_text=context_text,
         model=model,
+        config=config,
     )
 
     return ComparisonResult(

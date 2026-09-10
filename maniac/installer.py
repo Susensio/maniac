@@ -55,6 +55,7 @@ def install_manpage(
     force: bool = False,
     *,
     version: str | None = None,
+    config: Config | None = None,
 ) -> Path:
     """Copy compiled roff manpage into man directory with conflict guard and backup.
 
@@ -67,7 +68,8 @@ def install_manpage(
     """
     src = Path(source_file)
     checksum = manifest.checksum_of(src)
-    dest_dir = Path(target_dir).expanduser() if target_dir else Config().man_dir
+    cfg = config or Config()
+    dest_dir = Path(target_dir).expanduser() if target_dir else cfg.man_dir
     dest_dir.mkdir(parents=True, exist_ok=True)
 
     dest_file = dest_dir / src.name
@@ -90,7 +92,7 @@ def install_manpage(
                     f"A foreign or vendor manpage already exists at '{dest_file}'. "
                     f"Use --force to create a backup and overwrite."
                 )
-            backup_dir = Config().backup_dir
+            backup_dir = cfg.backup_dir
             backup_dir.mkdir(parents=True, exist_ok=True)
             backup_path = backup_dir / dest_file.name
             shutil.copy2(dest_file, backup_path)
@@ -102,7 +104,14 @@ def install_manpage(
     # entry with no file, which `status` can detect, rather than a file on
     # disk that nothing can ever attribute (ADR-0017).
     manifest.record(
-        tool, dest_file, tier, source, checksum, backup=backup_path, version=version
+        tool,
+        dest_file,
+        tier,
+        source,
+        checksum,
+        backup=backup_path,
+        version=version,
+        config=cfg,
     )
     try:
         shutil.copy2(src, dest_file)
@@ -122,9 +131,10 @@ def install_manpage(
                 previous_entry.checksum,
                 backup=previous_entry.backup,
                 version=previous_entry.version,
+                config=cfg,
             )
         else:
-            manifest.forget(tool)
+            manifest.forget(tool, config=cfg)
         raise
     logger.info("Installed manpage", path=str(dest_file))
     return dest_file

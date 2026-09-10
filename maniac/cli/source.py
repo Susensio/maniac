@@ -5,8 +5,7 @@ from typing import Annotated
 import typer
 
 from ..exceptions import ManiacError
-from . import app, console, default_cfg
-from .options import CacheDirOption
+from . import app, console, get_config
 
 source_app = typer.Typer(help="Inspect a tool's CLI help and upstream documentation.")
 app.add_typer(source_app, name="source")
@@ -14,6 +13,7 @@ app.add_typer(source_app, name="source")
 
 @source_app.command()
 def crawl(
+    ctx: typer.Context,
     cmd: Annotated[
         list[str],
         typer.Argument(help="Command and optional subcommands to crawl."),
@@ -23,7 +23,7 @@ def crawl(
     from ..sources.crawler import find_subcommands
 
     try:
-        tree = find_subcommands(cmd)
+        tree = find_subcommands(cmd, config=get_config(ctx))
         for header, body in tree.items():
             console.print(f"[bold cyan]{header}[/bold cyan]")
             console.print(body)
@@ -35,16 +35,21 @@ def crawl(
 
 @source_app.command()
 def docs(
+    ctx: typer.Context,
     tool: Annotated[
         str, typer.Argument(help="Name of the tool/binary to extract docs for.")
     ],
-    cache_dir: CacheDirOption = str(default_cfg.cache_dir),
+    cache_dir: Annotated[
+        str | None, typer.Option(help="Directory for cached repository clones.")
+    ] = None,
 ) -> None:
     """Discover repository and extract documentation files for a tool."""
     from ..sources.discovery import discover_repo
     from ..sources.docs import fetch_and_extract_docs
 
     try:
+        cfg = get_config(ctx)
+        cache_dir = cache_dir or str(cfg.cache_dir)
         source = discover_repo(tool)
         if source is None:
             console.print(
@@ -54,7 +59,7 @@ def docs(
         console.print(
             f"[bold green]Discovered repository source:[/bold green] {source.target} (local={source.is_local})"
         )
-        doc_files, _ = fetch_and_extract_docs(source, cache_dir=cache_dir)
+        doc_files, _ = fetch_and_extract_docs(source, cache_dir=cache_dir, config=cfg)
         console.print(
             f"[bold green]Found {len(doc_files)} documentation files:[/bold green]"
         )
