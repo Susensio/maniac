@@ -179,3 +179,6 @@ missing_manpages.txt
 
 # Agent worktrees and local agent state
 .claude/
+.mcp.json
+# Added by code-review-graph
+.code-review-graph/
