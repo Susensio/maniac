@@ -407,12 +407,13 @@ def test_login_path_parses_a_normal_colon_separated_result(monkeypatch) -> None:
     assert login_path_dirs() == [Path("/opt/homebrew/bin"), Path("/usr/local/bin")]
 
 
-def test_login_path_falls_back_when_the_shell_returns_only_the_bootstrap(
+def test_login_path_falls_back_when_the_shell_passes_the_probe_through_untouched(
     monkeypatch,
 ) -> None:
     """A login shell whose rc files never set $PATH has nothing to build
-    from and hands the scrub straight back -- zero exit, non-empty output,
-    no information. Treated like the other five fallback modes.
+    from and hands the child's $PATH -- bootstrap plus probe -- straight
+    back: zero exit, non-empty output, no information. Treated like the
+    other five fallback modes.
     """
     monkeypatch.setenv("SHELL", "/bin/sh")
     monkeypatch.setenv("PATH", "/inherited/bin")
@@ -420,14 +421,16 @@ def test_login_path_falls_back_when_the_shell_returns_only_the_bootstrap(
         loginpath.subprocess,
         "run",
         lambda *a, **k: subprocess.CompletedProcess(
-            ["sh"], 0, stdout=f"{loginpath._BOOTSTRAP_PATH}\n"
+            ["sh"],
+            0,
+            stdout=f"{loginpath._BOOTSTRAP_PATH}:{loginpath._LOGIN_PATH_PROBE}\n",
         ),
     )
 
     assert login_path() == "/inherited/bin"
 
 
-def test_login_path_falls_back_when_the_bootstrap_is_reordered_or_has_trailing_slashes(
+def test_login_path_falls_back_when_the_passthrough_is_reordered_or_has_trailing_slashes(
     monkeypatch,
 ) -> None:
     monkeypatch.setenv("SHELL", "/bin/sh")
@@ -436,29 +439,61 @@ def test_login_path_falls_back_when_the_bootstrap_is_reordered_or_has_trailing_s
         loginpath.subprocess,
         "run",
         lambda *a, **k: subprocess.CompletedProcess(
-            ["sh"], 0, stdout="/sbin/:/bin:/usr/sbin:/usr/bin/\n"
+            ["sh"],
+            0,
+            stdout=f"{loginpath._LOGIN_PATH_PROBE}/:/sbin/:/bin:/usr/sbin:/usr/bin/\n",
         ),
     )
 
     assert login_path() == "/inherited/bin"
 
 
-def test_login_path_keeps_the_bootstrap_plus_one_real_directory(monkeypatch) -> None:
-    """A machine that only adds ~/.local/bin on top of the bootstrap is
-    working correctly -- this must not be mistaken for the degenerate case.
+def test_login_path_keeps_a_prepended_real_directory_and_strips_the_probe(
+    monkeypatch,
+) -> None:
+    """A machine that only prepends ~/.local/bin on top of the bootstrap is
+    working correctly -- the common rc pattern (`PATH="$HOME/bin:$PATH"`)
+    leaves the probe sitting in the tail even here, so its presence alone
+    must not be mistaken for the degenerate case. The probe itself never
+    reaches the caller.
     """
     monkeypatch.setenv("SHELL", "/bin/sh")
     monkeypatch.setenv("PATH", "/inherited/bin")
-    result_path = f"{loginpath._BOOTSTRAP_PATH}:/home/tester/.local/bin"
+    shell_output = (
+        f"/home/tester/.local/bin:{loginpath._BOOTSTRAP_PATH}:"
+        f"{loginpath._LOGIN_PATH_PROBE}"
+    )
     monkeypatch.setattr(
         loginpath.subprocess,
         "run",
         lambda *a, **k: subprocess.CompletedProcess(
-            ["sh"], 0, stdout=f"{result_path}\n"
+            ["sh"], 0, stdout=f"{shell_output}\n"
         ),
     )
 
-    assert login_path() == result_path
+    assert login_path() == f"/home/tester/.local/bin:{loginpath._BOOTSTRAP_PATH}"
+
+
+def test_login_path_treats_a_bootstrap_subset_without_the_probe_as_real(
+    monkeypatch,
+) -> None:
+    """A hardened box's rc might deliberately set PATH=/usr/bin:/bin outright,
+    replacing the child's $PATH wholesale rather than prepending to it. The
+    probe is gone along with the rest of what it replaced -- that is a real,
+    constructed answer, not the shell passing $PATH through untouched, even
+    though it undershoots the bootstrap set.
+    """
+    monkeypatch.setenv("SHELL", "/bin/sh")
+    monkeypatch.setenv("PATH", "/inherited/bin")
+    monkeypatch.setattr(
+        loginpath.subprocess,
+        "run",
+        lambda *a, **k: subprocess.CompletedProcess(
+            ["sh"], 0, stdout="/usr/bin:/bin\n"
+        ),
+    )
+
+    assert login_path() == "/usr/bin:/bin"
 
 
 def test_login_shell_env_scrubs_activation_markers_and_sets_bootstrap_path(
@@ -473,7 +508,7 @@ def test_login_shell_env_scrubs_activation_markers_and_sets_bootstrap_path(
 
     env = loginpath._login_shell_env()
 
-    assert env["PATH"] == loginpath._BOOTSTRAP_PATH
+    assert env["PATH"] == f"{loginpath._BOOTSTRAP_PATH}:{loginpath._LOGIN_PATH_PROBE}"
     assert "VIRTUAL_ENV" not in env
     assert "UV_PROJECT_ENVIRONMENT" not in env
     assert "DIRENV_DIR" not in env
@@ -499,7 +534,10 @@ def test_login_path_does_not_leak_the_callers_path_or_virtualenv(
     # of its own beyond _BOOTSTRAP_PATH -- otherwise the sixth fallback
     # (login shell taught us nothing) would trigger and this test would
     # observe that fallback's inherited $PATH instead of what scrubbing
-    # did to the subprocess's own.
+    # did to the subprocess's own. The rc file appends, so the probe
+    # survives in the tail of the shell's own output; asserting it is
+    # gone from the result checks that this test's own real subprocess
+    # call isn't quietly falling into the degenerate branch either.
     (tmp_path / ".profile").write_text('PATH="$PATH:/rc-built-bin"\n')
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("SHELL", "/bin/sh")
@@ -509,6 +547,7 @@ def test_login_path_does_not_leak_the_callers_path_or_virtualenv(
     result = login_path()
 
     assert sentinel_bin not in result
+    assert loginpath._LOGIN_PATH_PROBE not in result
 
 
 def test_login_path_runs_the_login_shell_once_across_many_lookups(monkeypatch) -> None:

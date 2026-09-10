@@ -31,6 +31,14 @@ _LOGIN_SHELL_TIMEOUT = 5
 # correct, not a bug.
 _BOOTSTRAP_PATH = "/usr/bin:/bin:/usr/sbin:/sbin"
 
+# Appended to the child's $PATH, after _BOOTSTRAP_PATH so it cannot shadow a
+# real binary the shell needs during its own startup. Its fate distinguishes
+# "the shell passed $PATH through untouched" from "the shell built one" --
+# see the comment at its use in login_path() for why presence alone isn't
+# the test. Absolute and unresolvable, so it cannot collide with a real
+# directory and is recognisable in a $PATH dump if it ever leaks.
+_LOGIN_PATH_PROBE = "/nonexistent/maniac-login-path-probe"
+
 # Keys and prefixes a login shell's rc files or prompt hooks read to decide
 # whether to re-activate a project environment and prepend it back onto
 # $PATH -- the same class of re-entry ADR-0020's cwd=$HOME guards against,
@@ -64,7 +72,7 @@ def _login_shell_env() -> dict[str, str]:
         if key not in _ACTIVATION_ENV_KEYS
         and not key.startswith(_ACTIVATION_ENV_PREFIXES)
     }
-    env["PATH"] = _BOOTSTRAP_PATH
+    env["PATH"] = _BOOTSTRAP_PATH + os.pathsep + _LOGIN_PATH_PROBE
     return env
 
 
@@ -134,15 +142,26 @@ def login_path() -> str:
         return os.environ.get("PATH", "")
 
     # A login shell inherits $PATH rather than constructing it -- scrubbing
-    # to _BOOTSTRAP_PATH is what forces it to prove it can build one. On a
-    # machine whose rc files never set $PATH, there is nothing to build
-    # from, and the shell hands the scrub straight back: zero exit,
-    # non-empty output, but no information beyond what we already knew.
+    # to _BOOTSTRAP_PATH is what forces it to prove it can build one. The
+    # question isn't "does the result contain anything outside the
+    # bootstrap" -- a hardened box's rc might deliberately set
+    # PATH=/usr/bin:/bin, a real answer that happens to undershoot the
+    # bootstrap, and discarding it in favour of the caller's inherited
+    # $PATH would reintroduce exactly what this module exists to exclude.
+    # The question is whether the shell touched $PATH at all, which is what
+    # _LOGIN_PATH_PROBE (appended to the child's $PATH before spawning)
+    # answers: it survives only when the shell handed $PATH back untouched.
+    # But survival alone isn't the test either -- the common rc pattern
+    # prepends (`PATH="$HOME/bin:$PATH"`), which leaves the probe sitting
+    # in the tail on a perfectly healthy machine. Degenerate requires both:
+    # the probe still present, and nothing besides the probe added to the
+    # bootstrap set.
     bootstrap_entries = {
         entry.rstrip("/") for entry in _BOOTSTRAP_PATH.split(os.pathsep) if entry
     }
+    probe = _LOGIN_PATH_PROBE.rstrip("/")
     result_entries = {entry.rstrip("/") for entry in path.split(os.pathsep) if entry}
-    if result_entries <= bootstrap_entries:
+    if probe in result_entries and result_entries <= bootstrap_entries | {probe}:
         logger.warning(
             "Login shell produced no $PATH entries of its own; falling back "
             "to the inherited $PATH, which may include environment-local "
@@ -151,7 +170,10 @@ def login_path() -> str:
         )
         return os.environ.get("PATH", "")
 
-    return path
+    # The probe is an implementation detail of the check above -- strip it
+    # before it can reach a caller.
+    entries = [entry for entry in path.split(os.pathsep) if entry.rstrip("/") != probe]
+    return os.pathsep.join(entries)
 
 
 def login_path_dirs() -> list[Path]:
