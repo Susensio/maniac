@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ..config import Config
+from ..exceptions import ManiacError
 from ..installer import install_manpage
 from ..logging import logger
 from ..manifest import Tier
@@ -26,7 +27,15 @@ from ..sources.manpages import (
 )
 from ..sources.providers.base import Provider
 
-__all__ = ["InstallOutcome", "Tier", "run_install"]
+__all__ = ["InstallOutcome", "InstallRefused", "Tier", "run_install"]
+
+
+class InstallRefused(ManiacError):
+    """`install` declined outright, before any tier ran -- not a tier failing.
+
+    `cli/install.py` renders this apart from an ordinary failure: nothing
+    was attempted, so "Install failed for X" would misdescribe a refusal.
+    """
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,12 +72,25 @@ def run_install(
     tiers 1-2 outright. `no_generate` (`--no-generate`) restricts it to
     tiers 1-2 -- `run_pipeline`, the only path that can call an LLM, is
     imported nowhere in that branch, not merely left uncalled.
+
+    Before any tier runs (ADR-0020): a binary the login `$PATH` cannot reach
+    -- with no explicit `bin_dir` naming where it lives instead -- is refused
+    outright. A page installs into a global manpath and persists; a binary
+    reachable only from the current environment does not, so nothing here
+    should record one for it.
     """
     cfg = config or Config()
     cache_dir_path = Path(cache_dir) if cache_dir is not None else cfg.cache_dir
 
     if not generate_only:
         found = discovery.find_installation(tool_name, bin_dir=bin_dir)
+        if discovery._resolve_bin_path(tool_name, bin_dir) is None:
+            raise InstallRefused(
+                f"'{tool_name}' is reachable only from the current "
+                "environment, not the login shell's $PATH -- and a manpage "
+                "would be installed globally and permanently. Install it "
+                "where the login shell can reach it first (ADR-0020)."
+            )
         if found is not None:
             provider, inst = found
             outcome = _try_install_root(provider, inst, force=force)

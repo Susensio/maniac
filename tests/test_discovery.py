@@ -1,4 +1,5 @@
 import io
+import subprocess
 import tarfile
 from pathlib import Path
 from typing import Self
@@ -8,7 +9,7 @@ import pytest
 import zstandard
 
 from maniac.models import Installation
-from maniac.sources import discovery
+from maniac.sources import discovery, loginpath
 from maniac.sources.discovery import (
     _check_mise_toml,
     _clean_git_url,
@@ -20,6 +21,7 @@ from maniac.sources.discovery import (
     discover_repo,
     enumerate_installations,
 )
+from maniac.sources.loginpath import login_path, login_path_dirs, which_login
 
 
 def _compressed_mise_registry(entries: dict[str, bytes]) -> bytes:
@@ -101,16 +103,16 @@ def test_discover_repo_fallback(monkeypatch, tmp_path: Path) -> None:
 def test_discover_repo_has_no_implicit_local_bin_default(
     monkeypatch, tmp_path: Path
 ) -> None:
-    """With no explicit `bin_dir`, resolution is `$PATH` (`shutil.which`)
-    alone -- a binary sitting where the old default pointed, `~/.local/bin`,
-    is not picked up just because it is there.
+    """With no explicit `bin_dir`, resolution is the login `$PATH`
+    (`which_login`) alone -- a binary sitting where the old default pointed,
+    `~/.local/bin`, is not picked up just because it is there.
     """
     fake_home = tmp_path / "home"
     decoy_dir = fake_home / ".local" / "bin"
     decoy_dir.mkdir(parents=True)
     (decoy_dir / "tool").touch()
     monkeypatch.setenv("HOME", str(fake_home))
-    monkeypatch.setattr(discovery.shutil, "which", lambda name: None)
+    monkeypatch.setattr(discovery.loginpath, "which_login", lambda name: None)
 
     assert discover_repo("tool") is None
 
@@ -123,7 +125,7 @@ def test_discover_repo_does_not_use_the_registry_without_an_installation(
     where the registry would have matched it by bare name -- this is
     `discover_repo("envsubst")` ceasing to return "a8m/envsubst".
     """
-    monkeypatch.setattr(discovery.shutil, "which", lambda name: None)
+    monkeypatch.setattr(discovery.loginpath, "which_login", lambda name: None)
     monkeypatch.setattr(
         discovery,
         "_load_mise_registry",
@@ -152,7 +154,7 @@ def test_enumerate_installations_walks_path_and_keeps_only_claimed_binaries(
     claimed.touch(mode=0o755)
     unclaimed = tmp_path / "unclaimed"
     unclaimed.touch(mode=0o755)
-    monkeypatch.setenv("PATH", str(tmp_path))
+    monkeypatch.setattr(discovery.loginpath, "login_path", lambda: str(tmp_path))
 
     def fake_detect(bin_path: Path):
         if bin_path.name == "claimed":
@@ -176,7 +178,9 @@ def test_enumerate_installations_resolves_a_name_once_at_its_first_path_entry(
     second_dir.mkdir()
     (first_dir / "tool").touch(mode=0o755)
     (second_dir / "tool").touch(mode=0o755)
-    monkeypatch.setenv("PATH", f"{first_dir}:{second_dir}")
+    monkeypatch.setattr(
+        discovery.loginpath, "login_path", lambda: f"{first_dir}:{second_dir}"
+    )
 
     seen_paths: list[Path] = []
 
@@ -195,7 +199,7 @@ def test_enumerate_installations_skips_non_executable_files(
     monkeypatch, tmp_path: Path
 ) -> None:
     (tmp_path / "not_executable").touch(mode=0o644)
-    monkeypatch.setenv("PATH", str(tmp_path))
+    monkeypatch.setattr(discovery.loginpath, "login_path", lambda: str(tmp_path))
     monkeypatch.setattr(
         discovery, "_detect_via_registry", lambda p: pytest.fail("must not be called")
     )
@@ -209,7 +213,7 @@ def test_enumerate_installations_on_start_and_on_scan_are_optional_and_no_op_by_
     """Existing callers omitting the callbacks see unchanged behaviour."""
     claimed = tmp_path / "claimed"
     claimed.touch(mode=0o755)
-    monkeypatch.setenv("PATH", str(tmp_path))
+    monkeypatch.setattr(discovery.loginpath, "login_path", lambda: str(tmp_path))
     monkeypatch.setattr(
         discovery,
         "_detect_via_registry",
@@ -226,7 +230,7 @@ def test_enumerate_installations_reports_candidate_count_then_one_scan_per_candi
 ) -> None:
     for name in ("one", "two", "three"):
         (tmp_path / name).touch(mode=0o755)
-    monkeypatch.setenv("PATH", str(tmp_path))
+    monkeypatch.setattr(discovery.loginpath, "login_path", lambda: str(tmp_path))
     monkeypatch.setattr(
         discovery,
         "_detect_via_registry",
@@ -356,3 +360,85 @@ def test_mise_registry_download_sends_user_agent(monkeypatch, tmp_path: Path) ->
     assert observed_timeout == 10
     assert observed_request is not None
     assert observed_request.get_header("User-agent") == "maniac/0.1"
+
+
+def test_login_path_falls_back_when_shell_is_unset(monkeypatch) -> None:
+    monkeypatch.delenv("SHELL", raising=False)
+    monkeypatch.setenv("PATH", "/inherited/bin")
+
+    assert login_path() == "/inherited/bin"
+
+
+def test_login_path_falls_back_when_the_shell_exits_non_zero(monkeypatch) -> None:
+    monkeypatch.setenv("SHELL", "/bin/sh")
+    monkeypatch.setenv("PATH", "/inherited/bin")
+    monkeypatch.setattr(
+        loginpath.subprocess,
+        "run",
+        lambda *a, **k: subprocess.CompletedProcess(["sh"], 1, stdout="/bad/bin"),
+    )
+
+    assert login_path() == "/inherited/bin"
+
+
+def test_login_path_falls_back_on_timeout(monkeypatch) -> None:
+    monkeypatch.setenv("SHELL", "/bin/sh")
+    monkeypatch.setenv("PATH", "/inherited/bin")
+
+    def fake_run(*args: object, **kwargs: object) -> None:
+        raise subprocess.TimeoutExpired(cmd="sh", timeout=5)
+
+    monkeypatch.setattr(loginpath.subprocess, "run", fake_run)
+
+    assert login_path() == "/inherited/bin"
+
+
+def test_login_path_parses_a_normal_colon_separated_result(monkeypatch) -> None:
+    monkeypatch.setenv("SHELL", "/bin/sh")
+    monkeypatch.setattr(
+        loginpath.subprocess,
+        "run",
+        lambda *a, **k: subprocess.CompletedProcess(
+            ["sh"], 0, stdout="/usr/bin:/bin\n"
+        ),
+    )
+
+    assert login_path() == "/usr/bin:/bin"
+    assert login_path_dirs() == [Path("/usr/bin"), Path("/bin")]
+
+
+def test_login_path_runs_the_login_shell_once_across_many_lookups(monkeypatch) -> None:
+    """The caching property is the whole point (ADR-0020): the login shell's
+    startup is paid once per process, not once per binary looked up.
+    """
+    monkeypatch.setenv("SHELL", "/bin/sh")
+    calls = 0
+
+    def fake_run(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+        nonlocal calls
+        calls += 1
+        return subprocess.CompletedProcess(["sh"], 0, stdout="/usr/bin\n")
+
+    monkeypatch.setattr(loginpath.subprocess, "run", fake_run)
+
+    for _ in range(5):
+        login_path()
+
+    assert calls == 1
+
+
+def test_which_login_stops_at_the_first_path_entry(monkeypatch, tmp_path: Path) -> None:
+    """ADR-0020 rejects falling through to a later entry when the first is
+    unclaimed: "unclaimed" cannot distinguish a wrapper from a shadowing
+    build. `which_login` never gets that far -- it returns the first
+    executable match regardless of what claims it afterward.
+    """
+    first_dir = tmp_path / "first"
+    second_dir = tmp_path / "second"
+    first_dir.mkdir()
+    second_dir.mkdir()
+    (first_dir / "tool").touch(mode=0o755)
+    (second_dir / "tool").touch(mode=0o755)
+    monkeypatch.setattr(loginpath, "login_path_dirs", lambda: [first_dir, second_dir])
+
+    assert which_login("tool") == first_dir / "tool"

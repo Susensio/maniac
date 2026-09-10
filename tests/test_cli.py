@@ -111,6 +111,10 @@ def test_cli_source_docs(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_cli_install_dry_run(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setattr(
+        "maniac.sources.discovery.loginpath.which_login",
+        lambda name: Path(f"/bin/{name}"),
+    )
+    monkeypatch.setattr(
         "maniac.orchestration.pipeline.find_subcommands",
         lambda cmd: {"> tool --help": "Usage: tool"},
     )
@@ -140,6 +144,10 @@ def test_cli_install_always_installs(
     """`install` has no `--no-install`: the command's own name is the answer."""
     from maniac.models import PipelineResult
 
+    monkeypatch.setattr(
+        "maniac.sources.discovery.loginpath.which_login",
+        lambda name: Path(f"/bin/{name}"),
+    )
     observed: dict[str, object] = {}
 
     def _run_pipeline(tool_name: str, **kwargs: object) -> PipelineResult:
@@ -345,6 +353,10 @@ def test_cli_install_multiple_all_fail_exits_nonzero(
     def _raise(*args: object, **kwargs: object) -> None:
         raise ManiacError("boom")
 
+    monkeypatch.setattr(
+        "maniac.sources.discovery.loginpath.which_login",
+        lambda name: Path(f"/bin/{name}"),
+    )
     monkeypatch.setattr("maniac.orchestration.pipeline.run_pipeline", _raise)
     res = runner.invoke(app, ["install", "toolone", "tooltwo"])
     assert res.exit_code == 1
@@ -359,6 +371,11 @@ def test_cli_install_multiple_partial_success_exits_nonzero(
     """M10: one failure among several tools still fails the multi-install."""
     from maniac.exceptions import ManiacError
     from maniac.models import PipelineResult
+
+    monkeypatch.setattr(
+        "maniac.sources.discovery.loginpath.which_login",
+        lambda name: Path(f"/bin/{name}"),
+    )
 
     def _run_pipeline(tool_name: str, **kwargs: object) -> PipelineResult:
         if tool_name == "badtool":

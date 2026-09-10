@@ -5,7 +5,19 @@ from pathlib import Path
 import pytest
 
 from maniac.models import Installation, RepoSource
-from maniac.orchestration.install import Tier, run_install
+from maniac.orchestration.install import InstallRefused, Tier, run_install
+from maniac.sources import discovery
+
+
+@pytest.fixture(autouse=True)
+def _reachable_from_the_login_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every test below names a tool nothing on this machine's `$PATH` has --
+    default `which_login` to "found" so ADR-0020's new refusal (tested on
+    its own below) doesn't fire for tests about tier selection instead.
+    """
+    monkeypatch.setattr(
+        discovery.loginpath, "which_login", lambda name: Path(f"/bin/{name}")
+    )
 
 
 class _FakeProvider:
@@ -256,5 +268,81 @@ def test_no_generate_installs_a_tier_1_page_with_no_llm_call(
     )
 
     outcome = run_install("tool", no_generate=True)
+
+    assert outcome.tier is Tier.INSTALL_ROOT
+
+
+def test_run_install_refuses_a_binary_the_login_path_cannot_reach(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ADR-0020: a manpage installs globally and permanently, so a binary
+    reachable only from the current environment is refused, and the refusal
+    names why rather than declining quietly.
+    """
+    monkeypatch.setattr(discovery.loginpath, "which_login", lambda name: None)
+    monkeypatch.setattr(
+        "maniac.orchestration.install.discovery.find_installation",
+        lambda name, bin_dir=None: None,
+    )
+
+    with pytest.raises(InstallRefused) as excinfo:
+        run_install("project-local-tool")
+
+    message = str(excinfo.value)
+    assert "project-local-tool" in message
+    assert "login shell" in message
+    assert "global" in message
+
+
+def test_run_install_refusal_runs_no_tier(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The refusal fires before any tier runs -- even one `find_installation`
+    would happily resolve.
+    """
+    page = tmp_path / "tool.1"
+    page.write_text(".TH TOOL 1\n", encoding="utf-8")
+    provider = _FakeProvider(local_docs=[page])
+    inst = _installation()
+    monkeypatch.setattr(
+        "maniac.orchestration.install.discovery.find_installation",
+        lambda name, bin_dir=None: (provider, inst),
+    )
+    monkeypatch.setattr(
+        "maniac.orchestration.install.install_manpage",
+        lambda *args, **kwargs: pytest.fail("no tier should run on a refusal"),
+    )
+    monkeypatch.setattr(discovery.loginpath, "which_login", lambda name: None)
+
+    with pytest.raises(InstallRefused):
+        run_install("tool")
+
+
+def test_run_install_explicit_bin_dir_bypasses_the_refusal(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """An explicit `bin_dir` is stated intent (mirrors `_resolve_bin_path`'s
+    own precedence): reachability is judged there directly, never routed
+    through the login `$PATH` at all.
+    """
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "tool").touch(mode=0o755)
+    monkeypatch.setattr(discovery.loginpath, "which_login", lambda name: None)
+
+    page = tmp_path / "tool.1"
+    page.write_text(".TH TOOL 1\n", encoding="utf-8")
+    provider = _FakeProvider(local_docs=[page])
+    inst = _installation()
+    monkeypatch.setattr(
+        "maniac.orchestration.install.discovery.find_installation",
+        lambda name, bin_dir=None: (provider, inst),
+    )
+    monkeypatch.setattr(
+        "maniac.orchestration.install.install_manpage",
+        lambda *args, **kwargs: Path("/installed/tool.1"),
+    )
+
+    outcome = run_install("tool", bin_dir=bin_dir)
 
     assert outcome.tier is Tier.INSTALL_ROOT

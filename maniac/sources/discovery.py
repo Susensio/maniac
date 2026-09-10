@@ -3,7 +3,6 @@
 import io
 import os
 import re
-import shutil
 import tarfile
 import tomllib
 from collections.abc import Callable
@@ -18,6 +17,7 @@ import zstandard
 
 from ..logging import logger
 from ..models import Installation, RepoSource
+from . import loginpath
 
 if TYPE_CHECKING:
     from .providers.base import Provider
@@ -27,21 +27,24 @@ MISE_REGISTRY_TTL_SECONDS = 3_600
 
 
 def _resolve_bin_path(binary_name: str, bin_dir: str | Path | None) -> Path | None:
-    """Locate a binary's path: an explicit directory first, then `$PATH`.
+    """Locate a binary's path: an explicit directory first, then the login `$PATH`.
 
-    With no `bin_dir`, resolution is exactly `shutil.which` -- nothing
-    else. `enumerate_installations` applies the identical first-`$PATH`-
-    entry-wins rule in bulk, by walking `$PATH` itself once for every
-    name rather than calling `shutil.which` once per name; that walk, not
-    a second notion of "which binary a name means", is the only reason
-    the mechanics differ here.
+    With no `bin_dir`, resolution is exactly `loginpath.which_login` --
+    nothing else. `enumerate_installations` applies the identical first-
+    `$PATH`-entry-wins rule in bulk, by walking the login `$PATH` itself
+    once for every name rather than calling `which_login` once per name;
+    that walk, not a second notion of "which binary a name means", is the
+    only reason the mechanics differ here.
+
+    An explicit `bin_dir` is stated intent -- a directory the caller named,
+    not one MANIAC found -- and is checked first regardless of what the
+    login `$PATH` would have resolved to.
     """
     if bin_dir is not None:
         explicit_path = Path(bin_dir) / binary_name
         if explicit_path.exists():
             return explicit_path
-    which_path = shutil.which(binary_name)
-    return Path(which_path) if which_path else None
+    return loginpath.which_login(binary_name)
 
 
 def discover_repo(
@@ -84,7 +87,7 @@ def enumerate_installations(
     on_start: Callable[[int], None] | None = None,
     on_scan: Callable[[], None] | None = None,
 ) -> "list[tuple[Provider, Installation]]":
-    """Walk `$PATH` once per unique binary name, resolved through the provider registry.
+    """Walk the login `$PATH` once per unique binary name, resolved through the provider registry.
 
     `status`'s enumeration (ADR-0016 Stage 7) inverts from scanning the
     manpath to this: a binary is a unit MANIAC can act on because some
@@ -94,6 +97,10 @@ def enumerate_installations(
     binary that actually runs when two providers claim the same name
     (ADR-0016's tie-break).
 
+    Walks `loginpath.login_path_dirs()` (ADR-0020) rather than the `$PATH`
+    MANIAC inherited, so the answer describes the machine rather than the
+    shell that happened to invoke this.
+
     `on_start`/`on_scan`, both `None` by default, split the work into two
     phases to instrument: `on_start` fires once with the candidate count,
     right after the directory scan and before the per-candidate
@@ -101,9 +108,7 @@ def enumerate_installations(
     once per candidate processed in that loop.
     """
     seen: dict[str, Path] = {}
-    for entry in os.environ.get("PATH", "").split(os.pathsep):
-        if not entry:
-            continue
+    for entry in loginpath.login_path_dirs():
         try:
             children = list(os.scandir(entry))
         except OSError:
