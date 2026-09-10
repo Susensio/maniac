@@ -21,13 +21,16 @@ def _repo_cell(source: Any, *, blank_when_unresolvable: bool = False) -> Any:
     clone_url = source.clone_url
     if clone_url is None:
         return Text(source.target, style="yellow")
-    return Text(
-        source.target,
-        style=Style(
+    text = Text(source.target)
+    text.stylize(
+        Style(
             color="green",
             link=clone_url.removesuffix(".git"),
         ),
+        0,
+        len(text),
     )
+    return text
 
 
 def _render_eval_table(target_console: Any, tool: str, result: Any) -> None:

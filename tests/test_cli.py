@@ -101,8 +101,10 @@ def test_repo_cell_links_known_repo_and_labels_unknown() -> None:
     unknown = _repo_cell(RepoSource(name="rg", target="rg", is_local=False))
 
     assert known.plain == "BurntSushi/ripgrep"
-    assert known.style.link == "https://github.com/BurntSushi/ripgrep"
-    assert known.style.underline is None
+    assert len(known.spans) == 1
+    assert known.spans[0].start == 0
+    assert known.spans[0].end == len(known)
+    assert known.spans[0].style.link == "https://github.com/BurntSushi/ripgrep"
     assert unknown.plain == "Unknown"
 
 
@@ -118,7 +120,39 @@ def test_repo_cell_aqua_backend_prefix_links_to_the_real_repo() -> None:
     )
 
     assert cell.plain == "aqua:sharkdp/pastel"
-    assert cell.style.link == "https://github.com/sharkdp/pastel"
+    assert len(cell.spans) == 1
+    assert cell.spans[0].style.link == "https://github.com/sharkdp/pastel"
+
+
+def test_repo_cell_link_does_not_include_table_padding() -> None:
+    from rich.console import Console
+    from rich.table import Table
+
+    short_target = "a/b"
+    table = Table()
+    table.add_column("Repository")
+    table.add_row(_repo_cell(RepoSource(name="a", target=short_target, is_local=False)))
+    table.add_row(
+        _repo_cell(
+            RepoSource(
+                name="long",
+                target="organization/repository",
+                is_local=False,
+            )
+        )
+    )
+
+    segments = list(Console(width=40, force_terminal=True).render(table))
+    target_index = next(
+        index for index, segment in enumerate(segments) if segment.text == short_target
+    )
+
+    target_style = segments[target_index].style
+    assert target_style is not None
+    assert target_style.link == "https://github.com/a/b"
+    assert segments[target_index + 1].text.isspace()
+    padding_style = segments[target_index + 1].style
+    assert padding_style is None or padding_style.link is None
 
 
 def test_repo_cell_non_github_backend_prefix_renders_as_plain_text() -> None:
