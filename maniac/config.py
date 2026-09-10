@@ -20,6 +20,15 @@ os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
 
 _UNSET = object()
 
+# Credentials needed by the providers bundled in defaults.toml. Keep this local
+# rather than asking LiteLLM: Config construction must only snapshot the process
+# environment, not import a provider client.
+_PROVIDER_CREDENTIALS: dict[str, tuple[str, ...]] = {
+    "gemini": ("GOOGLE_API_KEY", "GEMINI_API_KEY"),
+    "anthropic": ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"),
+    "openai": ("OPENAI_API_KEY",),
+}
+
 
 def _xdg_config_dir() -> Path:
     return Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
@@ -117,16 +126,14 @@ def _snapshot_provider_environment(
     provider_defaults: dict[str, str],
 ) -> tuple[list[str], list[str]]:
     """Return configured providers with keys present and the missing key names."""
-    import litellm
-
     present: list[str] = []
     checked: list[str] = []
-    for provider, model in provider_defaults.items():
-        result = litellm.validate_environment(model=model)
-        if result["keys_in_environment"]:
+    for provider in provider_defaults:
+        credentials = _PROVIDER_CREDENTIALS.get(provider, ())
+        if any(os.environ.get(name) for name in credentials):
             present.append(provider)
         else:
-            checked.extend(k for k in result["missing_keys"] if k not in checked)
+            checked.extend(name for name in credentials if name not in checked)
     return present, checked
 
 

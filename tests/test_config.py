@@ -99,6 +99,48 @@ def test_config_provider_defaults_are_not_shared_between_instances() -> None:
     assert "test" not in second.provider_defaults
 
 
+def test_config_construction_does_not_import_litellm() -> None:
+    script = textwrap.dedent(
+        """
+        import builtins
+        import os
+        import sys
+        import tempfile
+
+        root = tempfile.mkdtemp()
+        for variable in (
+            "XDG_CONFIG_HOME",
+            "XDG_CACHE_HOME",
+            "XDG_DATA_HOME",
+            "XDG_STATE_HOME",
+        ):
+            os.environ[variable] = root
+
+        from maniac.config import Config
+
+        original_import = builtins.__import__
+
+        def reject_litellm(name, *args, **kwargs):
+            if name == "litellm" or name.startswith("litellm."):
+                raise AssertionError("Config construction imported LiteLLM")
+            return original_import(name, *args, **kwargs)
+
+        builtins.__import__ = reject_litellm
+        Config()
+        assert "litellm" not in sys.modules
+        """
+    )
+
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
 def test_config_validates_bound_model_when_resolved(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -164,21 +206,19 @@ def test_model_for_metadata_does_not_sniff_provider_credentials(
 def test_resolve_model_keeps_the_first_sniffed_provider(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import litellm
-
-    active_provider = "gemini"
     monkeypatch.setattr("maniac.config._load_config_file", lambda config_dir: {})
     monkeypatch.delenv("MANIAC_MODEL", raising=False)
+    for variable in (
+        "GOOGLE_API_KEY",
+        "GEMINI_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "ANTHROPIC_AUTH_TOKEN",
+        "OPENAI_API_KEY",
+    ):
+        monkeypatch.delenv(variable, raising=False)
+    monkeypatch.setenv("GEMINI_API_KEY", "gemini-key")
     monkeypatch.setattr(
         "maniac.config._validate_model", lambda model, config_file: None
-    )
-    monkeypatch.setattr(
-        litellm,
-        "validate_environment",
-        lambda model: {
-            "keys_in_environment": model.startswith(active_provider + "/"),
-            "missing_keys": [],
-        },
     )
     cfg = Config(
         provider_defaults={
@@ -187,9 +227,67 @@ def test_resolve_model_keeps_the_first_sniffed_provider(
         }
     )
 
-    active_provider = "anthropic"
+    monkeypatch.delenv("GEMINI_API_KEY")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "anthropic-key")
 
     assert cfg.resolve_model() == "gemini/gemini-3.7-flash"
+    assert cfg.resolve_model() == "gemini/gemini-3.7-flash"
+
+
+@pytest.mark.parametrize(
+    ("provider", "model", "credential"),
+    [
+        ("gemini", "gemini/gemini-3.7-flash", "GOOGLE_API_KEY"),
+        ("gemini", "gemini/gemini-3.7-flash", "GEMINI_API_KEY"),
+        ("anthropic", "anthropic/claude-sonnet-4-6", "ANTHROPIC_API_KEY"),
+        ("anthropic", "anthropic/claude-sonnet-4-6", "ANTHROPIC_AUTH_TOKEN"),
+        ("openai", "openai/gpt-5.1-chat-latest", "OPENAI_API_KEY"),
+    ],
+)
+def test_resolve_model_snapshots_provider_credential_aliases(
+    monkeypatch: pytest.MonkeyPatch,
+    provider: str,
+    model: str,
+    credential: str,
+) -> None:
+    monkeypatch.setattr("maniac.config._load_config_file", lambda config_dir: {})
+    monkeypatch.delenv("MANIAC_MODEL", raising=False)
+    for variable in (
+        "GOOGLE_API_KEY",
+        "GEMINI_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "ANTHROPIC_AUTH_TOKEN",
+        "OPENAI_API_KEY",
+    ):
+        monkeypatch.delenv(variable, raising=False)
+    monkeypatch.setenv(credential, "provider-key")
+    monkeypatch.setattr(
+        "maniac.config._validate_model", lambda model, config_file: None
+    )
+
+    cfg = Config(provider_defaults={provider: model})
+    monkeypatch.delenv(credential)
+
+    assert cfg.resolve_model() == model
+
+
+def test_config_snapshots_credentials_loaded_from_dotenv(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr("maniac.config._load_config_file", lambda config_dir: {})
+    monkeypatch.setattr(
+        "maniac.config._validate_model", lambda model, config_file: None
+    )
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    (tmp_path / ".env").write_text("GEMINI_API_KEY=gemini-key\n", encoding="utf-8")
+
+    cfg = Config(
+        config_dir=tmp_path,
+        provider_defaults={"gemini": "gemini/gemini-3.7-flash"},
+    )
+    monkeypatch.delenv("GEMINI_API_KEY")
+
     assert cfg.resolve_model() == "gemini/gemini-3.7-flash"
 
 
@@ -328,19 +426,19 @@ def test_resolve_model_falls_back_to_manaic_model_env(
 def test_resolve_model_sniffs_provider_when_nothing_else_configured(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import litellm
-
     monkeypatch.setattr("maniac.config._load_config_file", lambda config_dir: {})
-    monkeypatch.setattr(os, "environ", os.environ.copy())
     monkeypatch.delenv("MANIAC_MODEL", raising=False)
+    for variable in (
+        "GOOGLE_API_KEY",
+        "GEMINI_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "ANTHROPIC_AUTH_TOKEN",
+        "OPENAI_API_KEY",
+    ):
+        monkeypatch.delenv(variable, raising=False)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "anthropic-key")
     monkeypatch.setattr(
-        litellm,
-        "validate_environment",
-        lambda model: (
-            {"keys_in_environment": model.startswith("anthropic/"), "missing_keys": []}
-            if model.startswith("anthropic/")
-            else {"keys_in_environment": False, "missing_keys": ["GEMINI_API_KEY"]}
-        ),
+        "maniac.config._validate_model", lambda model, config_file: None
     )
 
     cfg = Config(
@@ -356,19 +454,10 @@ def test_resolve_model_sniffs_provider_when_nothing_else_configured(
 def test_resolve_model_zero_keys_names_config_path_and_checked_vars(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import litellm
-
     monkeypatch.setattr("maniac.config._load_config_file", lambda config_dir: {})
-    monkeypatch.setattr(os, "environ", os.environ.copy())
     monkeypatch.delenv("MANIAC_MODEL", raising=False)
-    monkeypatch.setattr(
-        litellm,
-        "validate_environment",
-        lambda model: {
-            "keys_in_environment": False,
-            "missing_keys": ["GEMINI_API_KEY"],
-        },
-    )
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
 
     with pytest.raises(ManiacError) as exc_info:
         Config(
@@ -382,23 +471,32 @@ def test_resolve_model_zero_keys_names_config_path_and_checked_vars(
 def test_resolve_model_multiple_keys_prints_one_stderr_line_and_picks_first(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    import litellm
-
     monkeypatch.setattr("maniac.config._load_config_file", lambda config_dir: {})
-    monkeypatch.setattr(os, "environ", os.environ.copy())
     monkeypatch.delenv("MANIAC_MODEL", raising=False)
+    for variable in (
+        "GOOGLE_API_KEY",
+        "GEMINI_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "ANTHROPIC_AUTH_TOKEN",
+        "OPENAI_API_KEY",
+    ):
+        monkeypatch.delenv(variable, raising=False)
+    monkeypatch.setenv("GEMINI_API_KEY", "gemini-key")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "anthropic-key")
     monkeypatch.setattr(
-        litellm,
-        "validate_environment",
-        lambda model: {"keys_in_environment": True, "missing_keys": []},
+        "maniac.config._validate_model", lambda model, config_file: None
     )
 
-    model = Config(
+    cfg = Config(
         provider_defaults={
             "gemini": "gemini/gemini-flash-latest",
             "anthropic": "anthropic/claude-sonnet-4-6",
         }
-    ).resolve_model()
+    )
+
+    assert capsys.readouterr().err == ""
+
+    model = cfg.resolve_model()
 
     assert model == "gemini/gemini-flash-latest"
     captured = capsys.readouterr()
