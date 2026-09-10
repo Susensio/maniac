@@ -3,6 +3,7 @@
 import json
 from pathlib import Path
 
+from ...config import Config
 from ...logging import logger
 from ...models import Installation, RepoSource
 from .. import discovery
@@ -45,7 +46,9 @@ class NpmProvider:
             root=root,
         )
 
-    def resolve_source(self, inst: Installation) -> RepoSource | None:
+    def resolve_source(
+        self, inst: Installation, *, config: Config
+    ) -> RepoSource | None:
         repo = _repo_from_repository_field(
             _read_package_json(inst.root).get("repository")
         )

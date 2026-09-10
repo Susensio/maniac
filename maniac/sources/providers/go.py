@@ -9,6 +9,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from ...config import Config
 from ...logging import logger
 from ...models import Installation, RepoSource
 from ..manpages import find_install_root_manpages
@@ -46,7 +47,9 @@ class GoProvider:
             root=gobin,
         )
 
-    def resolve_source(self, inst: Installation) -> RepoSource | None:
+    def resolve_source(
+        self, inst: Installation, *, config: Config
+    ) -> RepoSource | None:
         info = _read_module_info(inst.real_path)
         if info is None:
             return None

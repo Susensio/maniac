@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+from maniac.config import Config
 from maniac.models import Installation, RepoSource
 from maniac.sources.providers import ProviderRegistry, registry
 
@@ -15,7 +16,9 @@ class _FakeProvider:
     def detect(self, bin_path: Path) -> Installation | None:
         return None
 
-    def resolve_source(self, inst: Installation) -> RepoSource | None:
+    def resolve_source(
+        self, inst: Installation, *, config: Config
+    ) -> RepoSource | None:
         return None
 
     def local_docs(self, inst: Installation) -> list[Path]:

@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+from maniac.config import Config
 from maniac.models import RepoSource
 from maniac.sources.providers import mise
 
@@ -76,18 +77,27 @@ def test_resolve_source_wraps_resolve_from_mise(tmp_path: Path, monkeypatch) -> 
     assert inst is not None
     observed: dict[str, object] = {}
 
-    def fake_resolve(tool_id: str, binary_name: str, *, offline: bool = False) -> str:
+    def fake_resolve(
+        tool_id: str, binary_name: str, *, config: Config, offline: bool = False
+    ) -> str:
         observed["tool_id"] = tool_id
         observed["binary_name"] = binary_name
+        observed["config"] = config
         observed["offline"] = offline
         return "helix-editor/helix"
 
     monkeypatch.setattr(mise.discovery, "_resolve_from_mise", fake_resolve)
 
-    source = provider.resolve_source(inst)
+    config = Config()
+    source = provider.resolve_source(inst, config=config)
 
     assert source == RepoSource(name="hx", target="helix-editor/helix", is_local=False)
-    assert observed == {"tool_id": "helix", "binary_name": "hx", "offline": False}
+    assert observed == {
+        "tool_id": "helix",
+        "binary_name": "hx",
+        "config": config,
+        "offline": False,
+    }
 
 
 def test_resolve_source_returns_none_when_mise_registry_has_nothing(
@@ -100,7 +110,7 @@ def test_resolve_source_returns_none_when_mise_registry_has_nothing(
 
     monkeypatch.setattr(mise.discovery, "_resolve_from_mise", lambda *a, **k: None)
 
-    assert provider.resolve_source(inst) is None
+    assert provider.resolve_source(inst, config=Config()) is None
 
 
 def test_resolve_source_reads_the_backend_record_before_the_registry(
@@ -123,7 +133,7 @@ def test_resolve_source_reads_the_backend_record_before_the_registry(
 
     monkeypatch.setattr(mise.discovery, "_resolve_from_mise", fail_if_called)
 
-    source = provider.resolve_source(inst)
+    source = provider.resolve_source(inst, config=Config())
 
     assert source == RepoSource(name="biome", target="biomejs/biome", is_local=False)
 
@@ -139,7 +149,7 @@ def test_resolve_source_treats_github_backend_the_same_as_aqua(
     inst = provider.detect(bin_path)
     assert inst is not None
 
-    source = provider.resolve_source(inst)
+    source = provider.resolve_source(inst, config=Config())
 
     assert source == RepoSource(
         name="herdr", target="ogulcancelik/herdr", is_local=False
@@ -163,7 +173,7 @@ def test_resolve_source_gives_up_when_the_composed_npm_package_json_is_missing(
     inst = provider.detect(bin_path)
     assert inst is not None
 
-    assert provider.resolve_source(inst) is None
+    assert provider.resolve_source(inst, config=Config()) is None
 
 
 def test_resolve_source_falls_back_when_the_backend_record_is_not_utf8(
@@ -179,7 +189,7 @@ def test_resolve_source_falls_back_when_the_backend_record_is_not_utf8(
         mise.discovery, "_resolve_from_mise", lambda *a, **k: "helix-editor/helix"
     )
 
-    source = provider.resolve_source(inst)
+    source = provider.resolve_source(inst, config=Config())
 
     assert source == RepoSource(name="hx", target="helix-editor/helix", is_local=False)
 
@@ -197,12 +207,18 @@ def test_resolve_source_falls_back_to_the_registry_keyed_on_the_directory_name(
     provider = mise.MiseProvider()
     inst = provider.detect(bin_path)
     assert inst is not None
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "empty-config"))
-    monkeypatch.setattr(mise.discovery, "_load_mise_registry", lambda: {"nufmt": "x/y"})
+    monkeypatch.setattr(
+        mise.discovery, "_load_mise_registry", lambda cache_path: {"nufmt": "x/y"}
+    )
 
     # The registry only has an entry under the bare binary name, not the
     # installation-derived directory name -- restrictive resolution must miss.
-    assert provider.resolve_source(inst) is None
+    assert (
+        provider.resolve_source(
+            inst, config=Config(config_dir=tmp_path / "empty-config")
+        )
+        is None
+    )
 
 
 def test_resolve_source_offline_skips_the_registry_but_keeps_local_config(
@@ -221,14 +237,15 @@ def test_resolve_source_offline_skips_the_registry_but_keeps_local_config(
     (mise_dir / "config.toml").write_text(
         "[tool_alias]\nripgrep = 'github:private/rg'\n", encoding="utf-8"
     )
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
 
     def fail_if_called(*args: object, **kwargs: object) -> None:
         raise AssertionError("registry fallback must not run when offline")
 
     monkeypatch.setattr(mise.discovery, "_query_mise_registry", fail_if_called)
 
-    source = provider.resolve_source(inst, offline=True)
+    source = provider.resolve_source(
+        inst, config=Config(config_dir=tmp_path / "config"), offline=True
+    )
 
     assert source == RepoSource(name="rg", target="private/rg", is_local=False)
 
@@ -250,7 +267,7 @@ def test_resolve_source_offline_returns_none_rather_than_query_the_registry(
 
     monkeypatch.setattr(mise.discovery, "_query_mise_registry", fail_if_called)
 
-    assert provider.resolve_source(inst, offline=True) is None
+    assert provider.resolve_source(inst, config=Config(), offline=True) is None
 
 
 def test_local_docs_finds_manpage_under_install_root(tmp_path: Path) -> None:
@@ -307,13 +324,47 @@ def test_detect_composes_a_parent_for_an_npm_backend(tmp_path: Path) -> None:
     assert inst.parent.package == "yaml-language-server"
     assert inst.parent.root == package_dir
 
-    source = provider.resolve_source(inst)
+    source = provider.resolve_source(inst, config=Config())
 
     assert source == RepoSource(
         name="yaml-language-server",
         target="redhat-developer/yaml-language-server",
         is_local=False,
     )
+
+
+def test_resolve_source_passes_config_to_a_parent_provider(
+    tmp_path: Path, monkeypatch
+) -> None:
+    bin_path = _make_mise_install(
+        tmp_path, "npm-yaml-language-server", "1.24.0", "yaml-language-server"
+    )
+    root = bin_path.resolve().parents[1]
+    (root.parent / ".mise.backend.toml").write_text(
+        'full = "npm:yaml-language-server"\n', encoding="utf-8"
+    )
+    inst = mise.MiseProvider().detect(bin_path)
+    assert inst is not None and inst.parent is not None
+    config = Config()
+    observed: list[tuple[object, Config]] = []
+
+    class ParentProvider:
+        def resolve_source(self, parent, *, config: Config) -> RepoSource:
+            observed.append((parent, config))
+            return RepoSource(
+                name="yaml-language-server",
+                target="owner/repo",
+                is_local=False,
+            )
+
+    monkeypatch.setattr(mise, "_find_provider", lambda name: ParentProvider())
+
+    source = mise.MiseProvider().resolve_source(inst, config=config)
+
+    assert source == RepoSource(
+        name="yaml-language-server", target="owner/repo", is_local=False
+    )
+    assert observed == [(inst.parent, config)]
 
 
 def test_detect_composes_a_parent_for_a_pipx_backend(tmp_path: Path) -> None:
@@ -347,7 +398,7 @@ def test_detect_composes_a_parent_for_a_pipx_backend(tmp_path: Path) -> None:
     assert inst.parent.package == "tlp-ui"
     assert inst.parent.root == venv_root
 
-    source = provider.resolve_source(inst)
+    source = provider.resolve_source(inst, config=Config())
 
     assert source == RepoSource(name="tlpui", target="d4nj1/TLPUI", is_local=False)
 
@@ -370,4 +421,4 @@ def test_detect_leaves_parent_none_for_a_backend_with_no_composed_shape(
 
     assert inst is not None
     assert inst.parent is None
-    assert provider.resolve_source(inst) is None
+    assert provider.resolve_source(inst, config=Config()) is None

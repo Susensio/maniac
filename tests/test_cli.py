@@ -143,7 +143,9 @@ def test_cli_source_crawl(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_cli_source_docs(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         "maniac.sources.discovery.discover_repo",
-        lambda tool: RepoSource(name=tool, target="test/tool", is_local=False),
+        lambda tool, **kwargs: RepoSource(
+            name=tool, target="test/tool", is_local=False
+        ),
     )
     monkeypatch.setattr(
         "maniac.sources.docs.fetch_and_extract_docs",
@@ -169,7 +171,7 @@ def test_cli_install_dry_run(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) ->
     )
     monkeypatch.setattr(
         "maniac.orchestration.pipeline.discover_repo",
-        lambda name: RepoSource(name=name, target="org/tool", is_local=False),
+        lambda name, **kwargs: RepoSource(name=name, target="org/tool", is_local=False),
     )
     monkeypatch.setattr(
         "maniac.orchestration.pipeline.fetch_and_extract_docs",

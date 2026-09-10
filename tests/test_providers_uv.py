@@ -3,6 +3,7 @@
 import json
 from pathlib import Path
 
+from maniac.config import Config
 from maniac.sources.providers import uv
 
 
@@ -94,7 +95,7 @@ def test_resolve_source_finds_a_local_editable_checkout(tmp_path: Path) -> None:
     inst = uv.UvProvider().detect(bin_path)
     assert inst is not None
 
-    source = uv.UvProvider().resolve_source(inst)
+    source = uv.UvProvider().resolve_source(inst, config=Config())
 
     assert source is not None
     assert source.is_local
@@ -110,7 +111,7 @@ def test_resolve_source_returns_none_for_a_published_package(tmp_path: Path) -> 
     inst = uv.UvProvider().detect(bin_path)
     assert inst is not None
 
-    assert uv.UvProvider().resolve_source(inst) is None
+    assert uv.UvProvider().resolve_source(inst, config=Config()) is None
 
 
 def test_local_docs_finds_manpage_under_install_root(tmp_path: Path) -> None:

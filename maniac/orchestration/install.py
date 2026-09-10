@@ -202,7 +202,7 @@ def _try_repository(
     """
     if inst.version is None:
         return None
-    source = provider.resolve_source(inst)
+    source = provider.resolve_source(inst, config=cfg)
     if source is None:
         return None
 

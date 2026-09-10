@@ -9,6 +9,7 @@ listed in `.crates2.json`.
 import json
 from pathlib import Path
 
+from maniac.config import Config
 from maniac.sources.providers import cargo
 
 
@@ -117,7 +118,7 @@ def test_resolve_source_returns_none(tmp_path, monkeypatch) -> None:
     inst = provider.detect(bin_path)
     assert inst is not None
 
-    assert provider.resolve_source(inst) is None
+    assert provider.resolve_source(inst, config=Config()) is None
 
 
 def test_local_docs_finds_manpage_under_install_root(tmp_path, monkeypatch) -> None:

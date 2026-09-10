@@ -233,12 +233,12 @@ def _classify(
 
 
 def _resolve_upstream(
-    provider: "Provider | None", inst: "Installation | None"
+    provider: "Provider | None", inst: "Installation | None", *, config: Config
 ) -> RepoSource | None:
     """Resolve `inst`'s upstream repository."""
     if provider is None or inst is None:
         return None
-    return provider.resolve_source(inst)
+    return provider.resolve_source(inst, config=config)
 
 
 def compute_rows(
@@ -293,7 +293,7 @@ def compute_rows(
                     provider=provider.name if provider else "",
                     state=state,
                     source=source,
-                    upstream=_resolve_upstream(provider, inst),
+                    upstream=_resolve_upstream(provider, inst, config=cfg),
                 )
             )
             if on_row_scan is not None:
@@ -315,7 +315,7 @@ def compute_rows(
                 provider=provider.name,
                 state=state,
                 source=source,
-                upstream=_resolve_upstream(provider, inst),
+                upstream=_resolve_upstream(provider, inst, config=cfg),
             )
         )
         if on_row_scan is not None:

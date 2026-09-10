@@ -3,6 +3,7 @@
 import json
 from pathlib import Path
 
+from maniac.config import Config
 from maniac.models import RepoSource
 from maniac.sources.providers import npm
 
@@ -81,7 +82,7 @@ def test_resolve_source_reads_the_string_repository_field(tmp_path: Path) -> Non
     inst = npm.NpmProvider().detect(bin_path)
     assert inst is not None
 
-    source = npm.NpmProvider().resolve_source(inst)
+    source = npm.NpmProvider().resolve_source(inst, config=Config())
 
     assert source == RepoSource(
         name="yaml-language-server",
@@ -97,7 +98,7 @@ def test_resolve_source_reads_the_github_shorthand(tmp_path: Path) -> None:
     inst = npm.NpmProvider().detect(bin_path)
     assert inst is not None
 
-    source = npm.NpmProvider().resolve_source(inst)
+    source = npm.NpmProvider().resolve_source(inst, config=Config())
 
     assert source == RepoSource(name="tool", target="owner/tool", is_local=False)
 
@@ -114,7 +115,7 @@ def test_resolve_source_accepts_a_slash_terminated_repository_url(
     inst = npm.NpmProvider().detect(bin_path)
     assert inst is not None
 
-    source = npm.NpmProvider().resolve_source(inst)
+    source = npm.NpmProvider().resolve_source(inst, config=Config())
 
     assert source == RepoSource(name="tool", target="owner/tool", is_local=False)
 
@@ -126,7 +127,7 @@ def test_resolve_source_returns_none_with_no_repository_field(tmp_path: Path) ->
     inst = npm.NpmProvider().detect(bin_path)
     assert inst is not None
 
-    assert npm.NpmProvider().resolve_source(inst) is None
+    assert npm.NpmProvider().resolve_source(inst, config=Config()) is None
 
 
 def test_local_docs_finds_manpage_under_install_root(tmp_path: Path) -> None:

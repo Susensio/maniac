@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 
+from ...config import Config
 from ...logging import logger
 from ...models import Installation, RepoSource
 from ..manpages import find_install_root_manpages
@@ -46,7 +47,9 @@ class CargoProvider:
             root=cargo_bin,
         )
 
-    def resolve_source(self, inst: Installation) -> RepoSource | None:
+    def resolve_source(
+        self, inst: Installation, *, config: Config
+    ) -> RepoSource | None:
         # `.crates2.json` records no upstream repository -- crates.io itself
         # would have to be queried, and nothing here guesses one.
         return None

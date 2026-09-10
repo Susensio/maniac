@@ -8,6 +8,7 @@ from urllib.request import Request
 import pytest
 import zstandard
 
+from maniac.config import Config
 from maniac.models import Installation
 from maniac.sources import discovery, loginpath
 from maniac.sources.discovery import (
@@ -97,7 +98,10 @@ def test_check_mise_toml_invalid(tmp_path: Path) -> None:
 def test_discover_repo_fallback(monkeypatch, tmp_path: Path) -> None:
     """A binary nothing on disk resolves to is unresolvable, not a bare-name guess."""
     monkeypatch.setattr(discovery, "_load_mise_registry", dict)
-    assert discover_repo("nonexistent_unknown_tool", bin_dir=tmp_path) is None
+    assert (
+        discover_repo("nonexistent_unknown_tool", bin_dir=tmp_path, config=Config())
+        is None
+    )
 
 
 def test_discover_repo_has_no_implicit_local_bin_default(
@@ -114,7 +118,7 @@ def test_discover_repo_has_no_implicit_local_bin_default(
     monkeypatch.setenv("HOME", str(fake_home))
     monkeypatch.setattr(discovery.loginpath, "which_login", lambda name: None)
 
-    assert discover_repo("tool") is None
+    assert discover_repo("tool", config=Config()) is None
 
 
 def test_discover_repo_does_not_use_the_registry_without_an_installation(
@@ -132,7 +136,7 @@ def test_discover_repo_does_not_use_the_registry_without_an_installation(
         lambda: {"envsubst": "a8m/envsubst"},
     )
 
-    assert discover_repo("envsubst", bin_dir=tmp_path) is None
+    assert discover_repo("envsubst", bin_dir=tmp_path, config=Config()) is None
 
 
 def _fake_installation(binary: str) -> Installation:
@@ -262,14 +266,16 @@ def test_resolve_from_mise_checks_all_local_config_before_registry(
     (mise_dir / "b.toml").write_text(
         "[tool_alias]\nrg = 'github:private/rg'\n", encoding="utf-8"
     )
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     monkeypatch.setattr(
         discovery,
         "_load_mise_registry",
-        lambda: {"rg": "BurntSushi/ripgrep"},
+        lambda cache_path: {"rg": "BurntSushi/ripgrep"},
     )
 
-    assert _resolve_from_mise("rg", "rg") == "private/rg"
+    assert (
+        _resolve_from_mise("rg", "rg", config=Config(config_dir=tmp_path))
+        == "private/rg"
+    )
 
 
 def test_resolve_from_mise_offline_skips_the_registry(
@@ -279,14 +285,21 @@ def test_resolve_from_mise_offline_skips_the_registry(
     `_query_mise_registry` -- proven by making it raise -- even when local
     config has nothing either.
     """
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "empty-config"))
 
-    def fail_if_called(tool: str) -> str | None:
+    def fail_if_called(tool: str, *, config: Config) -> str | None:
         raise AssertionError("registry fallback must not run when offline")
 
     monkeypatch.setattr(discovery, "_query_mise_registry", fail_if_called)
 
-    assert _resolve_from_mise("rg", "rg", offline=True) is None
+    assert (
+        _resolve_from_mise(
+            "rg",
+            "rg",
+            config=Config(config_dir=tmp_path / "empty-config"),
+            offline=True,
+        )
+        is None
+    )
 
 
 def test_parse_mise_registry_resolves_short_names_aliases_and_bins() -> None:
@@ -325,10 +338,12 @@ def test_parse_mise_registry_prefers_canonical_names_and_normalizes_aqua() -> No
 
 def test_malformed_mise_registry_falls_back_without_error(monkeypatch) -> None:
     archive = _compressed_mise_registry({"registry/broken.toml": b"\xff"})
-    monkeypatch.setattr(discovery, "_read_mise_registry_archive", lambda: archive)
+    monkeypatch.setattr(
+        discovery, "_read_mise_registry_archive", lambda cache_path: archive
+    )
     _load_mise_registry.cache_clear()
 
-    assert _load_mise_registry() == {}
+    assert _load_mise_registry(Path("registry.tar.zst")) == {}
 
     _load_mise_registry.cache_clear()
 
@@ -353,13 +368,33 @@ def test_mise_registry_download_sends_user_agent(monkeypatch, tmp_path: Path) ->
         observed_timeout = timeout
         return Response()
 
-    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
     monkeypatch.setattr(discovery, "urlopen", fake_urlopen)
 
-    assert _read_mise_registry_archive() == b"registry"
+    config = Config(cache_dir=tmp_path / "cache" / "maniac" / "repos")
+    cache_path = config.cache_dir.parent / "mise-registry.tar.zst"
+    assert _read_mise_registry_archive(cache_path) == b"registry"
+    assert cache_path.exists()
     assert observed_timeout == 10
     assert observed_request is not None
     assert observed_request.get_header("User-agent") == "maniac/0.1"
+
+
+def test_query_mise_registry_uses_the_bound_config_cache_dir(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    config = Config(cache_dir=tmp_path / "cache" / "maniac" / "repos")
+    observed: list[Path] = []
+
+    def read_archive(cache_path: Path) -> None:
+        observed.append(cache_path)
+
+    monkeypatch.setattr(discovery, "_read_mise_registry_archive", read_archive)
+    _load_mise_registry.cache_clear()
+
+    assert discovery._query_mise_registry("ripgrep", config=config) is None
+    assert observed == [config.cache_dir.parent / "mise-registry.tar.zst"]
+
+    _load_mise_registry.cache_clear()
 
 
 def test_login_path_falls_back_when_shell_is_unset(monkeypatch) -> None:

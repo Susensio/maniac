@@ -3,6 +3,7 @@
 import tomllib
 from pathlib import Path
 
+from ...config import Config
 from ...logging import logger
 from ...models import Installation, RepoSource
 from .. import discovery
@@ -59,7 +60,7 @@ class MiseProvider:
         )
 
     def resolve_source(
-        self, inst: Installation, *, offline: bool = False
+        self, inst: Installation, *, config: Config, offline: bool = False
     ) -> RepoSource | None:
         """`offline`, used by `maniac list` (ADR-0018), skips only the mise-registry
         network fallback inside `discovery._resolve_from_mise` -- the parent
@@ -68,7 +69,11 @@ class MiseProvider:
         """
         if inst.parent is not None:
             provider = _find_provider(inst.parent.provider)
-            return provider.resolve_source(inst.parent) if provider else None
+            return (
+                provider.resolve_source(inst.parent, config=config)
+                if provider
+                else None
+            )
         backend_record = _read_backend_record(inst.root)
         if backend_record is not None:
             repo = _repo_from_backend(*backend_record)
@@ -77,7 +82,9 @@ class MiseProvider:
                 if repo
                 else None
             )
-        repo = discovery._resolve_from_mise(inst.package, inst.binary, offline=offline)
+        repo = discovery._resolve_from_mise(
+            inst.package, inst.binary, config=config, offline=offline
+        )
         return (
             RepoSource(name=inst.binary, target=repo, is_local=False) if repo else None
         )

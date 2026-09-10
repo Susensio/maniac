@@ -15,6 +15,7 @@ from urllib.request import Request, urlopen
 
 import zstandard
 
+from ..config import Config
 from ..logging import logger
 from ..models import Installation, RepoSource
 from . import loginpath
@@ -48,7 +49,7 @@ def resolve_bin_path(binary_name: str, bin_dir: str | Path | None) -> Path | Non
 
 
 def discover_repo(
-    binary_name: str, bin_dir: str | Path | None = None
+    binary_name: str, bin_dir: str | Path | None = None, *, config: Config
 ) -> RepoSource | None:
     """Discover an upstream repository or local source for a binary dynamically.
 
@@ -63,7 +64,7 @@ def discover_repo(
     bin_path = resolve_bin_path(binary_name, bin_dir)
     if bin_path is None:
         return None
-    return _resolve_symlink_target(binary_name, bin_path)
+    return _resolve_symlink_target(binary_name, bin_path, config=config)
 
 
 def find_installation(
@@ -148,12 +149,14 @@ def _detect_via_registry(bin_path: Path) -> "tuple[Provider, Installation] | Non
     return None
 
 
-def _resolve_symlink_target(binary_name: str, bin_path: Path) -> RepoSource | None:
+def _resolve_symlink_target(
+    binary_name: str, bin_path: Path, *, config: Config
+) -> RepoSource | None:
     found = _detect_via_registry(bin_path)
     if found is None:
         return None
     provider, inst = found
-    return provider.resolve_source(inst)
+    return provider.resolve_source(inst, config=config)
 
 
 def _check_mise_toml(cfg_path: Path, tool_id: str, binary_name: str) -> str | None:
@@ -189,7 +192,7 @@ def _check_mise_toml(cfg_path: Path, tool_id: str, binary_name: str) -> str | No
 
 
 def _resolve_from_mise(
-    tool_id: str, binary_name: str, *, offline: bool = False
+    tool_id: str, binary_name: str, *, config: Config, offline: bool = False
 ) -> str | None:
     """Infer a repository from Mise configuration files, then the registry.
 
@@ -205,8 +208,7 @@ def _resolve_from_mise(
     at zero network I/O; `install` leaves it at the default and may still
     hit the network.
     """
-    xdg_config = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
-    mise_cfg_dir = xdg_config / "mise"
+    mise_cfg_dir = config.config_dir / "mise"
     if mise_cfg_dir.exists():
         for cfg_path in mise_cfg_dir.glob("**/*.toml"):
             found = _check_mise_toml(cfg_path, tool_id, binary_name)
@@ -215,7 +217,7 @@ def _resolve_from_mise(
 
     if offline:
         return None
-    return _query_mise_registry(tool_id)
+    return _query_mise_registry(tool_id, config=config)
 
 
 def _match_mise_filter_bins(tool_val: object, binary_name: str) -> bool:
@@ -228,15 +230,15 @@ def _match_mise_filter_bins(tool_val: object, binary_name: str) -> bool:
     return False
 
 
-def _query_mise_registry(tool: str) -> str | None:
+def _query_mise_registry(tool: str, *, config: Config) -> str | None:
     """Look up a tool in the official Mise registry without invoking Mise."""
-    return _load_mise_registry().get(tool)
+    return _load_mise_registry(_mise_registry_cache_path(config)).get(tool)
 
 
 @cache
-def _load_mise_registry() -> dict[str, str]:
+def _load_mise_registry(cache_path: Path) -> dict[str, str]:
     """Load short names, aliases, and bins from Mise's cached registry archive."""
-    archive = _read_mise_registry_archive()
+    archive = _read_mise_registry_archive(cache_path)
     if archive is None:
         return {}
 
@@ -253,9 +255,8 @@ def _load_mise_registry() -> dict[str, str]:
         return {}
 
 
-def _read_mise_registry_archive() -> bytes | None:
+def _read_mise_registry_archive(cache_path: Path) -> bytes | None:
     """Read the fresh archive or download it once for the local cache."""
-    cache_path = _mise_registry_cache_path()
     try:
         if (
             cache_path.is_file()
@@ -282,10 +283,9 @@ def _read_mise_registry_archive() -> bytes | None:
             return None
 
 
-def _mise_registry_cache_path() -> Path:
-    """Return MANIAC's XDG cache location for Mise registry data."""
-    cache_home = Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache")
-    return cache_home / "maniac" / "mise-registry.tar.zst"
+def _mise_registry_cache_path(config: Config) -> Path:
+    """Return MANIAC's cache location for Mise registry data."""
+    return config.cache_dir.parent / "mise-registry.tar.zst"
 
 
 def _parse_mise_registry(archive: bytes) -> dict[str, str]:

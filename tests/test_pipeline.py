@@ -135,7 +135,7 @@ def test_run_pipeline_rejects_root_help_without_other_context(
     )
     monkeypatch.setattr(
         "maniac.orchestration.pipeline.discover_repo",
-        lambda name: RepoSource(name=name, target=name, is_local=False),
+        lambda name, **kwargs: RepoSource(name=name, target=name, is_local=False),
     )
     monkeypatch.setattr(
         "maniac.orchestration.pipeline.fetch_and_extract_docs",

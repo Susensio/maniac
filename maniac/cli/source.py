@@ -50,7 +50,7 @@ def docs(
     try:
         cfg = get_config(ctx)
         cache_dir = cache_dir or str(cfg.cache_dir)
-        source = discover_repo(tool)
+        source = discover_repo(tool, config=cfg)
         if source is None:
             console.print(
                 f"[yellow]No installation-derived source found for '{tool}'.[/yellow]"

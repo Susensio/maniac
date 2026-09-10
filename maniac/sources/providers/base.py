@@ -3,6 +3,7 @@
 from pathlib import Path
 from typing import Protocol
 
+from ...config import Config
 from ...models import Installation, RepoSource
 
 
@@ -19,7 +20,9 @@ class Provider(Protocol):
         """Pure-filesystem and cheap: claim `bin_path` or return None."""
         ...
 
-    def resolve_source(self, inst: Installation) -> RepoSource | None:
+    def resolve_source(
+        self, inst: Installation, *, config: Config
+    ) -> RepoSource | None:
         """May consult a registry; returns where `inst`'s documentation lives upstream."""
         ...
 

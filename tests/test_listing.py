@@ -60,7 +60,9 @@ class _FakeProvider:
     def detect(self, bin_path: Path) -> Installation | None:
         return None
 
-    def resolve_source(self, inst: Installation) -> RepoSource | None:
+    def resolve_source(
+        self, inst: Installation, *, config: Config
+    ) -> RepoSource | None:
         return self._source
 
     def local_docs(self, inst: Installation) -> list[Path]:
@@ -684,7 +686,7 @@ def test_resolve_upstream_calls_provider_resolve_source() -> None:
     provider = _FakeProvider(source=source)
     inst = _installation()
 
-    assert _resolve_upstream(provider, inst) is source
+    assert _resolve_upstream(provider, inst, config=Config()) is source
 
 
 def test_resolve_upstream_mise_resolves_from_local_config_without_offline_flag(
@@ -699,8 +701,6 @@ def test_resolve_upstream_mise_resolves_from_local_config_without_offline_flag(
     (mise_dir / "config.toml").write_text(
         "[tool_alias]\nripgrep = 'github:private/rg'\n", encoding="utf-8"
     )
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
-
     provider = mise_module.MiseProvider()
     inst = Installation(
         binary="rg",
@@ -712,7 +712,9 @@ def test_resolve_upstream_mise_resolves_from_local_config_without_offline_flag(
         root=tmp_path / "installs" / "ripgrep" / "14.1.0",
     )
 
-    source = _resolve_upstream(provider, inst)
+    source = _resolve_upstream(
+        provider, inst, config=Config(config_dir=tmp_path / "config")
+    )
 
     assert source == RepoSource(name="rg", target="private/rg", is_local=False)
 
@@ -726,7 +728,6 @@ def test_resolve_upstream_mise_registry_failure_degrades_to_none(
     the whole chain degrades to a blank Upstream, proving the property that
     matters now that the network call actually happens.
     """
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "empty-config"))
 
     def raising_urlopen(*args: object, **kwargs: object) -> None:
         raise URLError("network unreachable")
@@ -745,12 +746,17 @@ def test_resolve_upstream_mise_registry_failure_degrades_to_none(
         root=tmp_path / "installs" / "cargo-https-github-com-nushell-nufmt" / "HEAD",
     )
 
-    assert _resolve_upstream(provider, inst) is None
+    assert (
+        _resolve_upstream(
+            provider, inst, config=Config(config_dir=tmp_path / "empty-config")
+        )
+        is None
+    )
     discovery._load_mise_registry.cache_clear()
 
 
 def test_resolve_upstream_none_without_provider_or_installation() -> None:
-    assert _resolve_upstream(None, None) is None
+    assert _resolve_upstream(None, None, config=Config()) is None
 
 
 # -- _filter_rows: union within an axis, intersection across axes -----------

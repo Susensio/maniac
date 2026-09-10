@@ -9,6 +9,7 @@ import json
 import subprocess
 from pathlib import Path
 
+from ...config import Config
 from ...logging import logger
 from ...models import Installation, RepoSource
 from .. import discovery
@@ -47,7 +48,9 @@ class HomebrewProvider:
             root=root,
         )
 
-    def resolve_source(self, inst: Installation) -> RepoSource | None:
+    def resolve_source(
+        self, inst: Installation, *, config: Config
+    ) -> RepoSource | None:
         homepage = _brew_homepage(inst.package)
         if not homepage:
             return None

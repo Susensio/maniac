@@ -48,9 +48,9 @@ def run_pipeline(
 
     logger.info("Discovering source and extracting documentation", tool=tool_name)
     source = (
-        discover_repo(tool_name, bin_dir=bin_dir)
+        discover_repo(tool_name, bin_dir=bin_dir, config=cfg)
         if bin_dir is not None
-        else discover_repo(tool_name)
+        else discover_repo(tool_name, config=cfg)
     )
     # Resolved separately from `source` above: shares `find_installation`'s
     # own bin-path resolution rather than `source`'s, since only the

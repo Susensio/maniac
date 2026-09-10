@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from maniac.config import Config
 from maniac.models import Installation, RepoSource
 from maniac.orchestration.install import InstallRefused, Tier, run_install
 from maniac.sources import discovery
@@ -36,7 +37,9 @@ class _FakeProvider:
     def detect(self, bin_path: Path) -> Installation | None:
         return None
 
-    def resolve_source(self, inst: Installation) -> RepoSource | None:
+    def resolve_source(
+        self, inst: Installation, *, config: Config
+    ) -> RepoSource | None:
         return self._source
 
     def local_docs(self, inst: Installation) -> list[Path]:

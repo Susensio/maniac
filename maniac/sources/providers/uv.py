@@ -3,6 +3,7 @@
 import json
 from pathlib import Path
 
+from ...config import Config
 from ...logging import logger
 from ...models import Installation, RepoSource
 from ..manpages import find_install_root_manpages
@@ -37,7 +38,9 @@ class UvProvider:
             root=root,
         )
 
-    def resolve_source(self, inst: Installation) -> RepoSource | None:
+    def resolve_source(
+        self, inst: Installation, *, config: Config
+    ) -> RepoSource | None:
         local_dir = _local_editable_dir(inst.root)
         if local_dir is None:
             return None

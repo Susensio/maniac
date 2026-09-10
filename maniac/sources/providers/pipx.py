@@ -4,6 +4,7 @@ import email
 import os
 from pathlib import Path
 
+from ...config import Config
 from ...logging import logger
 from ...models import Installation, RepoSource
 from .. import discovery
@@ -44,7 +45,9 @@ class PipxProvider:
             )
         return None
 
-    def resolve_source(self, inst: Installation) -> RepoSource | None:
+    def resolve_source(
+        self, inst: Installation, *, config: Config
+    ) -> RepoSource | None:
         metadata = _find_metadata(inst.root, inst.package)
         if metadata is None:
             return None

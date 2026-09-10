@@ -3,6 +3,7 @@
 import subprocess
 from pathlib import Path
 
+from maniac.config import Config
 from maniac.sources.providers import local_lib
 
 
@@ -86,7 +87,7 @@ def test_resolve_source_uses_the_git_remote_when_one_exists(
     inst = local_lib.LocalLibProvider().detect(bin_path)
     assert inst is not None
 
-    source = local_lib.LocalLibProvider().resolve_source(inst)
+    source = local_lib.LocalLibProvider().resolve_source(inst, config=Config())
 
     assert source is not None
     assert not source.is_local
@@ -102,7 +103,7 @@ def test_resolve_source_falls_back_to_local_without_a_git_remote(
     inst = local_lib.LocalLibProvider().detect(bin_path)
     assert inst is not None
 
-    source = local_lib.LocalLibProvider().resolve_source(inst)
+    source = local_lib.LocalLibProvider().resolve_source(inst, config=Config())
 
     assert source is not None
     assert source.is_local
