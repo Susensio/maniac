@@ -985,7 +985,9 @@ def test_render_list_tty_shows_the_four_column_table() -> None:
 
 def test_render_list_colors_the_state_column_per_category() -> None:
     buf = io.StringIO()
-    test_console = Console(file=buf, force_terminal=True, color_system="standard")
+    test_console = Console(
+        file=buf, force_terminal=True, color_system="standard", no_color=False
+    )
 
     _render_list(
         test_console,
