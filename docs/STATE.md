@@ -39,17 +39,28 @@ So this path is no longer reachable here and only its tests exercise it.
 
 ### Verified
 
-`just check` green.
-Full live verification is pending re-run after the sentinel change; the previous full run was 394 tests with the four `just check` stages clean, and confirmed: exactly one login-shell spawn per process (`strace`), 61ms cold against 0.003ms cached, and the `--generate` refusal firing before any tier.
+`just check` green: 398 tests, all four stages clean.
+
+Live, on the development system, after the user fixed the shell-configuration gap described above:
+
+- **Directory invariance holds.** `uv run maniac list` from this repository and `maniac list` from `$HOME` both return 76 rows, byte-identical. This is the property ADR-0020 exists to create and it did not hold before.
+- `ty` resolves to mise 0.0.78 at `~/.local/bin/ty`, where it previously resolved to this repository's unclaimed 0.0.75 dev dependency. `ruff` resolves to mise 0.16.6.
+- **The refusal discriminates.** `install ruff` proceeds; `install pytest` refuses with the reason named, both plain and under `--generate`. Both mattered: an earlier state refused everything, which made a refusal prove nothing.
+- No fallback warning fires, and the probe sentinel never leaks into output.
+- Exactly one login-shell spawn per process (`strace`), 61ms cold against 0.003ms cached.
 
 The measurement caveat that governed every earlier figure in this file is **gone**: numbers no longer have to be taken through `uv run` with `.venv/bin` shadowing real binaries, because that is precisely what this work removes.
-Re-measure anything quoted from before ADR-0020 rather than trusting it.
+Re-measure anything quoted from before ADR-0020 rather than trusting it — the row count moved from 70 to 76 for this reason alone.
 
 ### Unfinished
 
 **`ty` was never regenerated.**
-Carried over from [ADR-0019](adr/0019-earn-synthesized-page-version.md): four attempts returned `litellm.ServiceUnavailableError` (Gemini 503), so its manifest entry still reads `version: null` and it cannot show `outdated`.
+Carried over from [ADR-0019](adr/0019-earn-synthesized-page-version.md), and attempted once more here: **five** attempts now, all returning `litellm.ServiceUnavailableError` — Gemini 503, "this model is currently experiencing high demand" — on `gemini/gemini-flash-latest`.
+Its manifest entry still reads `version: null` and it cannot show `outdated`.
 Nothing is broken; the work did not complete.
+
+Five failures across two sessions is enough to stop treating this as transient bad luck.
+Before the sixth attempt, consider whether the model pin is the problem rather than the service: `gemini-flash-latest` is a moving alias, and a pinned model or a different provider may simply not be under the same load.
 
 Re-run plain `maniac install ty` when the API recovers — unflagged, not `--generate`: ADR-0016 orders the tiers authoritative-first and tiers 1 and 2 record a version too, so forcing synthesis can only buy a worse page for an LLM call it did not need.
 For `ty` specifically it makes no difference — `--no-generate` reported no install-root or repository page — but the habit matters.
