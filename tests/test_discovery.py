@@ -407,6 +407,49 @@ def test_login_path_parses_a_normal_colon_separated_result(monkeypatch) -> None:
     assert login_path_dirs() == [Path("/usr/bin"), Path("/bin")]
 
 
+def test_login_shell_env_scrubs_activation_markers_and_sets_bootstrap_path(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("PATH", "/project/.venv/bin:/usr/bin")
+    monkeypatch.setenv("VIRTUAL_ENV", "/project/.venv")
+    monkeypatch.setenv("UV_PROJECT_ENVIRONMENT", "/project/.venv")
+    monkeypatch.setenv("DIRENV_DIR", "/project")
+    monkeypatch.setenv("CONDA_PREFIX", "/opt/conda/envs/x")
+    monkeypatch.setenv("HOME", "/home/tester")
+
+    env = loginpath._login_shell_env()
+
+    assert env["PATH"] == loginpath._BOOTSTRAP_PATH
+    assert "VIRTUAL_ENV" not in env
+    assert "UV_PROJECT_ENVIRONMENT" not in env
+    assert "DIRENV_DIR" not in env
+    assert "CONDA_PREFIX" not in env
+    assert env["HOME"] == "/home/tester"
+
+
+def test_login_path_does_not_leak_the_callers_path_or_virtualenv(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """Regression: `uv run` prepends `.venv/bin` to the inherited `$PATH`,
+    and a login shell spawned with that env unscrubbed reports it right
+    back, defeating ADR-0020 in exactly the case it exists for -- nothing
+    in a typical rc file ever resets an inherited `$PATH`.
+
+    Runs a real shell against a real (sentinel-poisoned) environment; a
+    `subprocess.run` mock cannot catch this class of bug, since the bug is
+    in what gets handed to the real subprocess call.
+    """
+    sentinel_bin = str(tmp_path / "sentinel-bin")
+    sentinel_venv = str(tmp_path / "sentinel-venv")
+    monkeypatch.setenv("SHELL", "/bin/sh")
+    monkeypatch.setenv("PATH", f"{sentinel_bin}:/usr/bin:/bin")
+    monkeypatch.setenv("VIRTUAL_ENV", sentinel_venv)
+
+    result = login_path()
+
+    assert sentinel_bin not in result
+
+
 def test_login_path_runs_the_login_shell_once_across_many_lookups(monkeypatch) -> None:
     """The caching property is the whole point (ADR-0020): the login shell's
     startup is paid once per process, not once per binary looked up.
