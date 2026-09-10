@@ -504,6 +504,10 @@ def test_login_shell_env_scrubs_activation_markers_and_sets_bootstrap_path(
     monkeypatch.setenv("UV_PROJECT_ENVIRONMENT", "/project/.venv")
     monkeypatch.setenv("DIRENV_DIR", "/project")
     monkeypatch.setenv("CONDA_PREFIX", "/opt/conda/envs/x")
+    monkeypatch.setenv("XDG_CONFIG_HOME", "/tmp/redirected-config")
+    monkeypatch.setenv("XDG_RUNTIME_DIR", "/run/user/1000")
+    monkeypatch.setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path=/run/user/1000/bus")
+    monkeypatch.setenv("XDG_CONFIG_DIRS", "/etc/xdg")
     monkeypatch.setenv("HOME", "/home/tester")
 
     env = loginpath._login_shell_env()
@@ -513,6 +517,15 @@ def test_login_shell_env_scrubs_activation_markers_and_sets_bootstrap_path(
     assert "UV_PROJECT_ENVIRONMENT" not in env
     assert "DIRENV_DIR" not in env
     assert "CONDA_PREFIX" not in env
+    # XDG_CONFIG_HOME decides which profile the login shell reads --
+    # redirecting it (a test harness protecting a real manifest, say)
+    # points the shell at a profile that doesn't exist, which trips the
+    # sixth fallback and hands back the caller's own $PATH. The bus
+    # variables must survive scrubbing or the systemd pull breaks.
+    assert "XDG_CONFIG_HOME" not in env
+    assert env["XDG_RUNTIME_DIR"] == "/run/user/1000"
+    assert env["DBUS_SESSION_BUS_ADDRESS"] == "unix:path=/run/user/1000/bus"
+    assert env["XDG_CONFIG_DIRS"] == "/etc/xdg"
     assert env["HOME"] == "/home/tester"
 
 
@@ -530,6 +543,7 @@ def test_login_path_does_not_leak_the_callers_path_or_virtualenv(
     """
     sentinel_bin = str(tmp_path / "sentinel-bin")
     sentinel_venv = str(tmp_path / "sentinel-venv")
+    redirected_xdg_config = str(tmp_path / "redirected-xdg-config")
     # A real rc file, so the real subprocess call below builds a $PATH
     # of its own beyond _BOOTSTRAP_PATH -- otherwise the sixth fallback
     # (login shell taught us nothing) would trigger and this test would
@@ -543,11 +557,19 @@ def test_login_path_does_not_leak_the_callers_path_or_virtualenv(
     monkeypatch.setenv("SHELL", "/bin/sh")
     monkeypatch.setenv("PATH", f"{sentinel_bin}:/usr/bin:/bin")
     monkeypatch.setenv("VIRTUAL_ENV", sentinel_venv)
+    # A directory that does not exist: on a machine where
+    # /etc/profile.d/profile_xdg.sh sources ${XDG_CONFIG_HOME}/profile to
+    # pull the real environment, an unscrubbed redirect like this would
+    # point the login shell at nothing to source. Not observable via the
+    # systemd pull itself here -- the sandbox blocks the user bus -- but
+    # the redirected value must not reach the child regardless.
+    monkeypatch.setenv("XDG_CONFIG_HOME", redirected_xdg_config)
 
     result = login_path()
 
     assert sentinel_bin not in result
     assert loginpath._LOGIN_PATH_PROBE not in result
+    assert redirected_xdg_config not in result
 
 
 def test_login_path_runs_the_login_shell_once_across_many_lookups(monkeypatch) -> None:
