@@ -62,3 +62,9 @@ A dead pin still reports itself by name, but it does so once, when the `Config` 
 
 Import time stops being load-bearing, which means `import maniac.config` no longer reads the filesystem or the environment as a side effect.
 That makes the module cheaper to import and safe to import from a test that has not yet arranged its environment.
+
+## Corrections
+
+2026-09-10: The consequences originally said model validation moved from each resolution call to `Config` construction.
+That timing cannot coexist with ADR-0011's flag-first precedence: an invalid lower-priority configured or environment model would abort construction before a valid explicit model could win.
+Configuration values and provider availability bind at construction; validation happens once the precedence winner is selected by `resolve_model`.
