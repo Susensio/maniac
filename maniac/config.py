@@ -24,6 +24,7 @@ _XDG_CONFIG: Path | None = None
 _XDG_CACHE: Path | None = None
 _XDG_DATA: Path | None = None
 _XDG_STATE: Path | None = None
+_UNSET = object()
 
 
 def _xdg_config_dir() -> Path:
@@ -99,6 +100,23 @@ def _configured_reasoning_effort(config_values: dict[str, Any]) -> str | None:
     return config_values.get("reasoning_effort") or os.environ.get(
         "MANIAC_REASONING_EFFORT"
     )
+
+
+def _configured_model(
+    config_values: dict[str, Any],
+    model_from_environment: str | None,
+    provider_defaults: dict[str, str],
+    config_file: Path,
+) -> str | None:
+    if config_values.get("model"):
+        return config_values["model"].strip()
+    if config_values.get("provider"):
+        return _provider_default_model(
+            config_values["provider"], provider_defaults, config_file
+        ).strip()
+    if model_from_environment:
+        return model_from_environment.strip()
+    return None
 
 
 def _provider_default_model(
@@ -182,12 +200,12 @@ class Config:
     backup_dir: Path = field(
         default_factory=lambda: _xdg_state_dir() / "maniac" / "backups"
     )
-    llm_api_key: str | None = field(
-        default_factory=lambda: os.environ.get("MANIAC_LLM_API_KEY")
-    )
-    llm_reasoning_effort: str | None = None
+    llm_api_key: str | None = cast(str | None, _UNSET)
+    llm_reasoning_effort: str | None = cast(str | None, _UNSET)
     provider_defaults: dict[str, str] = field(
-        default_factory=lambda: cast(dict[str, str], _load_defaults()["providers"]),
+        default_factory=lambda: dict(
+            cast(dict[str, str], _load_defaults()["providers"])
+        ),
         repr=False,
     )
     max_arg_limit: int = field(
@@ -222,17 +240,26 @@ class Config:
     )
     _config_values: dict[str, Any] = field(default_factory=dict, init=False, repr=False)
     _model_from_environment: str | None = field(default=None, init=False, repr=False)
+    _configured_model: str | None = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
         _load_config_env(self.config_dir)
         self._config_values = _load_config_file(self.config_dir)
-        if self.llm_api_key is None:
+        if self.llm_api_key is _UNSET:
             self.llm_api_key = os.environ.get("MANIAC_LLM_API_KEY")
-        if self.llm_reasoning_effort is None:
+        if self.llm_reasoning_effort is _UNSET:
             self.llm_reasoning_effort = _configured_reasoning_effort(
                 self._config_values
             )
         self._model_from_environment = os.environ.get("MANIAC_MODEL")
+        self._configured_model = _configured_model(
+            self._config_values,
+            self._model_from_environment,
+            self.provider_defaults,
+            self.config_dir / "config.toml",
+        )
+        if self._configured_model is not None:
+            _validate_model(self._configured_model, self.config_dir / "config.toml")
 
     def resolve_model(self, model: str | None = None) -> str:
         """Resolve a model identifier: explicit argument, config.toml, MANIAC_MODEL, sniffed provider.
@@ -242,29 +269,21 @@ class Config:
         the first configured provider whose API key is present.
         """
         if model:
-            resolved = model
-        elif self._config_values.get("model"):
-            resolved = self._config_values["model"]
-        elif self._config_values.get("provider"):
-            resolved = _provider_default_model(
-                self._config_values["provider"],
-                self.provider_defaults,
-                self.config_dir / "config.toml",
-            )
-        elif self._model_from_environment:
-            resolved = self._model_from_environment
-        else:
-            resolved = _provider_default_model(
-                _sniff_provider(
-                    self.provider_defaults,
-                    self.config_dir,
-                    self.config_dir / "config.toml",
-                ),
-                self.provider_defaults,
-                self.config_dir / "config.toml",
-            )
+            resolved = model.strip()
+            _validate_model(resolved, self.config_dir / "config.toml")
+            return resolved
+        if self._configured_model is not None:
+            return self._configured_model
 
-        resolved = resolved.strip()
+        resolved = _provider_default_model(
+            _sniff_provider(
+                self.provider_defaults,
+                self.config_dir,
+                self.config_dir / "config.toml",
+            ),
+            self.provider_defaults,
+            self.config_dir / "config.toml",
+        ).strip()
         _validate_model(resolved, self.config_dir / "config.toml")
         return resolved
 

@@ -73,6 +73,48 @@ def test_config_construction_binds_xdg_config_file_and_model_environment(
     assert cfg.resolve_model() == "openai/gpt-5.1-chat-latest"
 
 
+def test_config_uses_environment_only_when_llm_values_are_omitted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MANIAC_LLM_API_KEY", "environment-key")
+    monkeypatch.setenv("MANIAC_REASONING_EFFORT", "high")
+
+    inherited = Config()
+    disabled = Config(llm_api_key=None, llm_reasoning_effort=None)
+
+    assert inherited.llm_api_key == "environment-key"
+    assert inherited.llm_reasoning_effort == "high"
+    assert disabled.llm_api_key is None
+    assert disabled.llm_reasoning_effort is None
+
+
+def test_config_provider_defaults_are_not_shared_between_instances() -> None:
+    first = Config()
+    second = Config()
+
+    first.provider_defaults["test"] = "test/model"
+
+    assert first.provider_defaults is not second.provider_defaults
+    assert "test" not in second.provider_defaults
+
+
+def test_config_validates_bound_model_during_construction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+    monkeypatch.setattr("maniac.config._load_config_file", lambda config_dir: {})
+    monkeypatch.setenv("MANIAC_MODEL", "openai/gpt-5.1-chat-latest")
+    monkeypatch.setattr(
+        "maniac.config._validate_model", lambda model, config_file: calls.append(model)
+    )
+
+    cfg = Config()
+
+    assert calls == ["openai/gpt-5.1-chat-latest"]
+    assert cfg.resolve_model() == "openai/gpt-5.1-chat-latest"
+    assert calls == ["openai/gpt-5.1-chat-latest"]
+
+
 def test_load_config_env_preserves_shell_variable(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
