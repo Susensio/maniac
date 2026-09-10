@@ -3,28 +3,28 @@
 [ADR-0020](adr/0020-login-shell-path-refuse-contextual.md) and [ADR-0021](adr/0021-login-path-resolution-version-readback.md) are implemented, verified live, and carry their own reasoning — including the finding that cost the most to reach, that a login shell *inherits* `$PATH` and appends to it rather than constructing one, so it reports the caller's answer unless its environment is scrubbed first.
 [ADR-0019](adr/0019-earn-synthesized-page-version.md)'s last loose end is closed: `ty` was regenerated and its manifest entry records `version: "0.0.78"` where it previously recorded none.
 
-## ADR-0022 is accepted and not implemented at all
+## Upstream availability in `list` is in flight
 
-[ADR-0022](adr/0022-config-bound-at-construction.md) was accepted on 2026-09-10 (`84d8064`) and **no code has been written against it**.
-Two attempts were dispatched on the same day and neither committed anything: the first died to a rate limit, the second was stopped to conserve quota partway through reading `_resolve_from_mise`'s caller chain.
-The working tree was clean at both deaths, so there is nothing half-done to find or discard — start from the ADR.
+`maniac list fzf` currently reports `missing` after both installed copies of `fzf.1` were deleted, even though it resolves `junegunn/fzf` and the version-matched cached checkout contains `man/man1/fzf.1`.
+The cause is bounded: `list` resolves the repository identity but only checks reachable and install-root pages; the repository-manpage probe is called by `install` alone.
 
-It moves configuration binding from module import to first `Config` construction, keeping read-once semantics.
-The distinction it draws between "read once per process" and "read at import" is the whole point of the record and is not to be collapsed back: the first is what a short-lived CLI wants, the second is only how that had been implemented and is the one moment the program cannot intervene in.
+[ADR-0018](adr/0018-list-reports-manpage-reachability.md) already requires the missing network half and fixes the four-state output, so no new decision is needed.
+The accepted implementation is a cache-first versioned probe, followed by at most eight concurrent network probes, with one final ordered table after every row settles.
+Piped output remains bare final names and therefore waits for the same classification.
+Only a page accepted by the shared `discover_repo_manpage` primitive becomes `available` with source `upstream`; failures remain `missing` with the repository still visible.
 
-Four steps, in a required order:
+The related repository-link width defect is already fixed by `d48ba37`: Rich now links only the visible target text rather than the padded table cell.
 
-1. `maniac/config.py` — resolve XDG inside `Config`'s field factories instead of the module-level `_XDG_*` constants (l.20–23); move the `config.toml` read (`_CONFIG_VALUES`, l.73) and the packaged limits/timeouts (l.38–41) off import too. The limits/timeouts are currently *class-body* defaults, so they need factories as well. `resolve_model`'s `MANIAC_MODEL` lookup binds at construction rather than per call.
-2. Entry points — `cli/__init__.py`'s module-level `default_cfg = Config()` becomes lazy; the CLI constructs one `Config` at entry and threads it.
-3. `maniac/sources/discovery.py:208,287` — take XDG from the threaded `Config`.
-4. `tests/conftest.py` — the autouse `_no_real_xdg_writes` fixture converts to ordinary env-var patching, **keeping its protection**; the leak it guards must not come back.
+## ADR-0022 implementation is complete; final re-audit remains
 
-Step 3 before step 1 reintroduces the exact bug the ADR exists to remove.
-Each step commits separately and green, so a bisect can land between them.
+[ADR-0022](adr/0022-config-bound-at-construction.md) was implemented in its required order by `1323dc5`, `8351e53`, `42a98b3`, and `51b5fc9`, with review corrections in `0107c7a`, `726cb20`, `e09b7be`, and `65ebafe`.
+Configuration and provider availability bind at first `Config` construction, one instance is threaded from the CLI entry point, discovery uses its paths, and the autouse no-real-XDG-write fixture now patches the environment rather than module internals.
 
-The step-2 investigation got as far as one useful observation worth not re-deriving: `_resolve_from_mise` and `_mise_registry_cache_path` are the two call sites needing a threaded `Config`, and their caller chains are what determines how far the threading has to reach.
+The last audit found that construction-time model validation broke ADR-0011's flag-first precedence and that provider availability was still live until first model use.
+`65ebafe` fixes both: availability is snapshotted without raising at construction, and only the precedence winner is validated when model resolution is requested.
+Its full check passed 412 tests; a fresh independent review and final isolated check still need to confirm the correction before this section can be removed.
 
-Open work with no owner is in `docs/BACKLOG.md`.
+Open work with no owner remains in `docs/BACKLOG.md`.
 
 ## What changed on the development system on 2026-09-10
 
@@ -33,7 +33,8 @@ Environment state, not code — anyone re-measuring needs to know this happened.
 `fzf`'s and `tmux`'s shipped manpages were **deleted** from their mise install roots (`~/.local/share/mise/installs/fzf/0.74.3/fzf.1`, `~/.local/share/mise/installs/tmux/3.7b/tmux.1`), deliberately, to remove tier 1 and force tier 2 to prove itself.
 Restore either with `mise install <tool> --force`.
 
-`fzf` was then installed by MANIAC through tier 2 and is a **MANIAC-managed page now**: `~/.local/share/man/man1/fzf.1`, manifest `tier: repository`, `source: junegunn/fzf`, `version: 0.74.3`.
+`fzf` was installed by MANIAC through tier 2, then the user deleted both that managed page and the mise install-root page again on 2026-09-10.
+Its cached version-matched repository remains at `~/.cache/maniac/repos/fzf@v0.74.3` and contains `man/man1/fzf.1`; this is the live reproducer for the `list` work above.
 `tmux` is currently left with **no manpage at all** — its shipped page is gone and its install failed — which makes it a live reproducer for the `tmux/tmux-builds` mis-resolution and the findings below.
 
 ## Two findings from that run that outrank the backlog's ordering
