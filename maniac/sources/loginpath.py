@@ -22,6 +22,51 @@ from ..logging import logger
 # wait out under normal conditions.
 _LOGIN_SHELL_TIMEOUT = 5
 
+# A login shell is supposed to *construct* $PATH from system defaults and
+# its own rc files, not receive one already built by the caller -- `uv run`
+# prepends `.venv/bin`, and nothing in a typical rc file ever resets it, so
+# an inherited $PATH here reintroduces exactly the caller-dependence ADR-0020
+# exists to remove. /usr/bin:/bin:/usr/sbin:/sbin is enough for the shell to
+# find `printenv` and build from; that value showing up in the result is
+# correct, not a bug.
+_BOOTSTRAP_PATH = "/usr/bin:/bin:/usr/sbin:/sbin"
+
+# Keys and prefixes a login shell's rc files or prompt hooks read to decide
+# whether to re-activate a project environment and prepend it back onto
+# $PATH -- the same class of re-entry ADR-0020's cwd=$HOME guards against,
+# through env instead of cwd. Trimmed here later by someone who doesn't
+# know what it defends against is the likely way this regresses, hence the
+# comment: each one is a real activation marker observed in the wild
+# (venv, conda, uv, direnv), not a guess.
+_ACTIVATION_ENV_KEYS = frozenset(
+    {
+        "VIRTUAL_ENV",
+        "VIRTUAL_ENV_PROMPT",
+        "CONDA_PREFIX",
+        "CONDA_DEFAULT_ENV",
+        "CONDA_SHLVL",
+        "CONDA_PROMPT_MODIFIER",
+    }
+)
+_ACTIVATION_ENV_PREFIXES = ("UV_", "DIRENV_")
+
+
+def _login_shell_env() -> dict[str, str]:
+    """The caller's environment, minus $PATH and every activation marker.
+
+    Everything else (`$HOME`, locale, `$SHELL` itself) passes through
+    unchanged -- only the channels a directory- or venv-triggered
+    activation could use to reconstruct a project `$PATH` are scrubbed.
+    """
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if key not in _ACTIVATION_ENV_KEYS
+        and not key.startswith(_ACTIVATION_ENV_PREFIXES)
+    }
+    env["PATH"] = _BOOTSTRAP_PATH
+    return env
+
 
 @cache
 def login_path() -> str:
@@ -48,6 +93,7 @@ def login_path() -> str:
         result = subprocess.run(
             [shell, "-lc", "printenv PATH"],
             cwd=Path.home(),
+            env=_login_shell_env(),
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
             text=True,
