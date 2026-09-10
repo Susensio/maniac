@@ -10,7 +10,7 @@ from ..config import Config
 from ..logging import logger
 from ..models import DocFile, RepoSource
 from .manpages import find_repo_manpage as _find_repo_manpage
-from .manpages import is_help2man_content
+from .manpages import is_help2man_content, manpage_documents, read_manpage_source
 
 DOC_EXTENSIONS = {".md", ".markdown", ".rst", ".1", ".txt"}
 DOC_DIRS = {
@@ -128,14 +128,23 @@ def resolve_repo_dir(
         return source.local_path
 
     cache_dir_path.mkdir(parents=True, exist_ok=True)
+    clone_url = source.clone_url
+    if not clone_url:
+        logger.debug("No clone URL for repository", source=source.name)
+        return None
 
     ref = None
     dest_name = source.name
     if version is not None:
-        clone_url = source.clone_url
-        if not clone_url:
-            logger.debug("No clone URL for repository", source=source.name)
-            return None
+        for candidate in _tag_candidates(version):
+            cached_dir = cache_dir_path / f"{source.name}@{candidate}"
+            if cached_dir.exists() and _cache_matches_source(
+                cached_dir, clone_url, cfg.timeout_git
+            ):
+                return cached_dir
+            if cached_dir.exists():
+                shutil.rmtree(cached_dir, ignore_errors=True)
+
         ref = _find_matching_tag(clone_url, version, cfg.timeout_git)
         if ref is None:
             logger.debug(
@@ -147,16 +156,15 @@ def resolve_repo_dir(
         dest_name = f"{source.name}@{ref}"
 
     dest_dir = cache_dir_path / dest_name
-    if dest_dir.exists() and not (dest_dir / ".git").exists():
+    if dest_dir.exists() and not _cache_matches_source(
+        dest_dir, clone_url, cfg.timeout_git
+    ):
         shutil.rmtree(dest_dir, ignore_errors=True)
 
-    if not dest_dir.exists():
-        clone_url = source.clone_url
-        if not clone_url:
-            logger.debug("No clone URL for repository", source=source.name)
-            return None
-        if not _clone_repository(clone_url, dest_dir, cfg, ref=ref):
-            return None
+    if not dest_dir.exists() and not _clone_repository(
+        clone_url, dest_dir, cfg, ref=ref
+    ):
+        return None
     return dest_dir
 
 
@@ -179,7 +187,46 @@ def discover_repo_manpage(
     repo_dir = resolve_repo_dir(source, cache_dir_path, cfg, version=version)
     if repo_dir is None:
         return None
-    return _find_repo_manpage(repo_dir, binary_name)
+    page = _find_repo_manpage(repo_dir, binary_name)
+    if page is None:
+        return None
+    try:
+        content = read_manpage_source(page)
+    except (OSError, UnicodeError) as error:
+        logger.debug(
+            "Unable to read repository manpage", path=str(page), error=str(error)
+        )
+        return None
+    if not manpage_documents(content, binary_name):
+        logger.debug(
+            "Repository manpage does not name the binary it claims to document",
+            tool=binary_name,
+            path=str(page),
+        )
+        return None
+    return page
+
+
+def _tag_candidates(version: str) -> tuple[str, str]:
+    """Return the conventional tag spellings for an installed version."""
+    return (f"v{version}", version)
+
+
+def _cache_matches_source(cache_dir: Path, clone_url: str, timeout: int) -> bool:
+    """Whether a cached checkout still belongs to the resolved repository."""
+    if not (cache_dir / ".git").exists():
+        return False
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(cache_dir), "remote", "get-url", "origin"],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return result.returncode == 0 and result.stdout.strip() == clone_url
 
 
 def _find_matching_tag(clone_url: str, version: str, timeout: int) -> str | None:
@@ -212,7 +259,7 @@ def _find_matching_tag(clone_url: str, version: str, timeout: int) -> str | None
         if ref:
             tags.add(ref.removesuffix("^{}"))
 
-    for candidate in (f"v{version}", version):
+    for candidate in _tag_candidates(version):
         if candidate in tags:
             return candidate
     return None

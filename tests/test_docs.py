@@ -1,3 +1,4 @@
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -11,6 +12,14 @@ from maniac.sources.docs import (
     format_docs_section,
     resolve_repo_dir,
 )
+
+
+def _init_cached_repo(path: Path, clone_url: str) -> None:
+    subprocess.run(["git", "init", "-q", str(path)], check=True)
+    subprocess.run(
+        ["git", "-C", str(path), "remote", "add", "origin", clone_url],
+        check=True,
+    )
 
 
 def test_extract_docs_from_dir(tmp_path: Path) -> None:
@@ -99,16 +108,15 @@ def test_fetch_and_extract_docs_includes_github_wiki(
 def test_fetch_and_extract_docs_limits_repo_and_wiki_to_total_characters(
     tmp_path: Path,
 ) -> None:
+    source = RepoSource(name="tool", target="owner/tool", is_local=False)
+    assert source.clone_url is not None
     repo_dir = tmp_path / "tool"
-    repo_dir.mkdir()
-    (repo_dir / ".git").mkdir()
+    _init_cached_repo(repo_dir, source.clone_url)
     (repo_dir / "README.md").write_text("12345678", encoding="utf-8")
     wiki_dir = tmp_path / "tool.wiki"
     wiki_dir.mkdir()
     (wiki_dir / ".git").mkdir()
     (wiki_dir / "Home.md").write_text("abcdefgh", encoding="utf-8")
-    source = RepoSource(name="tool", target="owner/tool", is_local=False)
-
     doc_files, matched = fetch_and_extract_docs(
         source, cache_dir=tmp_path, max_total_chars=10
     )
@@ -160,6 +168,19 @@ def test_discover_repo_manpage_local(tmp_path: Path) -> None:
     assert discover_repo_manpage(source, "tool") == manpage
 
 
+def test_discover_repo_manpage_rejects_a_page_naming_a_different_binary(
+    tmp_path: Path,
+) -> None:
+    man_dir = tmp_path / "man"
+    man_dir.mkdir()
+    (man_dir / "tool.1").write_text(".TH OTHER 1\n", encoding="utf-8")
+    source = RepoSource(
+        name="tool", target=f"LOCAL:{tmp_path}", is_local=True, local_path=tmp_path
+    )
+
+    assert discover_repo_manpage(source, "tool") is None
+
+
 def test_discover_repo_manpage_clones_and_reuses_cache(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -172,8 +193,7 @@ def test_discover_repo_manpage_clones_and_reuses_cache(
     ) -> bool:
         nonlocal clone_calls
         clone_calls += 1
-        dest_dir.mkdir()
-        (dest_dir / ".git").mkdir()
+        _init_cached_repo(dest_dir, clone_url)
         (dest_dir / "doc").mkdir()
         (dest_dir / "doc" / "tool.1").write_text(".TH TOOL 1\n", encoding="utf-8")
         return True
@@ -386,3 +406,79 @@ def test_discover_repo_manpage_with_version_uses_the_tagged_checkout(
     manpage = discover_repo_manpage(source, "tool", cache_dir=tmp_path, version="1.2.3")
 
     assert manpage == tmp_path / "tool@v1.2.3" / "tool.1"
+
+
+@pytest.mark.parametrize("tag", ["v1.2.3", "1.2.3"])
+def test_resolve_repo_dir_reuses_a_valid_versioned_cache_without_network(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, tag: str
+) -> None:
+    from maniac.config import Config
+    from maniac.sources import docs as docs_module
+
+    cached_dir = tmp_path / f"tool@{tag}"
+    source = RepoSource(name="tool", target="owner/tool", is_local=False)
+    assert source.clone_url is not None
+    _init_cached_repo(cached_dir, source.clone_url)
+
+    monkeypatch.setattr(
+        docs_module,
+        "_find_matching_tag",
+        lambda *args: pytest.fail("warm cache must skip ls-remote"),
+    )
+    monkeypatch.setattr(
+        docs_module,
+        "_clone_repository",
+        lambda *args, **kwargs: pytest.fail("warm cache must skip cloning"),
+    )
+
+    assert resolve_repo_dir(source, tmp_path, Config(), version="1.2.3") == cached_dir
+
+
+def test_resolve_repo_dir_discards_a_malformed_versioned_cache(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from maniac.config import Config
+    from maniac.sources import docs as docs_module
+
+    malformed_dir = tmp_path / "tool@v1.2.3"
+    malformed_dir.mkdir()
+    (malformed_dir / "stray").write_text("not a checkout", encoding="utf-8")
+    source = RepoSource(name="tool", target="owner/tool", is_local=False)
+    monkeypatch.setattr(docs_module, "_find_matching_tag", lambda *args: "1.2.3")
+
+    def fake_clone(
+        clone_url: str, dest_dir: Path, cfg: object, **kwargs: object
+    ) -> bool:
+        assert not malformed_dir.exists()
+        dest_dir.mkdir()
+        (dest_dir / ".git").mkdir()
+        return True
+
+    monkeypatch.setattr(docs_module, "_clone_repository", fake_clone)
+
+    assert resolve_repo_dir(source, tmp_path, Config(), version="1.2.3") == (
+        tmp_path / "tool@1.2.3"
+    )
+
+
+def test_resolve_repo_dir_rejects_cache_from_a_different_repository(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from maniac.config import Config
+    from maniac.sources import docs as docs_module
+
+    cached_dir = tmp_path / "tool@v1.2.3"
+    _init_cached_repo(cached_dir, "https://github.com/old/tool.git")
+    source = RepoSource(name="tool", target="new/tool", is_local=False)
+    monkeypatch.setattr(docs_module, "_find_matching_tag", lambda *args: "v1.2.3")
+
+    def fake_clone(
+        clone_url: str, dest_dir: Path, cfg: object, **kwargs: object
+    ) -> bool:
+        assert not cached_dir.exists()
+        _init_cached_repo(dest_dir, clone_url)
+        return True
+
+    monkeypatch.setattr(docs_module, "_clone_repository", fake_clone)
+
+    assert resolve_repo_dir(source, tmp_path, Config(), version="1.2.3") == cached_dir

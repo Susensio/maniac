@@ -1,6 +1,9 @@
 """Tests for `list` (ADR-0018): decisions only, no Rich-output scraping."""
 
 import io
+import subprocess
+import threading
+import time
 from pathlib import Path
 from urllib.error import URLError
 
@@ -87,7 +90,7 @@ def _installation(
 
 
 def _config(tmp_path: Path) -> Config:
-    return Config(man_dir=tmp_path / "man" / "man1")
+    return Config(man_dir=tmp_path / "man" / "man1", cache_dir=tmp_path / "repos")
 
 
 # -- compute_rows: enumeration and named-tools paths ------------------------
@@ -238,6 +241,157 @@ def test_compute_rows_no_args_threads_both_phases_callbacks(
     assert discovery_starts == [5]
     assert row_starts == [1]
     assert row_scans == 1
+
+
+def test_compute_rows_upgrades_a_versioned_cached_repository_page(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    cfg = _config(tmp_path)
+    cached_dir = cfg.cache_dir / "fzf@v0.74.3" / "man" / "man1"
+    cached_dir.mkdir(parents=True)
+    (cached_dir / "fzf.1").write_text(".TH FZF 1\n", encoding="utf-8")
+    source = RepoSource(name="fzf", target="junegunn/fzf", is_local=False)
+    assert source.clone_url is not None
+    subprocess.run(["git", "init", "-q", str(cached_dir.parents[1])], check=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(cached_dir.parents[1]),
+            "remote",
+            "add",
+            "origin",
+            source.clone_url,
+        ],
+        check=True,
+    )
+    provider = _FakeProvider(source=source)
+    inst = _installation(binary="fzf", version="0.74.3")
+    monkeypatch.setattr(
+        "maniac.cli.listing.discovery.enumerate_installations",
+        lambda on_start=None, on_scan=None: [(provider, inst)],
+    )
+
+    rows = compute_rows(config=cfg)
+
+    assert rows[0].state is ActionState.AVAILABLE
+    assert rows[0].source is PageSource.UPSTREAM
+    assert rows[0].upstream is source
+
+
+def test_compute_rows_keeps_an_offline_upstream_row_missing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    source = RepoSource(name="tool", target="owner/tool", is_local=False)
+    provider = _FakeProvider(source=source)
+    inst = _installation()
+    monkeypatch.setattr(
+        "maniac.cli.listing.discovery.enumerate_installations",
+        lambda on_start=None, on_scan=None: [(provider, inst)],
+    )
+    monkeypatch.setattr(
+        "maniac.cli.listing.discover_repo_manpage", lambda *args, **kwargs: None
+    )
+
+    rows = compute_rows(config=_config(tmp_path))
+
+    assert rows[0].state is ActionState.MISSING
+    assert rows[0].source is PageSource.NONE
+    assert rows[0].upstream is source
+
+
+def test_compute_rows_keeps_a_single_failed_upstream_probe_missing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    source = RepoSource(name="tool", target="owner/tool", is_local=False)
+    provider = _FakeProvider(source=source)
+    inst = _installation()
+    monkeypatch.setattr(
+        "maniac.cli.listing.discovery.enumerate_installations",
+        lambda on_start=None, on_scan=None: [(provider, inst)],
+    )
+
+    def fail_probe(*args: object, **kwargs: object) -> Path:
+        raise OSError("cache unavailable")
+
+    monkeypatch.setattr("maniac.cli.listing.discover_repo_manpage", fail_probe)
+
+    rows = compute_rows(config=_config(tmp_path))
+
+    assert rows[0].state is ActionState.MISSING
+    assert rows[0].source is PageSource.NONE
+    assert rows[0].upstream is source
+
+
+def test_compute_rows_never_probes_an_unversioned_installation(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    source = RepoSource(name="tool", target="owner/tool", is_local=False)
+    provider = _FakeProvider(source=source)
+    inst = _installation(version=None)
+    monkeypatch.setattr(
+        "maniac.cli.listing.discovery.enumerate_installations",
+        lambda on_start=None, on_scan=None: [(provider, inst)],
+    )
+    monkeypatch.setattr(
+        "maniac.cli.listing.discover_repo_manpage",
+        lambda *args, **kwargs: pytest.fail("versionless rows must not probe upstream"),
+    )
+
+    rows = compute_rows(config=_config(tmp_path))
+
+    assert rows[0].state is ActionState.MISSING
+    assert rows[0].source is PageSource.NONE
+
+
+def test_compute_rows_bounds_upstream_probes_and_keeps_row_order(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    installations = [
+        (
+            _FakeProvider(
+                source=RepoSource(
+                    name=f"tool{index}", target=f"owner/tool{index}", is_local=False
+                )
+            ),
+            _installation(binary=f"tool{index}"),
+        )
+        for index in range(12)
+    ]
+    monkeypatch.setattr(
+        "maniac.cli.listing.discovery.enumerate_installations",
+        lambda on_start=None, on_scan=None: installations,
+    )
+    active = 0
+    max_active = 0
+    lock = threading.Lock()
+
+    def fake_discover(source: RepoSource, *args: object, **kwargs: object) -> Path:
+        nonlocal active, max_active
+        with lock:
+            active += 1
+            max_active = max(max_active, active)
+        time.sleep(0.01)
+        with lock:
+            active -= 1
+        if source.name == "tool0":
+            raise OSError("network unreachable")
+        return Path("/page")
+
+    monkeypatch.setattr("maniac.cli.listing.discover_repo_manpage", fake_discover)
+    completions = 0
+
+    def on_row_scan() -> None:
+        nonlocal completions
+        completions += 1
+
+    rows = compute_rows(config=_config(tmp_path), on_row_scan=on_row_scan)
+
+    assert [row.tool for row in rows] == [f"tool{index}" for index in range(12)]
+    assert rows[0].source is PageSource.NONE
+    assert all(row.source is PageSource.UPSTREAM for row in rows[1:])
+    assert max_active <= 8
+    assert completions == 12
 
 
 # -- _classify: the four states ----------------------------------------------
@@ -843,6 +997,35 @@ def test_cli_list_pipe_emits_exactly_the_filtered_set(
     res = runner.invoke(app, ["list", "--available"])
     assert res.exit_code == 0
     assert res.output == "gum\n"
+
+
+def test_cli_list_pipe_available_waits_for_upstream_classification(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(
+        cli_module.console, "_instance", Console(force_terminal=False, no_color=True)
+    )
+    monkeypatch.setattr(cli_module, "Config", lambda: _config(tmp_path))
+    source = RepoSource(name="fzf", target="junegunn/fzf", is_local=False)
+    monkeypatch.setattr(
+        "maniac.cli.listing.discovery.enumerate_installations",
+        lambda on_start=None, on_scan=None: [
+            (
+                _FakeProvider(source=source),
+                _installation(binary="fzf", version="0.74.3"),
+            ),
+            (_FakeProvider(), _installation(binary="missing")),
+        ],
+    )
+    monkeypatch.setattr(
+        "maniac.cli.listing.discover_repo_manpage",
+        lambda *args, **kwargs: Path("/fzf.1"),
+    )
+
+    res = runner.invoke(app, ["list", "--available"])
+
+    assert res.exit_code == 0
+    assert res.output == "fzf\n"
 
 
 # -- _grouped_for_display -----------------------------------------------------

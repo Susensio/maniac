@@ -23,14 +23,14 @@ axis and intersect across axes; no flags means no filtering. There is no
 `--ok`, deliberately (ADR-0018): it would select exactly the rows needing
 no action.
 
-Upstream resolution (`git ls-remote` against an installation-derived clone
-URL, tier 2 of ADR-0016) runs on every row per ADR-0018 -- a binary with no
-installation-derived repository makes no network call, but one that does
-is resolved regardless of what state `man` already gave it.
+Repository identity is resolved for every row per ADR-0018. Tier-2 manpage
+lookup is cache-first and runs only for unresolved rows with an installed
+version and an installation-derived repository.
 """
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass, replace
 from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any
@@ -41,9 +41,11 @@ from rich.table import Table
 
 from .. import manifest
 from ..config import Config
+from ..logging import logger
 from ..models import RepoSource
 from ..sources import discovery
 from ..sources.crawler import get_version
+from ..sources.docs import discover_repo_manpage
 from ..sources.manpages import (
     _opener_for,
     find_installed_manpage_path,
@@ -122,8 +124,12 @@ class PageSource(Enum):
 
     MANIAC = "maniac"
     VENDOR = "vendor"
+    UPSTREAM = "upstream"
     SYSTEM = "system"
     NONE = ""
+
+
+UPSTREAM_PROBE_WORKERS = 8
 
 
 @dataclass(frozen=True, slots=True)
@@ -241,6 +247,86 @@ def _resolve_upstream(
     return provider.resolve_source(inst, config=config)
 
 
+def _probe_upstream(source: RepoSource, inst: "Installation", cfg: Config) -> bool:
+    """Whether tier 2 has a version-matched manpage for one unresolved row."""
+    try:
+        return (
+            discover_repo_manpage(
+                source,
+                inst.binary,
+                cache_dir=cfg.cache_dir,
+                config=cfg,
+                version=inst.version,
+            )
+            is not None
+        )
+    except (OSError, UnicodeError) as error:
+        # Repository probing is supplementary to the local reachability result.
+        logger.debug(
+            "Error probing upstream manpage",
+            tool=inst.binary,
+            source=source.target,
+            error=str(error),
+        )
+        return False
+
+
+def _with_upstream_availability(
+    rows: list[ToolRow],
+    installations: list["Installation | None"],
+    cfg: Config,
+    on_row_scan: Callable[[], None] | None,
+) -> list[ToolRow]:
+    """Upgrade unresolved rows only when tier 2 accepts a matching page."""
+    eligible = [
+        index
+        for index, (row, inst) in enumerate(zip(rows, installations, strict=True))
+        if (
+            row.state is ActionState.MISSING
+            and row.source is PageSource.NONE
+            and row.upstream is not None
+            and inst is not None
+            and inst.version is not None
+        )
+    ]
+    eligible_set = set(eligible)
+
+    for index in range(len(rows)):
+        if index not in eligible_set and on_row_scan is not None:
+            on_row_scan()
+
+    def apply(index: int, available: bool) -> None:
+        if available:
+            rows[index] = replace(
+                rows[index], state=ActionState.AVAILABLE, source=PageSource.UPSTREAM
+            )
+        if on_row_scan is not None:
+            on_row_scan()
+
+    if len(eligible) == 1:
+        index = eligible[0]
+        source = rows[index].upstream
+        inst = installations[index]
+        assert source is not None
+        assert inst is not None
+        apply(index, _probe_upstream(source, inst, cfg))
+    elif eligible:
+
+        def probe(index: int) -> bool:
+            source = rows[index].upstream
+            inst = installations[index]
+            assert source is not None
+            assert inst is not None
+            return _probe_upstream(source, inst, cfg)
+
+        with ThreadPoolExecutor(max_workers=UPSTREAM_PROBE_WORKERS) as executor:
+            futures = {executor.submit(probe, index): index for index in eligible}
+            for future in as_completed(futures):
+                apply(futures[future], future.result())
+
+    return rows
+
+
 def compute_rows(
     tools: list[str] | None = None,
     config: Config | None = None,
@@ -266,10 +352,10 @@ def compute_rows(
     path, which never calls it); `on_row_*` wraps this function's own
     per-row `_classify` loop, whichever path runs it.
 
-    Sequential by design: `man -w` measured ~44ms per lookup, so ~66
-    binaries adds ~2.9s on top of enumeration -- accepted for this pass
-    rather than batched, since `man -w a b c` only prints found pages and
-    their basenames do not map back to query names.
+    The initial reachability walk remains sequential because `man -w` does
+    not map batched results back to queries. Unresolved, versioned rows are
+    then probed through tier 2 after their repository identity is resolved;
+    one probe runs directly and many run with bounded concurrency.
     """
     cfg = config or Config()
 
@@ -278,6 +364,7 @@ def compute_rows(
         if on_row_start is not None:
             on_row_start(len(unique_tools))
         rows: list[ToolRow] = []
+        installations: list[Installation | None] = []
         for tool in unique_tools:
             # No `discovery.discover_repo(tool)` fallback when `found` is
             # None: it shares `find_installation`'s own bin-path resolution
@@ -296,9 +383,8 @@ def compute_rows(
                     upstream=_resolve_upstream(provider, inst, config=cfg),
                 )
             )
-            if on_row_scan is not None:
-                on_row_scan()
-        return rows
+            installations.append(inst)
+        return _with_upstream_availability(rows, installations, cfg, on_row_scan)
 
     installations = discovery.enumerate_installations(
         on_start=on_discovery_start, on_scan=on_discovery_scan
@@ -306,6 +392,7 @@ def compute_rows(
     if on_row_start is not None:
         on_row_start(len(installations))
     rows = []
+    installations_by_row: list[Installation | None] = []
     for provider, inst in installations:
         state, source = _classify(provider, inst, inst.binary, cfg)
         rows.append(
@@ -318,9 +405,8 @@ def compute_rows(
                 upstream=_resolve_upstream(provider, inst, config=cfg),
             )
         )
-        if on_row_scan is not None:
-            on_row_scan()
-    return rows
+        installations_by_row.append(inst)
+    return _with_upstream_availability(rows, installations_by_row, cfg, on_row_scan)
 
 
 def _bare_names(rows: list[ToolRow]) -> list[str]:
