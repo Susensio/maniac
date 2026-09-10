@@ -92,14 +92,11 @@ def _configured_model(
     config_values: dict[str, Any],
     model_from_environment: str | None,
     provider_defaults: dict[str, str],
-    config_file: Path,
 ) -> str | None:
     if config_values.get("model"):
         return config_values["model"].strip()
     if config_values.get("provider"):
-        return _provider_default_model(
-            config_values["provider"], provider_defaults, config_file
-        ).strip()
+        return provider_defaults.get(config_values["provider"])
     if model_from_environment:
         return model_from_environment.strip()
     return None
@@ -116,10 +113,10 @@ def _provider_default_model(
     return provider_defaults[provider]
 
 
-def _sniff_provider(
-    provider_defaults: dict[str, str], config_dir: Path, config_file: Path
-) -> str:
-    """Pick the first configured provider whose API key is present in the environment."""
+def _snapshot_provider_environment(
+    provider_defaults: dict[str, str],
+) -> tuple[list[str], list[str]]:
+    """Return configured providers with keys present and the missing key names."""
     import litellm
 
     present: list[str] = []
@@ -130,6 +127,17 @@ def _sniff_provider(
             present.append(provider)
         else:
             checked.extend(k for k in result["missing_keys"] if k not in checked)
+    return present, checked
+
+
+def _sniff_provider(
+    present: list[str],
+    checked: list[str],
+    provider_defaults: dict[str, str],
+    config_dir: Path,
+    config_file: Path,
+) -> str:
+    """Pick the first provider whose credentials were present at construction."""
 
     if not present:
         raise ManiacError(
@@ -228,6 +236,12 @@ class Config:
     _config_values: dict[str, Any] = field(default_factory=dict, init=False, repr=False)
     _model_from_environment: str | None = field(default=None, init=False, repr=False)
     _configured_model: str | None = field(default=None, init=False, repr=False)
+    _available_providers: list[str] = field(
+        default_factory=list, init=False, repr=False
+    )
+    _missing_provider_keys: list[str] = field(
+        default_factory=list, init=False, repr=False
+    )
     _last_resolved_model: str | None = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -244,10 +258,10 @@ class Config:
             self._config_values,
             self._model_from_environment,
             self.provider_defaults,
-            self.config_dir / "config.toml",
         )
-        if self._configured_model is not None:
-            _validate_model(self._configured_model, self.config_dir / "config.toml")
+        self._available_providers, self._missing_provider_keys = (
+            _snapshot_provider_environment(self.provider_defaults)
+        )
 
     def resolve_model(self, model: str | None = None) -> str:
         """Resolve a model identifier: explicit argument, config.toml, MANIAC_MODEL, sniffed provider.
@@ -258,14 +272,21 @@ class Config:
         """
         if model:
             resolved = model.strip()
-            _validate_model(resolved, self.config_dir / "config.toml")
         elif self._configured_model is not None:
-            return self._configured_model
+            resolved = self._configured_model
+        elif self._config_values.get("provider"):
+            resolved = _provider_default_model(
+                self._config_values["provider"],
+                self.provider_defaults,
+                self.config_dir / "config.toml",
+            ).strip()
         elif self._last_resolved_model is not None:
             return self._last_resolved_model
         else:
             resolved = _provider_default_model(
                 _sniff_provider(
+                    self._available_providers,
+                    self._missing_provider_keys,
                     self.provider_defaults,
                     self.config_dir,
                     self.config_dir / "config.toml",
@@ -273,7 +294,7 @@ class Config:
                 self.provider_defaults,
                 self.config_dir / "config.toml",
             ).strip()
-            _validate_model(resolved, self.config_dir / "config.toml")
+        _validate_model(resolved, self.config_dir / "config.toml")
         self._last_resolved_model = resolved
         return resolved
 

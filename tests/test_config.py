@@ -99,7 +99,7 @@ def test_config_provider_defaults_are_not_shared_between_instances() -> None:
     assert "test" not in second.provider_defaults
 
 
-def test_config_validates_bound_model_during_construction(
+def test_config_validates_bound_model_when_resolved(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls: list[str] = []
@@ -111,9 +111,41 @@ def test_config_validates_bound_model_during_construction(
 
     cfg = Config()
 
-    assert calls == ["openai/gpt-5.1-chat-latest"]
+    assert calls == []
     assert cfg.resolve_model() == "openai/gpt-5.1-chat-latest"
     assert calls == ["openai/gpt-5.1-chat-latest"]
+
+
+@pytest.mark.parametrize(
+    ("config_values", "environment_model"),
+    [
+        ({"model": "invalid/configured-model"}, None),
+        ({}, "invalid/environment-model"),
+    ],
+)
+def test_explicit_model_outranks_invalid_lower_precedence_model(
+    monkeypatch: pytest.MonkeyPatch,
+    config_values: dict[str, str],
+    environment_model: str | None,
+) -> None:
+    monkeypatch.setattr(
+        "maniac.config._load_config_file", lambda config_dir: config_values
+    )
+    if environment_model is None:
+        monkeypatch.delenv("MANIAC_MODEL", raising=False)
+    else:
+        monkeypatch.setenv("MANIAC_MODEL", environment_model)
+
+    def validate(model: str, config_file: Path) -> None:
+        if model.startswith("invalid/"):
+            raise ManiacError("invalid lower-precedence model")
+
+    monkeypatch.setattr("maniac.config._validate_model", validate)
+    cfg = Config()
+
+    assert cfg.resolve_model("gemini/gemini-3.7-flash") == "gemini/gemini-3.7-flash"
+    with pytest.raises(ManiacError, match="invalid lower-precedence model"):
+        cfg.resolve_model()
 
 
 def test_model_for_metadata_does_not_sniff_provider_credentials(
@@ -123,9 +155,7 @@ def test_model_for_metadata_does_not_sniff_provider_credentials(
     monkeypatch.delenv("MANIAC_MODEL", raising=False)
     monkeypatch.setattr(
         "maniac.config._sniff_provider",
-        lambda provider_defaults, config_dir, config_file: pytest.fail(
-            "metadata resolution sniffed provider credentials"
-        ),
+        lambda *args: pytest.fail("metadata resolution sniffed provider credentials"),
     )
 
     assert Config().model_for_metadata() is None
@@ -157,9 +187,9 @@ def test_resolve_model_keeps_the_first_sniffed_provider(
         }
     )
 
-    assert cfg.resolve_model() == "gemini/gemini-3.7-flash"
     active_provider = "anthropic"
 
+    assert cfg.resolve_model() == "gemini/gemini-3.7-flash"
     assert cfg.resolve_model() == "gemini/gemini-3.7-flash"
 
 
