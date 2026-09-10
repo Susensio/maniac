@@ -259,3 +259,83 @@ def test_run_pipeline_no_installation_records_no_version(
 
     assert observed_version["passed"] is None
     assert recorded["version"] is None
+
+
+def test_run_pipeline_unclaimed_binary_records_its_own_version_output(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """ADR-0020: no provider claims the binary, so there is no `Installation`
+    to match a doc tag against -- but the binary's own `--version` output is
+    matched evidence for the help-only page just crawled, and gets recorded
+    verbatim.
+    """
+    monkeypatch.setattr(
+        "maniac.orchestration.pipeline.find_subcommands",
+        lambda cmd: {"> testtool --help": "Usage: testtool"},
+    )
+    monkeypatch.setattr(
+        "maniac.orchestration.pipeline.discover_repo",
+        lambda name, **kwargs: RepoSource(
+            name=name, target="org/testtool", is_local=False
+        ),
+    )
+    monkeypatch.setattr(
+        "maniac.orchestration.pipeline.find_installation",
+        lambda name, bin_dir=None: None,
+    )
+    monkeypatch.setattr(
+        "maniac.orchestration.pipeline.fetch_and_extract_docs",
+        lambda source, cache_dir, **kwargs: (
+            [DocFile(rel_path="README.md", content="# Test Tool")],
+            False,
+        ),
+    )
+    observed_cmd: dict[str, object] = {}
+
+    def _get_version(cmd: list[str]) -> str | None:
+        observed_cmd["cmd"] = cmd
+        return "testtool 9.9.9-custom"
+
+    monkeypatch.setattr("maniac.orchestration.pipeline.get_version", _get_version)
+    recorded = _mock_synthesis(monkeypatch, tmp_path)
+
+    run_pipeline(tool_name="testtool", output_dir=tmp_path, install=True, dry_run=False)
+
+    assert observed_cmd["cmd"] == ["testtool"]
+    assert recorded["version"] == "testtool 9.9.9-custom"
+
+
+def test_run_pipeline_unclaimed_binary_with_no_version_output_records_none(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`get_version` returning `None` (no `--version` flag, non-zero exit,
+    timeout, ...) is a normal case, not an error -- the page still installs,
+    unversioned.
+    """
+    monkeypatch.setattr(
+        "maniac.orchestration.pipeline.find_subcommands",
+        lambda cmd: {"> testtool --help": "Usage: testtool"},
+    )
+    monkeypatch.setattr(
+        "maniac.orchestration.pipeline.discover_repo",
+        lambda name, **kwargs: RepoSource(
+            name=name, target="org/testtool", is_local=False
+        ),
+    )
+    monkeypatch.setattr(
+        "maniac.orchestration.pipeline.find_installation",
+        lambda name, bin_dir=None: None,
+    )
+    monkeypatch.setattr(
+        "maniac.orchestration.pipeline.fetch_and_extract_docs",
+        lambda source, cache_dir, **kwargs: (
+            [DocFile(rel_path="README.md", content="# Test Tool")],
+            False,
+        ),
+    )
+    monkeypatch.setattr("maniac.orchestration.pipeline.get_version", lambda cmd: None)
+    recorded = _mock_synthesis(monkeypatch, tmp_path)
+
+    run_pipeline(tool_name="testtool", output_dir=tmp_path, install=True, dry_run=False)
+
+    assert recorded["version"] is None

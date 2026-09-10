@@ -470,6 +470,134 @@ def test_classify_ok_when_installation_version_is_unknown(
     assert _classify(None, inst, "tool", cfg) == (ActionState.OK, PageSource.MANIAC)
 
 
+def test_classify_outdated_when_unclaimed_binarys_own_version_differs(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """ADR-0020: no `Installation` to compare against, so the binary's own
+    `--version` output is asked directly and compared verbatim."""
+    cfg = _config(tmp_path)
+    cfg.man_dir.mkdir(parents=True)
+    installed = cfg.man_dir / "tool.1"
+    installed.write_text(".TH TOOL 1\n", encoding="utf-8")
+    manifest_module.record(
+        "tool",
+        installed,
+        Tier.SYNTHESIS,
+        "model",
+        "abc123",
+        config=cfg,
+        version="1.0.0",
+    )
+    monkeypatch.setattr(
+        "maniac.cli.listing.find_installed_manpage_path",
+        lambda man_bin, tool_name: installed,
+    )
+    monkeypatch.setattr("maniac.cli.listing.get_version", lambda cmd: "2.0.0")
+
+    assert _classify(None, None, "tool", cfg) == (
+        ActionState.OUTDATED,
+        PageSource.MANIAC,
+    )
+
+
+def test_classify_ok_when_unclaimed_binarys_own_version_matches(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    cfg = _config(tmp_path)
+    cfg.man_dir.mkdir(parents=True)
+    installed = cfg.man_dir / "tool.1"
+    installed.write_text(".TH TOOL 1\n", encoding="utf-8")
+    manifest_module.record(
+        "tool",
+        installed,
+        Tier.SYNTHESIS,
+        "model",
+        "abc123",
+        config=cfg,
+        version="1.0.0",
+    )
+    monkeypatch.setattr(
+        "maniac.cli.listing.find_installed_manpage_path",
+        lambda man_bin, tool_name: installed,
+    )
+    monkeypatch.setattr("maniac.cli.listing.get_version", lambda cmd: "1.0.0")
+
+    assert _classify(None, None, "tool", cfg) == (ActionState.OK, PageSource.MANIAC)
+
+
+def test_classify_ok_when_unclaimed_binarys_version_is_unavailable(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`get_version` returning `None` is absence of evidence, not evidence of
+    staleness (ADR-0018's positive-evidence rule) -- never `outdated`."""
+    cfg = _config(tmp_path)
+    cfg.man_dir.mkdir(parents=True)
+    installed = cfg.man_dir / "tool.1"
+    installed.write_text(".TH TOOL 1\n", encoding="utf-8")
+    manifest_module.record(
+        "tool",
+        installed,
+        Tier.SYNTHESIS,
+        "model",
+        "abc123",
+        config=cfg,
+        version="1.0.0",
+    )
+    monkeypatch.setattr(
+        "maniac.cli.listing.find_installed_manpage_path",
+        lambda man_bin, tool_name: installed,
+    )
+    monkeypatch.setattr("maniac.cli.listing.get_version", lambda cmd: None)
+
+    assert _classify(None, None, "tool", cfg) == (ActionState.OK, PageSource.MANIAC)
+
+
+def test_classify_no_subprocess_for_unowned_or_versionless_row(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The subprocess `get_version` triggers is gated on being owned, having
+    a recorded version, and having no `Installation` -- an unowned page and
+    an owned-but-versionless one must never reach it, keeping a full `list`
+    walk's cost bounded to the handful of rows that qualify."""
+
+    def _unexpected_call(cmd: list[str]) -> str | None:
+        raise AssertionError(f"get_version must not be called for this row: {cmd}")
+
+    monkeypatch.setattr("maniac.cli.listing.get_version", _unexpected_call)
+    cfg = _config(tmp_path)
+    cfg.man_dir.mkdir(parents=True)
+
+    # Unowned: `man` resolves it, but no manifest entry claims it.
+    unowned = cfg.man_dir / "unowned.1"
+    unowned.write_text(".TH UNOWNED 1\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "maniac.cli.listing.find_installed_manpage_path",
+        lambda man_bin, tool_name: unowned,
+    )
+    assert _classify(None, None, "unowned", cfg) == (ActionState.OK, PageSource.SYSTEM)
+
+    # Owned, but the entry itself records no version.
+    versionless = cfg.man_dir / "versionless.1"
+    versionless.write_text(".TH VERSIONLESS 1\n", encoding="utf-8")
+    manifest_module.record(
+        "versionless",
+        versionless,
+        Tier.SYNTHESIS,
+        "model",
+        "abc123",
+        config=cfg,
+        version=None,
+    )
+    monkeypatch.setattr(
+        "maniac.cli.listing.find_installed_manpage_path",
+        lambda man_bin, tool_name: versionless,
+    )
+    assert _classify(None, None, "versionless", cfg) == (
+        ActionState.OK,
+        PageSource.MANIAC,
+    )
+
+
 def test_classify_ok_when_page_is_unowned_even_with_a_version_mismatch_in_hand(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

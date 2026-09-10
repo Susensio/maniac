@@ -43,6 +43,7 @@ from .. import manifest
 from ..config import Config
 from ..models import RepoSource
 from ..sources import discovery
+from ..sources.crawler import get_version
 from ..sources.manpages import (
     _opener_for,
     find_installed_manpage_path,
@@ -200,6 +201,16 @@ def _classify(
         else:
             source = PageSource.SYSTEM
 
+        # An unclaimed binary (no provider, no `Installation`) has nothing
+        # to compare `entry.version` against by default -- ask the binary
+        # itself (ADR-0020). Gated on the cheap checks first: only a row
+        # that is owned, carries a recorded version, and has no
+        # `Installation` may pay for the subprocess this triggers.
+        if owned and entry is not None and entry.version is not None and inst is None:
+            current_version = get_version([tool])
+        else:
+            current_version = inst.version if inst is not None else None
+
         # `outdated` requires positive evidence -- a recorded version that
         # differs from the installed binary's current one. Absent that
         # evidence (an unowned page, or `local_lib`'s permanent lack of a
@@ -209,9 +220,8 @@ def _classify(
             owned
             and entry is not None
             and entry.version is not None
-            and inst is not None
-            and inst.version is not None
-            and entry.version != inst.version
+            and current_version is not None
+            and entry.version != current_version
         )
         return (ActionState.OUTDATED if outdated else ActionState.OK, source)
 
