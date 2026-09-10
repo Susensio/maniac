@@ -1,69 +1,18 @@
 # Implementation State
 
-## ADR-0020 and ADR-0021 landed; one page still needs regenerating
+Nothing is in flight.
 
-[ADR-0020](adr/0020-login-shell-path-refuse-contextual.md) is implemented in full, and [ADR-0021](adr/0021-login-path-resolution-version-readback.md) records the three things it left underdetermined and how each was settled.
-Read ADR-0021 before changing any of this; it carries the reasoning, and this section is only what exists.
+[ADR-0020](adr/0020-login-shell-path-refuse-contextual.md) and [ADR-0021](adr/0021-login-path-resolution-version-readback.md) are implemented, verified live, and carry their own reasoning — including the finding that cost the most to reach, that a login shell *inherits* `$PATH` and appends to it rather than constructing one, so it reports the caller's answer unless its environment is scrubbed first.
+[ADR-0019](adr/0019-earn-synthesized-page-version.md)'s last loose end is closed: `ty` was regenerated and its manifest entry records `version: "0.0.78"` where it previously recorded none.
 
-### What landed
+Open work with no owner is in `docs/BACKLOG.md`.
 
-`$PATH` comes from a login shell run at `$HOME`, via `maniac/sources/loginpath.py`.
-`login_path()` is `@cache`d, so the shell's startup is paid once per process rather than once per binary lookup.
-`login_path_dirs()` splits it; `which_login()` returns the first executable match and stops there, per ADR-0020's rejection of `$PATH` fall-through.
+## Baseline, for anyone comparing figures
 
-Both resolution paths in `discovery.py` go through it: `enumerate_installations` walks it, and `resolve_bin_path` searches it instead of calling `shutil.which`.
-That second one is ADR-0021's decision and reverses what an earlier draft of this file asserted — `list` and `install` now resolve every tool identically, where a predicate-only reading would have had them disagree about `ty`.
-`resolve_bin_path` is public for that reason: it is a contract between `discovery` and `orchestration.install`, not a private helper.
+Measured on the development system after ADR-0020 landed, at 398 tests green:
 
-`run_install` refuses a binary the login `$PATH` cannot reach, raising `InstallRefused` (a `ManiacError` subclass) with a message naming why.
-The check sits **above** the `generate_only` branch, not inside it — placed inside, `--generate` walked straight past it.
-`cli/install.py` catches `InstallRefused` before the generic handler and renders it in yellow without counting a failure, since nothing was attempted.
+- `maniac list` returns 76 rows, identical from this repository and from `$HOME`.
+- Two MANIAC-managed pages: `aichat` and `ty`, both carrying a recorded version, so both can now show `outdated`.
+- One login-shell spawn per process — 61ms cold, 0.003ms cached.
 
-Tier-3 synthesis for a binary no provider claims now records that binary's own `--version` output verbatim, via `crawler.get_version` (which returns `None` on every failure mode rather than raising).
-`crawler._run_cli_flag` holds the subprocess machinery `get_help` and `get_version` share.
-`listing._classify` reads it back: when a row is owned, carries a recorded version, and has no `Installation`, it re-runs `--version` and compares. The cheap checks short-circuit first, so only MANIAC-owned unclaimed pages can spawn a subprocess.
-
-### The environment scrub, and why it is not optional
-
-A login shell **inherits** `$PATH` and its rc files append to what they were handed.
-Asked without scrubbing, it returns the caller's `$PATH` — including `uv run`'s `.venv/bin` — and looks like it worked, because the answer is usually right for the wrong reason.
-`_login_shell_env` therefore replaces `PATH` with a bootstrap value and strips activation markers (`VIRTUAL_ENV`, `CONDA_*`, `UV_*`, `DIRENV_*`), the same re-entry `cwd=$HOME` guards against arriving through a different channel.
-
-That scrub has a failure mode of its own: a machine whose rc files never set `$PATH` returns the bootstrap straight back — zero exit, non-empty output, no information.
-It is treated as a sixth fallback alongside `$SHELL` unset, non-zero exit, timeout, `OSError` and empty output: warn, and use the inherited `$PATH`.
-Detection is a conjunction — the probe sentinel survived **and** nothing outside the bootstrap was added — because an rc file that deliberately sets a small `$PATH` has constructed a real answer and must not be discarded.
-
-This was found live, not reasoned about: on the development system it produced zero rows from `list` and a confident refusal of `ruff`, a genuinely global tool, with nothing warning that anything was wrong.
-The underlying cause was a gap in the user's own shell configuration, fixed outside this repository — a non-interactive login shell in a graphical session had no route to `environment.d`.
-So this path is no longer reachable here and only its tests exercise it.
-
-### Verified
-
-`just check` green: 398 tests, all four stages clean.
-
-Live, on the development system, after the user fixed the shell-configuration gap described above:
-
-- **Directory invariance holds.** `uv run maniac list` from this repository and `maniac list` from `$HOME` both return 76 rows, byte-identical. This is the property ADR-0020 exists to create and it did not hold before.
-- `ty` resolves to mise 0.0.78 at `~/.local/bin/ty`, where it previously resolved to this repository's unclaimed 0.0.75 dev dependency. `ruff` resolves to mise 0.16.6.
-- **The refusal discriminates.** `install ruff` proceeds; `install pytest` refuses with the reason named, both plain and under `--generate`. Both mattered: an earlier state refused everything, which made a refusal prove nothing.
-- No fallback warning fires, and the probe sentinel never leaks into output.
-- Exactly one login-shell spawn per process (`strace`), 61ms cold against 0.003ms cached.
-
-The measurement caveat that governed every earlier figure in this file is **gone**: numbers no longer have to be taken through `uv run` with `.venv/bin` shadowing real binaries, because that is precisely what this work removes.
-Re-measure anything quoted from before ADR-0020 rather than trusting it — the row count moved from 70 to 76 for this reason alone.
-
-### Unfinished
-
-**`ty` was never regenerated.**
-Carried over from [ADR-0019](adr/0019-earn-synthesized-page-version.md), and attempted once more here: **five** attempts now, all returning `litellm.ServiceUnavailableError` — Gemini 503, "this model is currently experiencing high demand" — on `gemini/gemini-flash-latest`.
-Its manifest entry still reads `version: null` and it cannot show `outdated`.
-Nothing is broken; the work did not complete.
-
-Five failures across two sessions is enough to stop treating this as transient bad luck.
-Before the sixth attempt, consider whether the model pin is the problem rather than the service: `gemini-flash-latest` is a moving alias, and a pinned model or a different provider may simply not be under the same load.
-
-Re-run plain `maniac install ty` when the API recovers — unflagged, not `--generate`: ADR-0016 orders the tiers authoritative-first and tiers 1 and 2 record a version too, so forcing synthesis can only buy a worse page for an LLM call it did not need.
-For `ty` specifically it makes no difference — `--no-generate` reported no install-root or repository page — but the habit matters.
-
-Worth knowing: `ty` now resolves differently than when that attempt was made.
-It previously resolved to this repository's 0.0.75 dev dependency and was unclaimed; it now resolves to the mise-installed 0.0.78 and is claimed by the mise provider, so a regeneration will record a real version rather than none.
+**Figures recorded before ADR-0020 are not comparable to these.** They were taken through `uv run` with `.venv/bin` shadowing real binaries, which is exactly the distortion that work removed; the row count moved from 70 to 76 for that reason alone. Re-measure rather than trusting an older number.
