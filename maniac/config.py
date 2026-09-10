@@ -18,37 +18,23 @@ from .exceptions import ManiacError
 # every import site.
 os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
 
-# TODO: Remove these fixture compatibility hooks when the suite-wide XDG fixture
-# changes to set environment variables in ADR-0022 step 4.
-_XDG_CONFIG: Path | None = None
-_XDG_CACHE: Path | None = None
-_XDG_DATA: Path | None = None
-_XDG_STATE: Path | None = None
 _UNSET = object()
 
 
 def _xdg_config_dir() -> Path:
-    return _XDG_CONFIG or Path(
-        os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config"
-    )
+    return Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
 
 
 def _xdg_cache_dir() -> Path:
-    return _XDG_CACHE or Path(
-        os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache"
-    )
+    return Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache")
 
 
 def _xdg_data_dir() -> Path:
-    return _XDG_DATA or Path(
-        os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share"
-    )
+    return Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share")
 
 
 def _xdg_state_dir() -> Path:
-    return _XDG_STATE or Path(
-        os.environ.get("XDG_STATE_HOME") or Path.home() / ".local" / "state"
-    )
+    return Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local" / "state")
 
 
 def _config_dir() -> Path:

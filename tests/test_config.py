@@ -47,9 +47,6 @@ def test_import_does_not_read_environment_or_configuration_files() -> None:
 def test_config_construction_binds_xdg_config_file_and_model_environment(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    for attr in ("_XDG_CONFIG", "_XDG_CACHE", "_XDG_DATA", "_XDG_STATE"):
-        monkeypatch.setattr("maniac.config." + attr, None)
-
     xdg_config = tmp_path / "config"
     config_dir = xdg_config / "maniac"
     config_dir.mkdir(parents=True)
@@ -71,6 +68,10 @@ def test_config_construction_binds_xdg_config_file_and_model_environment(
     assert cfg.intermediate_dir == tmp_path / "state" / "maniac" / "intermediate"
     assert cfg.resolve_reasoning_effort() == "low"
     assert cfg.resolve_model() == "openai/gpt-5.1-chat-latest"
+
+    later = Config()
+    assert later.config_dir == tmp_path / "other-config" / "maniac"
+    assert later.resolve_model() == "gemini/gemini-3.7-flash"
 
 
 def test_config_uses_environment_only_when_llm_values_are_omitted(
