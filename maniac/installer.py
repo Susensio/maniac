@@ -77,7 +77,7 @@ def install_manpage(
     backup_path: Path | None = None
     previous_entry: Entry | None = None
     if dest_file.exists():
-        existing = manifest.lookup(tool)
+        existing = manifest.lookup(tool, config=cfg)
         owned = existing is not None and existing.path == dest_file
         if owned:
             # Reinstalling over our own page: carry the prior backup forward

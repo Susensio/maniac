@@ -187,6 +187,71 @@ def test_cli_install_dry_run(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) ->
     assert "synthesized from --help" in result.output
 
 
+def test_cli_install_reuses_config_for_existing_destination(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """An existing destination must not make installation create another Config."""
+    from maniac.manifest import lookup as real_lookup
+    from maniac.models import Installation
+
+    constructed: list[Config] = []
+
+    class TrackingConfig(Config):
+        def __init__(self) -> None:
+            super().__init__(
+                config_dir=tmp_path / "config",
+                man_dir=tmp_path / "man1",
+                manifest_path=tmp_path / "installed.json",
+            )
+            constructed.append(self)
+
+    page = tmp_path / "source" / "mytool.1"
+    page.parent.mkdir()
+    page.write_text(".TH MYTOOL 1", encoding="utf-8")
+    destination = tmp_path / "man1" / "mytool.1"
+    destination.parent.mkdir()
+    destination.write_text(".TH MYTOOL 1 vendor", encoding="utf-8")
+    installation = Installation(
+        binary="mytool",
+        bin_path=tmp_path / "bin" / "mytool",
+        real_path=tmp_path / "bin" / "mytool",
+        provider="test",
+        package="mytool",
+        version="1.0",
+        root=tmp_path / "source",
+    )
+
+    class Provider:
+        def local_docs(self, inst: Installation) -> list[Path]:
+            assert inst is installation
+            return [page]
+
+    observed: list[Config | None] = []
+
+    def lookup(tool: str, config: Config | None = None) -> object:
+        observed.append(config)
+        return real_lookup(tool, config=config)
+
+    monkeypatch.setattr(cli_module, "Config", TrackingConfig)
+    monkeypatch.setattr(
+        "maniac.orchestration.install.discovery.resolve_bin_path",
+        lambda tool, bin_dir=None: Path(f"/bin/{tool}"),
+    )
+    monkeypatch.setattr(
+        "maniac.orchestration.install.discovery.find_installation",
+        lambda tool, bin_dir=None: (Provider(), installation),
+    )
+    monkeypatch.setattr("maniac.manifest.Config", TrackingConfig)
+    monkeypatch.setattr("maniac.installer.manifest.lookup", lookup)
+
+    result = runner.invoke(app, ["install", "mytool"])
+
+    assert result.exit_code == 1
+    assert "foreign or vendor manpage already exists" in result.output
+    assert len(constructed) == 1
+    assert observed == constructed
+
+
 def test_cli_install_always_installs(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
