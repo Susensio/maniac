@@ -202,12 +202,6 @@ class Config:
     )
     llm_api_key: str | None = cast(str | None, _UNSET)
     llm_reasoning_effort: str | None = cast(str | None, _UNSET)
-    provider_defaults: dict[str, str] = field(
-        default_factory=lambda: dict(
-            cast(dict[str, str], _load_defaults()["providers"])
-        ),
-        repr=False,
-    )
     max_arg_limit: int = field(
         default_factory=lambda: cast(dict[str, int], _load_defaults()["limits"])[
             "max_arg_limit"
@@ -238,9 +232,17 @@ class Config:
             "pandoc"
         ]
     )
+    provider_defaults: dict[str, str] = field(
+        default_factory=lambda: dict(
+            cast(dict[str, str], _load_defaults()["providers"])
+        ),
+        repr=False,
+        kw_only=True,
+    )
     _config_values: dict[str, Any] = field(default_factory=dict, init=False, repr=False)
     _model_from_environment: str | None = field(default=None, init=False, repr=False)
     _configured_model: str | None = field(default=None, init=False, repr=False)
+    _last_resolved_model: str | None = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
         _load_config_env(self.config_dir)
@@ -271,21 +273,29 @@ class Config:
         if model:
             resolved = model.strip()
             _validate_model(resolved, self.config_dir / "config.toml")
-            return resolved
-        if self._configured_model is not None:
+        elif self._configured_model is not None:
             return self._configured_model
-
-        resolved = _provider_default_model(
-            _sniff_provider(
+        elif self._last_resolved_model is not None:
+            return self._last_resolved_model
+        else:
+            resolved = _provider_default_model(
+                _sniff_provider(
+                    self.provider_defaults,
+                    self.config_dir,
+                    self.config_dir / "config.toml",
+                ),
                 self.provider_defaults,
-                self.config_dir,
                 self.config_dir / "config.toml",
-            ),
-            self.provider_defaults,
-            self.config_dir / "config.toml",
-        ).strip()
-        _validate_model(resolved, self.config_dir / "config.toml")
+            ).strip()
+            _validate_model(resolved, self.config_dir / "config.toml")
+        self._last_resolved_model = resolved
         return resolved
+
+    def model_for_metadata(self, model: str | None = None) -> str | None:
+        """Return a known model without sniffing provider credentials."""
+        return self._last_resolved_model or (
+            model.strip() if model else self._configured_model
+        )
 
     def resolve_reasoning_effort(self) -> str | None:
         """Return the configured global reasoning effort, if any."""

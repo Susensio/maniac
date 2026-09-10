@@ -134,7 +134,7 @@ def run_pipeline(
     logger.info("Saved Markdown manpage", path=str(md_file))
 
     roff_file = out_dir / f"{tool_name}.1"
-    selected_model = cfg.resolve_model(model)
+    selected_model = cfg.model_for_metadata(model)
     compiled = compile_to_man(
         markdown_content, roff_file, tool_name=tool_name, model=selected_model
     )
@@ -161,7 +161,7 @@ def run_pipeline(
             actual_roff_path,
             tool_name,
             Tier.SYNTHESIS,
-            selected_model,
+            selected_model or "unknown",
             force=force,
             version=recorded_version,
         )

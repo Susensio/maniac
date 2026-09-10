@@ -115,6 +115,53 @@ def test_config_validates_bound_model_during_construction(
     assert calls == ["openai/gpt-5.1-chat-latest"]
 
 
+def test_model_for_metadata_does_not_sniff_provider_credentials(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("maniac.config._load_config_file", lambda config_dir: {})
+    monkeypatch.delenv("MANIAC_MODEL", raising=False)
+    monkeypatch.setattr(
+        "maniac.config._sniff_provider",
+        lambda provider_defaults, config_dir, config_file: pytest.fail(
+            "metadata resolution sniffed provider credentials"
+        ),
+    )
+
+    assert Config().model_for_metadata() is None
+
+
+def test_resolve_model_keeps_the_first_sniffed_provider(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import litellm
+
+    active_provider = "gemini"
+    monkeypatch.setattr("maniac.config._load_config_file", lambda config_dir: {})
+    monkeypatch.delenv("MANIAC_MODEL", raising=False)
+    monkeypatch.setattr(
+        "maniac.config._validate_model", lambda model, config_file: None
+    )
+    monkeypatch.setattr(
+        litellm,
+        "validate_environment",
+        lambda model: {
+            "keys_in_environment": model.startswith(active_provider + "/"),
+            "missing_keys": [],
+        },
+    )
+    cfg = Config(
+        provider_defaults={
+            "gemini": "gemini/gemini-3.7-flash",
+            "anthropic": "anthropic/claude-sonnet-4-6",
+        }
+    )
+
+    assert cfg.resolve_model() == "gemini/gemini-3.7-flash"
+    active_provider = "anthropic"
+
+    assert cfg.resolve_model() == "gemini/gemini-3.7-flash"
+
+
 def test_load_config_env_preserves_shell_variable(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
