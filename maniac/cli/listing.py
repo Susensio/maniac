@@ -121,7 +121,7 @@ class PageSource(Enum):
     """
 
     MANIAC = "maniac"
-    INSTALL_ROOT = "install-root"
+    VENDOR = "vendor"
     SYSTEM = "system"
     NONE = ""
 
@@ -197,7 +197,7 @@ def _classify(
         if owned:
             source = PageSource.MANIAC
         elif inst is not None and _under_root(installed, inst.root):
-            source = PageSource.INSTALL_ROOT
+            source = PageSource.VENDOR
         else:
             source = PageSource.SYSTEM
 
@@ -228,7 +228,7 @@ def _classify(
     if provider is not None and inst is not None:
         page = select_primary_manpage(provider.local_docs(inst), inst.binary)
         if page is not None:
-            return (ActionState.AVAILABLE, PageSource.INSTALL_ROOT)
+            return (ActionState.AVAILABLE, PageSource.VENDOR)
     return (ActionState.MISSING, PageSource.NONE)
 
 

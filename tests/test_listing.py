@@ -112,7 +112,7 @@ def test_compute_rows_no_args_walks_providers_not_the_manpath(
             package="tool",
             provider="fake",
             state=ActionState.AVAILABLE,
-            source=PageSource.INSTALL_ROOT,
+            source=PageSource.VENDOR,
             upstream=None,
         )
     ]
@@ -253,7 +253,7 @@ def test_classify_available_when_install_root_ships_an_uninstalled_page(
 
     assert _classify(provider, inst, "tool", cfg) == (
         ActionState.AVAILABLE,
-        PageSource.INSTALL_ROOT,
+        PageSource.VENDOR,
     )
 
 
@@ -310,7 +310,7 @@ def test_classify_source_is_maniac_when_manifest_owns_the_resolved_page(
     assert _classify(None, None, "tool", cfg) == (ActionState.OK, PageSource.MANIAC)
 
 
-def test_classify_source_is_install_root_when_resolved_page_sits_under_it(
+def test_classify_source_is_vendor_when_resolved_page_sits_under_it(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     cfg = _config(tmp_path)
@@ -326,7 +326,7 @@ def test_classify_source_is_install_root_when_resolved_page_sits_under_it(
 
     assert _classify(None, inst, "tool", cfg) == (
         ActionState.OK,
-        PageSource.INSTALL_ROOT,
+        PageSource.VENDOR,
     )
 
 
@@ -669,7 +669,7 @@ def test_classify_managed_file_present_but_unreachable_by_man_is_not_managed(
     inst = _installation()
     assert _classify(provider, inst, "tool", cfg) == (
         ActionState.AVAILABLE,
-        PageSource.INSTALL_ROOT,
+        PageSource.VENDOR,
     )
 
 
@@ -849,7 +849,7 @@ def test_grouped_for_display_solo_tool_keeps_its_own_name() -> None:
             package="pandoc",
             provider="mise",
             state=ActionState.AVAILABLE,
-            source=PageSource.INSTALL_ROOT,
+            source=PageSource.VENDOR,
             upstream=None,
         )
     ]
@@ -919,7 +919,7 @@ def test_grouped_for_display_siblings_collapse_despite_differing_reposource_name
             package="pandoc",
             provider="mise",
             state=ActionState.AVAILABLE,
-            source=PageSource.INSTALL_ROOT,
+            source=PageSource.VENDOR,
             upstream=RepoSource(name=name, target="jgm/pandoc", is_local=False),
         )
         for name in ("pandoc", "pandoc-lua", "pandoc-server")
@@ -939,7 +939,7 @@ def test_grouped_for_display_differing_upstream_targets_still_split() -> None:
             package="pandoc",
             provider="mise",
             state=ActionState.AVAILABLE,
-            source=PageSource.INSTALL_ROOT,
+            source=PageSource.VENDOR,
             upstream=RepoSource(name="pandoc", target="jgm/pandoc", is_local=False),
         ),
         ToolRow(
@@ -947,7 +947,7 @@ def test_grouped_for_display_differing_upstream_targets_still_split() -> None:
             package="pandoc",
             provider="mise",
             state=ActionState.AVAILABLE,
-            source=PageSource.INSTALL_ROOT,
+            source=PageSource.VENDOR,
             upstream=RepoSource(name="pandoc-lua", target="other/fork", is_local=False),
         ),
     ]
@@ -970,7 +970,7 @@ def test_render_list_tty_shows_the_four_column_table() -> None:
                 package="pandoc",
                 provider="mise",
                 state=ActionState.AVAILABLE,
-                source=PageSource.INSTALL_ROOT,
+                source=PageSource.VENDOR,
                 upstream=None,
             )
         ],
@@ -980,7 +980,7 @@ def test_render_list_tty_shows_the_four_column_table() -> None:
     assert "Manpage Reachability" in output
     assert "pandoc" in output
     assert ActionState.AVAILABLE.value in output
-    assert PageSource.INSTALL_ROOT.value in output
+    assert PageSource.VENDOR.value in output
 
 
 def test_render_list_colors_the_state_column_per_category() -> None:
@@ -995,7 +995,7 @@ def test_render_list_colors_the_state_column_per_category() -> None:
                 package="pandoc",
                 provider="mise",
                 state=ActionState.AVAILABLE,
-                source=PageSource.INSTALL_ROOT,
+                source=PageSource.VENDOR,
                 upstream=None,
             ),
             ToolRow(
