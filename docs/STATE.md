@@ -1,87 +1,58 @@
 # Implementation State
 
-## ADR-0018: offline core landed, three pieces open
+## ADR-0020 and ADR-0021 landed; one page still needs regenerating
 
-[ADR-0018](adr/0018-list-reports-manpage-reachability.md) is accepted and now partly implemented.
-This session landed its offline core; the network, responsiveness and repair pieces remain open and are tracked in `docs/BACKLOG.md`, not here.
+[ADR-0020](adr/0020-login-shell-path-refuse-contextual.md) is implemented in full, and [ADR-0021](adr/0021-login-path-resolution-version-readback.md) records the three things it left underdetermined and how each was settled.
+Read ADR-0021 before changing any of this; it carries the reasoning, and this section is only what exists.
 
 ### What landed
 
-`status` is now `list` (`maniac/cli/listing.py`, was `maniac/cli/status.py`).
-Its State column answers whether `man <tool>` works rather than what MANIAC has done, via the four-rung ladder `ok` / `outdated` / `available` / `missing`.
-The single wiring change behind it: `manpages.find_installed_manpage_path` — which already existed for `eval --against-installed` and had never been called from this path — now runs for every row, reversing ADR-0013/ADR-0016's "the manpath is never scanned".
+`$PATH` comes from a login shell run at `$HOME`, via `maniac/sources/loginpath.py`.
+`login_path()` is `@cache`d, so the shell's startup is paid once per process rather than once per binary lookup.
+`login_path_dirs()` splits it; `which_login()` returns the first executable match and stops there, per ADR-0020's rejection of `$PATH` fall-through.
 
-The table carries four columns, Tool / State / Source / Upstream.
-Source is a `PageSource` enum rendering `maniac`, `install-root`, `system` or blank; Upstream is the resolved `RepoSource`, blank when none was resolvable.
-Filters `--outdated`, `--available`, `--missing` (State) and `--managed` (Source) union within an axis and intersect across, and are applied before the render branch so the table and the piped bare-name output can never disagree.
-There is no `--ok`, deliberately.
+Both resolution paths in `discovery.py` go through it: `enumerate_installations` walks it, and `resolve_bin_path` searches it instead of calling `shutil.which`.
+That second one is ADR-0021's decision and reverses what an earlier draft of this file asserted — `list` and `install` now resolve every tool identically, where a predicate-only reading would have had them disagree about `ty`.
+`resolve_bin_path` is public for that reason: it is a contract between `discovery` and `orchestration.install`, not a private helper.
 
-The manifest gained `version: str | None` on `Entry`, threaded from `install_manpage` through both `manifest.record` call sites.
-`SCHEMA_VERSION` was deliberately **not** bumped: `load()` discards the whole manifest on a version mismatch, which would have destroyed the two live entries. An absent `version` reads `None` and can never make a row `outdated`, which is ADR-0018's "positive evidence" rule holding correctly rather than a workaround.
+`run_install` refuses a binary the login `$PATH` cannot reach, raising `InstallRefused` (a `ManiacError` subclass) with a message naming why.
+The check sits **above** the `generate_only` branch, not inside it — placed inside, `--generate` walked straight past it.
+`cli/install.py` catches `InstallRefused` before the generic handler and renders it in yellow without counting a failure, since nothing was attempted.
 
-### What did not land, and why
+Tier-3 synthesis for a binary no provider claims now records that binary's own `--version` output verbatim, via `crawler.get_version` (which returns `None` on every failure mode rather than raising).
+`crawler._run_cli_flag` holds the subprocess machinery `get_help` and `get_version` share.
+`listing._classify` reads it back: when a row is owned, carries a recorded version, and has no `Installation`, it re-runs `--version` and compares. The cheap checks short-circuit first, so only MANIAC-owned unclaimed pages can spawn a subprocess.
 
-Upstream is resolved **offline only** — from installation-derived metadata via `Provider.resolve_source`, which names the repository without touching the network.
-ADR-0018 commits to going further and checking upstream for a page at a matching version (`git ls-remote --tags` plus a shallow clone); that is a separate backlog entry and is not implemented.
-So `available` currently means "a page ships in the install root", never "upstream has one".
+### The environment scrub, and why it is not optional
 
-Mise is the one provider whose `resolve_source` can reach the network, through `_query_mise_registry`'s registry fallback on a cache miss.
-It was initially called with `offline=True` from `list`, to hold the offline property this pass was scoped around; that gate was lifted shortly after — see the ADR-0019 section below, which records what replaced it.
-The `offline` parameter itself stays on `_resolve_from_mise` and `MiseProvider.resolve_source`, unused by `list` but tested, because ADR-0018's deferred tier-2 work has to decide about it deliberately.
+A login shell **inherits** `$PATH` and its rc files append to what they were handed.
+Asked without scrubbing, it returns the caller's `$PATH` — including `uv run`'s `.venv/bin` — and looks like it worked, because the answer is usually right for the wrong reason.
+`_login_shell_env` therefore replaces `PATH` with a bootstrap value and strips activation markers (`VIRTUAL_ENV`, `CONDA_*`, `UV_*`, `DIRENV_*`), the same re-entry `cwd=$HOME` guards against arriving through a different channel.
 
-### Behaviour change worth knowing
+That scrub has a failure mode of its own: a machine whose rc files never set `$PATH` returns the bootstrap straight back — zero exit, non-empty output, no information.
+It is treated as a sixth fallback alongside `$SHELL` unset, non-zero exit, timeout, `OSError` and empty output: warn, and use the inherited `$PATH`.
+Detection is a conjunction — the probe sentinel survived **and** nothing outside the bootstrap was added — because an rc file that deliberately sets a small `$PATH` has constructed a real answer and must not be discarded.
 
-A MANIAC-managed page whose file exists but which `man` does not resolve — `man_dir` absent from `MANPATH` — now reads `available` or `missing`, not `managed`.
-That is correct under the new definition, since `ok` asserts reachability, but it is a visible reversal for anyone whose `MANPATH` is not set up, and it is pinned by an explicit test.
-More generally, two machines with identical binaries and different `MANPATH` settings will legitimately report different states.
+This was found live, not reasoned about: on the development system it produced zero rows from `list` and a confident refusal of `ruff`, a genuinely global tool, with nothing warning that anything was wrong.
+The underlying cause was a gap in the user's own shell configuration, fixed outside this repository — a non-interactive login shell in a graphical session had no route to `environment.d`.
+So this path is no longer reachable here and only its tests exercise it.
 
 ### Verified
 
-Measured at the point the offline core landed, before the gate was lifted: 70 rows, 5 `ok`, 0 `outdated`, 14 `available`, 51 `missing`, 45 of 70 carrying an Upstream, no network call at all, ~3.5-3.8s for a full CLI invocation (~3.0-3.3s in `compute_rows`) against ~1.4-1.6s for the `$PATH` walk alone.
-Those figures were taken through `uv run` inside this repo, where `.venv/bin` shadows some real binaries — `docs/BACKLOG.md` records the caveat and the resolver divergence behind it.
+`just check` green.
+Full live verification is pending re-run after the sentinel change; the previous full run was 394 tests with the four `just check` stages clean, and confirmed: exactly one login-shell spawn per process (`strace`), 61ms cold against 0.003ms cached, and the `--generate` refusal firing before any tier.
 
-## ADR-0019: implemented, one page left to regenerate
+The measurement caveat that governed every earlier figure in this file is **gone**: numbers no longer have to be taken through `uv run` with `.venv/bin` shadowing real binaries, because that is precisely what this work removes.
+Re-measure anything quoted from before ADR-0020 rather than trusting it.
 
-[ADR-0019](adr/0019-earn-synthesized-page-version.md) closed the gap ADR-0018 left: tier-3 synthesis extracted repository documentation from the default branch while claiming to document the installed binary's version.
-Tier 3 now resolves and clones the matching tag, records the version when one is found, and records none when it is not.
-`fetch_and_extract_docs` returns `(docs, matched)` so the "was it tag-matched" fact has a single source of truth rather than being inferred from `inst.version`.
+### Unfinished
 
-The mise offline gate is gone. `list` calls `provider.resolve_source(inst)` uniformly, so the registry fallback may reach the network; measured at 45→49 of 70 rows gaining an Upstream, one ~90KB fetch per run, `timeout=10` already configured, and every failure mode degrading to a blank Upstream rather than erroring.
-`list` is therefore no longer guaranteed offline, which is what ADR-0018 anticipated and accepted.
+**`ty` was never regenerated.**
+Carried over from [ADR-0019](adr/0019-earn-synthesized-page-version.md): four attempts returned `litellm.ServiceUnavailableError` (Gemini 503), so its manifest entry still reads `version: null` and it cannot show `outdated`.
+Nothing is broken; the work did not complete.
 
-Verified end to end on the development system: regenerating `aichat` produced a tag-matched clone at `v0.30.0` and a manifest entry recording `"version": "0.30.0"`, and the page renders correctly through `man`.
+Re-run plain `maniac install ty` when the API recovers — unflagged, not `--generate`: ADR-0016 orders the tiers authoritative-first and tiers 1 and 2 record a version too, so forcing synthesis can only buy a worse page for an LLM call it did not need.
+For `ty` specifically it makes no difference — `--no-generate` reported no install-root or repository page — but the habit matters.
 
-**Unfinished:** `ty` was not regenerated. Four attempts returned `litellm.ServiceUnavailableError` — Gemini 503, "experiencing high demand" — so its entry still reads `version: null` and it cannot show `outdated`.
-Nothing is broken; the work simply did not complete. Re-run plain `maniac install ty` when the API recovers.
-Use the unflagged form, not `--generate`: ADR-0016 orders the tiers authoritative-first, and tiers 1 and 2 record a version too, so forcing synthesis can only ever buy a worse page for an LLM call it did not need to spend.
-For these two tools specifically it makes no difference — `maniac install --no-generate ty aichat` reported no install-root or repository page for either, so tier 3 is genuinely the only path. That was checked rather than assumed.
-The pre-regeneration pages and manifest were snapshotted to the session scratchpad, which does not survive indefinitely — `ty`'s page on disk is untouched, so nothing needs restoring.
-
-`just check` passes: 384 tests.
-
-## ADR-0020: decided, unimplemented
-
-[ADR-0020](adr/0020-login-shell-path-refuse-contextual.md) was accepted this session and none of it is built. Read that record first; this section is only the work.
-
-Three pieces, in dependency order.
-
-**1. Take `$PATH` from a login shell.**
-`discovery.enumerate_installations` currently walks the inherited `$PATH`. It should walk the output of `$SHELL -lc 'printenv PATH'` run with `cwd=$HOME`.
-`printenv`, not `echo $PATH` — fish prints the list space-separated, and fish is installed here even though `$SHELL` is `/bin/bash`, so getting this wrong is reachable, not theoretical.
-Resolve once per process and thread it, rather than spawning a shell per binary; ~66 lookups at 57ms each would be catastrophic where one is free.
-Decide deliberately what happens when `$SHELL` is unset or the shell fails — ADR-0020's Consequences names container/CI as the unexamined case, so this should degrade to the inherited `$PATH` rather than crash, and say so.
-
-**2. Refuse a binary the login `$PATH` cannot reach.**
-In `install`, before any tier runs. The message must name the reason — reachable only from the current environment, and the page would be global and permanent — because a silent refusal is the failure ADR-0018 exists to correct.
-Note this is the one place the login `$PATH` is used as a *predicate* rather than as an enumeration source: a named tool is resolved by `find_installation`, which does not consult it.
-
-**3. Record `--version` for unclaimed synthesis.**
-When no provider claims the binary, `run_pipeline` currently passes `version=None` and the page reads `ok` forever. It should run `<tool> --version`, store the output verbatim, and treat any change as `outdated`. No parsing — change is the only question.
-Where this lands matters: `install_manpage` already takes a `version`, so the work is in `run_pipeline` deciding what to pass, alongside the ADR-0019 tag-matched path that already exists there.
-
-Not part of this work, and deliberately so: no `$PATH` fall-through past an unclaimed first hit, no origin-binary field on the manifest, and no fifth `ActionState`. Each was proposed during the discussion and rejected on the record — ADR-0020 says why, and re-proposing one should start by reading that.
-
-### Verification this needs
-
-The development system is a poor place to measure any of it: running through `uv run` inside this repository puts `.venv/bin` at the front of `$PATH`, which is the exact distortion ADR-0020 removes. Check from an installed entry point, or with the repo's venv off `$PATH`, or the result will describe the bug rather than the fix.
-The concrete before/after to look for: `ty` currently resolves to this repo's 0.0.75 dev dependency and is unclaimed; afterwards it should resolve to the mise-installed 0.0.78 and be claimed by the mise provider.
+Worth knowing: `ty` now resolves differently than when that attempt was made.
+It previously resolved to this repository's 0.0.75 dev dependency and was unclaimed; it now resolves to the mise-installed 0.0.78 and is claimed by the mise provider, so a regeneration will record a real version rather than none.
