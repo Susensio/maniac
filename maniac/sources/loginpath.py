@@ -133,6 +133,24 @@ def login_path() -> str:
         )
         return os.environ.get("PATH", "")
 
+    # A login shell inherits $PATH rather than constructing it -- scrubbing
+    # to _BOOTSTRAP_PATH is what forces it to prove it can build one. On a
+    # machine whose rc files never set $PATH, there is nothing to build
+    # from, and the shell hands the scrub straight back: zero exit,
+    # non-empty output, but no information beyond what we already knew.
+    bootstrap_entries = {
+        entry.rstrip("/") for entry in _BOOTSTRAP_PATH.split(os.pathsep) if entry
+    }
+    result_entries = {entry.rstrip("/") for entry in path.split(os.pathsep) if entry}
+    if result_entries <= bootstrap_entries:
+        logger.warning(
+            "Login shell produced no $PATH entries of its own; falling back "
+            "to the inherited $PATH, which may include environment-local "
+            "directories",
+            shell=shell,
+        )
+        return os.environ.get("PATH", "")
+
     return path
 
 
