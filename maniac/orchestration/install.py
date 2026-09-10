@@ -82,15 +82,21 @@ def run_install(
     cfg = config or Config()
     cache_dir_path = Path(cache_dir) if cache_dir is not None else cfg.cache_dir
 
+    # Ahead of the `generate_only` branch, not inside it: the refusal asks
+    # whether MANIAC should serve this binary at all, which is prior to
+    # which tier would answer. Inside the branch, `--generate` bypassed it
+    # and synthesized a global page for a binary only this shell can see --
+    # the exact outcome ADR-0020 exists to prevent.
+    if discovery.resolve_bin_path(tool_name, bin_dir) is None:
+        raise InstallRefused(
+            f"'{tool_name}' is reachable only from the current "
+            "environment, not the login shell's $PATH -- and a manpage "
+            "would be installed globally and permanently. Install it "
+            "where the login shell can reach it first (ADR-0020)."
+        )
+
     if not generate_only:
         found = discovery.find_installation(tool_name, bin_dir=bin_dir)
-        if discovery._resolve_bin_path(tool_name, bin_dir) is None:
-            raise InstallRefused(
-                f"'{tool_name}' is reachable only from the current "
-                "environment, not the login shell's $PATH -- and a manpage "
-                "would be installed globally and permanently. Install it "
-                "where the login shell can reach it first (ADR-0020)."
-            )
         if found is not None:
             provider, inst = found
             outcome = _try_install_root(provider, inst, force=force)

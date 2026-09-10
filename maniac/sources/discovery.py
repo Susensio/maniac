@@ -26,7 +26,7 @@ MISE_REGISTRY_URL = "https://mise.jdx.dev/registry/latest.tar.zst"
 MISE_REGISTRY_TTL_SECONDS = 3_600
 
 
-def _resolve_bin_path(binary_name: str, bin_dir: str | Path | None) -> Path | None:
+def resolve_bin_path(binary_name: str, bin_dir: str | Path | None) -> Path | None:
     """Locate a binary's path: an explicit directory first, then the login `$PATH`.
 
     With no `bin_dir`, resolution is exactly `loginpath.which_login` --
@@ -60,7 +60,7 @@ def discover_repo(
     `RepoSource(name=binary, target=binary)`, reachable by `run_pipeline`
     and liable to synthesize a page for a genuinely unresolved tool.
     """
-    bin_path = _resolve_bin_path(binary_name, bin_dir)
+    bin_path = resolve_bin_path(binary_name, bin_dir)
     if bin_path is None:
         return None
     return _resolve_symlink_target(binary_name, bin_path)
@@ -77,7 +77,7 @@ def find_installation(
     need the install root and version directly, not only what
     `resolve_source` derives from them.
     """
-    bin_path = _resolve_bin_path(binary_name, bin_dir)
+    bin_path = resolve_bin_path(binary_name, bin_dir)
     if bin_path is None:
         return None
     return _detect_via_registry(bin_path)

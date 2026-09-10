@@ -294,6 +294,26 @@ def test_run_install_refuses_a_binary_the_login_path_cannot_reach(
     assert "global" in message
 
 
+def test_run_install_refuses_under_generate_too(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`--generate` does not buy past the refusal.
+
+    The check asks whether MANIAC should serve this binary at all, which is
+    prior to which tier would answer -- so forcing synthesis cannot reach a
+    binary the login `$PATH` cannot. Placed inside the `generate_only`
+    branch it could, which is the bug this pins.
+    """
+    monkeypatch.setattr(discovery.loginpath, "which_login", lambda name: None)
+    monkeypatch.setattr(
+        "maniac.orchestration.install.discovery.find_installation",
+        lambda name, bin_dir=None: None,
+    )
+
+    with pytest.raises(InstallRefused):
+        run_install("project-local-tool", generate_only=True)
+
+
 def test_run_install_refusal_runs_no_tier(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -321,7 +341,7 @@ def test_run_install_refusal_runs_no_tier(
 def test_run_install_explicit_bin_dir_bypasses_the_refusal(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """An explicit `bin_dir` is stated intent (mirrors `_resolve_bin_path`'s
+    """An explicit `bin_dir` is stated intent (mirrors `resolve_bin_path`'s
     own precedence): reachability is judged there directly, never routed
     through the login `$PATH` at all.
     """
