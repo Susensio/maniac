@@ -186,6 +186,11 @@ def get_help(
     cmd_str = " ".join([*cmd, "--help"])
     try:
         res = _run_cli_flag(cmd, "--help", effective_timeout)
+        # BUG: a tool with no `--help` yields "" here and the pipeline treats it as help text.
+        # `tmux --help` writes 0 bytes to stdout, 157 to stderr, and exits 1; this returns "".
+        # Help written to stderr is discarded, and empty-because-refused is indistinguishable
+        # from empty-because-empty. `get_version` below returns None per failure mode (ADR-0020)
+        # and is the shape to copy.
         if res.returncode != 0:
             logger.debug(
                 "Command exited with non-zero code",
