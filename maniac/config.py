@@ -5,6 +5,7 @@ import os
 import sys
 import tomllib
 from dataclasses import dataclass, field
+from functools import cache
 from pathlib import Path
 from typing import Any, cast
 
@@ -17,14 +18,43 @@ from .exceptions import ManiacError
 # every import site.
 os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
 
-_XDG_CONFIG = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
-_XDG_CACHE = Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache")
-_XDG_DATA = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share")
-_XDG_STATE = Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local" / "state")
-_CONFIG_DIR = _XDG_CONFIG / "maniac"
-_CONFIG_TOML = _CONFIG_DIR / "config.toml"
+# TODO: Remove these fixture compatibility hooks when the suite-wide XDG fixture
+# changes to set environment variables in ADR-0022 step 4.
+_XDG_CONFIG: Path | None = None
+_XDG_CACHE: Path | None = None
+_XDG_DATA: Path | None = None
+_XDG_STATE: Path | None = None
 
 
+def _xdg_config_dir() -> Path:
+    return _XDG_CONFIG or Path(
+        os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config"
+    )
+
+
+def _xdg_cache_dir() -> Path:
+    return _XDG_CACHE or Path(
+        os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache"
+    )
+
+
+def _xdg_data_dir() -> Path:
+    return _XDG_DATA or Path(
+        os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share"
+    )
+
+
+def _xdg_state_dir() -> Path:
+    return _XDG_STATE or Path(
+        os.environ.get("XDG_STATE_HOME") or Path.home() / ".local" / "state"
+    )
+
+
+def _config_dir() -> Path:
+    return _xdg_config_dir() / "maniac"
+
+
+@cache
 def _load_defaults() -> dict[str, Any]:
     """Read the packaged provider defaults, limits and timeouts."""
     text = (
@@ -33,12 +63,6 @@ def _load_defaults() -> dict[str, Any]:
         .read_text(encoding="utf-8")
     )
     return tomllib.loads(text)
-
-
-_DEFAULTS = _load_defaults()
-PROVIDER_DEFAULTS: dict[str, str] = cast(dict[str, str], _DEFAULTS["providers"])
-_LIMITS: dict[str, int] = cast(dict[str, int], _DEFAULTS["limits"])
-_TIMEOUTS: dict[str, int] = cast(dict[str, int], _DEFAULTS["timeouts"])
 
 
 def _load_config_env(config_dir: Path) -> None:
@@ -70,33 +94,33 @@ def _load_config_file(config_dir: Path) -> dict[str, Any]:
     }
 
 
-_CONFIG_VALUES = _load_config_file(_CONFIG_DIR)
-_load_config_env(_CONFIG_DIR)
-
-
-def _configured_reasoning_effort() -> str | None:
+def _configured_reasoning_effort(config_values: dict[str, Any]) -> str | None:
     """config.toml's `reasoning_effort` outranks MANIAC_REASONING_EFFORT, matching resolve_model's chain."""
-    return _CONFIG_VALUES.get("reasoning_effort") or os.environ.get(
+    return config_values.get("reasoning_effort") or os.environ.get(
         "MANIAC_REASONING_EFFORT"
     )
 
 
-def _provider_default_model(provider: str) -> str:
-    if provider not in PROVIDER_DEFAULTS:
+def _provider_default_model(
+    provider: str, provider_defaults: dict[str, str], config_file: Path
+) -> str:
+    if provider not in provider_defaults:
         raise ManiacError(
-            f"Unknown provider '{provider}' in {_CONFIG_TOML}. "
-            f"Configured providers: {', '.join(PROVIDER_DEFAULTS)}."
+            f"Unknown provider '{provider}' in {config_file}. "
+            f"Configured providers: {', '.join(provider_defaults)}."
         )
-    return PROVIDER_DEFAULTS[provider]
+    return provider_defaults[provider]
 
 
-def _sniff_provider() -> str:
+def _sniff_provider(
+    provider_defaults: dict[str, str], config_dir: Path, config_file: Path
+) -> str:
     """Pick the first configured provider whose API key is present in the environment."""
     import litellm
 
     present: list[str] = []
     checked: list[str] = []
-    for provider, model in PROVIDER_DEFAULTS.items():
+    for provider, model in provider_defaults.items():
         result = litellm.validate_environment(model=model)
         if result["keys_in_environment"]:
             present.append(provider)
@@ -106,22 +130,22 @@ def _sniff_provider() -> str:
     if not present:
         raise ManiacError(
             "No LLM API key found. Set one of "
-            f"{', '.join(checked)} in the environment (or {_CONFIG_DIR / '.env'}), "
-            f"or set 'model'/'provider' in {_CONFIG_TOML}."
+            f"{', '.join(checked)} in the environment (or {config_dir / '.env'}), "
+            f"or set 'model'/'provider' in {config_file}."
         )
 
     chosen = present[0]
     if len(present) > 1:
         print(
             f"maniac: multiple provider API keys present ({', '.join(present)}); "
-            f"using '{chosen}'. Set provider = \"{chosen}\" in {_CONFIG_TOML} "
+            f"using '{chosen}'. Set provider = \"{chosen}\" in {config_file} "
             "to pin it.",
             file=sys.stderr,
         )
     return chosen
 
 
-def _validate_model(model: str) -> None:
+def _validate_model(model: str, config_file: Path) -> None:
     """Raise if LiteLLM's own provider registry does not recognize the model."""
     import litellm
 
@@ -130,7 +154,7 @@ def _validate_model(model: str) -> None:
     if name not in known and model not in known:
         raise ManiacError(
             f"Model '{model}' is not recognized by LiteLLM. Set 'model' in "
-            f"{_CONFIG_TOML} to a valid LiteLLM model identifier."
+            f"{config_file} to a valid LiteLLM model identifier."
         )
 
 
@@ -138,30 +162,77 @@ def _validate_model(model: str) -> None:
 class Config:
     """Central configuration for paths, limits, and timeouts."""
 
-    config_dir: Path = field(default_factory=lambda: _CONFIG_DIR)
-    cache_dir: Path = field(default_factory=lambda: _XDG_CACHE / "maniac" / "repos")
-    output_dir: Path = field(default_factory=lambda: _XDG_DATA / "maniac" / "manpages")
-    man_dir: Path = field(default_factory=lambda: _XDG_DATA / "man" / "man1")
+    config_dir: Path = field(default_factory=_config_dir)
+    cache_dir: Path = field(
+        default_factory=lambda: _xdg_cache_dir() / "maniac" / "repos"
+    )
+    output_dir: Path = field(
+        default_factory=lambda: _xdg_data_dir() / "maniac" / "manpages"
+    )
+    man_dir: Path = field(default_factory=lambda: _xdg_data_dir() / "man" / "man1")
     intermediate_dir: Path = field(
-        default_factory=lambda: _XDG_STATE / "maniac" / "intermediate"
+        default_factory=lambda: _xdg_state_dir() / "maniac" / "intermediate"
     )
-    bench_dir: Path = field(default_factory=lambda: _XDG_STATE / "maniac" / "bench")
+    bench_dir: Path = field(
+        default_factory=lambda: _xdg_state_dir() / "maniac" / "bench"
+    )
     manifest_path: Path = field(
-        default_factory=lambda: _XDG_STATE / "maniac" / "installed.json"
+        default_factory=lambda: _xdg_state_dir() / "maniac" / "installed.json"
     )
-    backup_dir: Path = field(default_factory=lambda: _XDG_STATE / "maniac" / "backups")
+    backup_dir: Path = field(
+        default_factory=lambda: _xdg_state_dir() / "maniac" / "backups"
+    )
     llm_api_key: str | None = field(
         default_factory=lambda: os.environ.get("MANIAC_LLM_API_KEY")
     )
-    llm_reasoning_effort: str | None = field(
-        default_factory=_configured_reasoning_effort
+    llm_reasoning_effort: str | None = None
+    provider_defaults: dict[str, str] = field(
+        default_factory=lambda: cast(dict[str, str], _load_defaults()["providers"]),
+        repr=False,
     )
-    max_arg_limit: int = _LIMITS["max_arg_limit"]
-    max_total_doc_chars: int = _LIMITS["max_total_doc_chars"]
-    timeout_help: int = _TIMEOUTS["help"]
-    timeout_llm: int = _TIMEOUTS["llm"]
-    timeout_git: int = _TIMEOUTS["git"]
-    timeout_pandoc: int = _TIMEOUTS["pandoc"]
+    max_arg_limit: int = field(
+        default_factory=lambda: cast(dict[str, int], _load_defaults()["limits"])[
+            "max_arg_limit"
+        ]
+    )
+    max_total_doc_chars: int = field(
+        default_factory=lambda: cast(dict[str, int], _load_defaults()["limits"])[
+            "max_total_doc_chars"
+        ]
+    )
+    timeout_help: int = field(
+        default_factory=lambda: cast(dict[str, int], _load_defaults()["timeouts"])[
+            "help"
+        ]
+    )
+    timeout_llm: int = field(
+        default_factory=lambda: cast(dict[str, int], _load_defaults()["timeouts"])[
+            "llm"
+        ]
+    )
+    timeout_git: int = field(
+        default_factory=lambda: cast(dict[str, int], _load_defaults()["timeouts"])[
+            "git"
+        ]
+    )
+    timeout_pandoc: int = field(
+        default_factory=lambda: cast(dict[str, int], _load_defaults()["timeouts"])[
+            "pandoc"
+        ]
+    )
+    _config_values: dict[str, Any] = field(default_factory=dict, init=False, repr=False)
+    _model_from_environment: str | None = field(default=None, init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        _load_config_env(self.config_dir)
+        self._config_values = _load_config_file(self.config_dir)
+        if self.llm_api_key is None:
+            self.llm_api_key = os.environ.get("MANIAC_LLM_API_KEY")
+        if self.llm_reasoning_effort is None:
+            self.llm_reasoning_effort = _configured_reasoning_effort(
+                self._config_values
+            )
+        self._model_from_environment = os.environ.get("MANIAC_MODEL")
 
     def resolve_model(self, model: str | None = None) -> str:
         """Resolve a model identifier: explicit argument, config.toml, MANIAC_MODEL, sniffed provider.
@@ -172,17 +243,29 @@ class Config:
         """
         if model:
             resolved = model
-        elif _CONFIG_VALUES.get("model"):
-            resolved = _CONFIG_VALUES["model"]
-        elif _CONFIG_VALUES.get("provider"):
-            resolved = _provider_default_model(_CONFIG_VALUES["provider"])
-        elif os.environ.get("MANIAC_MODEL"):
-            resolved = os.environ["MANIAC_MODEL"]
+        elif self._config_values.get("model"):
+            resolved = self._config_values["model"]
+        elif self._config_values.get("provider"):
+            resolved = _provider_default_model(
+                self._config_values["provider"],
+                self.provider_defaults,
+                self.config_dir / "config.toml",
+            )
+        elif self._model_from_environment:
+            resolved = self._model_from_environment
         else:
-            resolved = _provider_default_model(_sniff_provider())
+            resolved = _provider_default_model(
+                _sniff_provider(
+                    self.provider_defaults,
+                    self.config_dir,
+                    self.config_dir / "config.toml",
+                ),
+                self.provider_defaults,
+                self.config_dir / "config.toml",
+            )
 
         resolved = resolved.strip()
-        _validate_model(resolved)
+        _validate_model(resolved, self.config_dir / "config.toml")
         return resolved
 
     def resolve_reasoning_effort(self) -> str | None:
