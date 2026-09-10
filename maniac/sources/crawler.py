@@ -144,15 +144,15 @@ def extract_subcommands(text: str, cmd_name: str | None = None) -> list[str]:
     return subcommands
 
 
-def get_help(
-    cmd: list[str],
-    timeout: int | None = None,
-    config: Config | None = None,
-) -> str:
-    """Execute command with --help and capture standard output."""
-    cfg = config or Config()
-    effective_timeout = timeout if timeout is not None else cfg.timeout_help
-    full_cmd = [*cmd, "--help"]
+def _run_cli_flag(
+    cmd: list[str], flag: str, timeout: int
+) -> subprocess.CompletedProcess[str]:
+    """Run `cmd` with `flag` appended, pager- and color-stripped, and return the result.
+
+    Raises `subprocess.TimeoutExpired` or `OSError` verbatim -- callers
+    decide what a timeout or a missing executable means for them.
+    """
+    full_cmd = [*cmd, flag]
     cmd_str = " ".join(full_cmd)
     logger.debug("Executing command", command=cmd_str)
     env = os.environ | {
@@ -163,17 +163,29 @@ def get_help(
         "NO_COLOR": "1",
         "TERM": "dumb",
     }
+    return subprocess.run(
+        full_cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        timeout=timeout,
+        errors="replace",
+        env=env,
+        check=False,
+    )
+
+
+def get_help(
+    cmd: list[str],
+    timeout: int | None = None,
+    config: Config | None = None,
+) -> str:
+    """Execute command with --help and capture standard output."""
+    cfg = config or Config()
+    effective_timeout = timeout if timeout is not None else cfg.timeout_help
+    cmd_str = " ".join([*cmd, "--help"])
     try:
-        res = subprocess.run(
-            full_cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            timeout=effective_timeout,
-            errors="replace",
-            env=env,
-            check=False,
-        )
+        res = _run_cli_flag(cmd, "--help", effective_timeout)
         if res.returncode != 0:
             logger.debug(
                 "Command exited with non-zero code",
@@ -190,6 +202,29 @@ def get_help(
             f"Executable '{cmd[0]}' not found on $PATH. "
             f"Verify the command is installed and executable."
         ) from e
+
+
+def get_version(
+    cmd: list[str],
+    timeout: int | None = None,
+    config: Config | None = None,
+) -> str | None:
+    """Execute command with --version and return its verbatim output, or `None`.
+
+    Unlike `get_help`, no failure here is an error (ADR-0020): no
+    `--version` flag, a non-zero exit, a timeout, a missing executable, and
+    empty output are all a tool not reporting a version, not a crawler
+    fault, so the caller sees an absence rather than a `CrawlerError`.
+    """
+    cfg = config or Config()
+    effective_timeout = timeout if timeout is not None else cfg.timeout_help
+    try:
+        res = _run_cli_flag(cmd, "--version", effective_timeout)
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+    if res.returncode != 0:
+        return None
+    return (res.stdout or "").strip() or None
 
 
 def find_subcommands(

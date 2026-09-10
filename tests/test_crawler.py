@@ -1,13 +1,16 @@
 import subprocess
+import sys
 from typing import Any
 
 import pytest
 
 from maniac.exceptions import CrawlerError
 from maniac.sources.crawler import (
+    _run_cli_flag,
     extract_subcommands,
     find_subcommands,
     get_help,
+    get_version,
 )
 
 
@@ -42,6 +45,57 @@ def test_get_help_not_found(monkeypatch: pytest.MonkeyPatch) -> None:
     with pytest.raises(CrawlerError) as exc_info:
         get_help(["nonexistent_binary"])
     assert "Executable 'nonexistent_binary' not found on $PATH" in str(exc_info.value)
+
+
+def test_run_cli_flag_appends_the_given_flag(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, Any] = {}
+
+    def fake_run(
+        full_cmd: list[str], **kwargs: Any
+    ) -> subprocess.CompletedProcess[str]:
+        captured["cmd"] = full_cmd
+        return subprocess.CompletedProcess(args=full_cmd, returncode=0, stdout="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    _run_cli_flag(["tool"], "--some-flag", 5)
+    assert captured["cmd"] == ["tool", "--some-flag"]
+
+
+def test_get_version_returns_trimmed_string_for_a_real_binary() -> None:
+    out = get_version([sys.executable])
+    assert out is not None
+    assert out == out.strip()
+    assert "Python" in out
+
+
+def test_get_version_returns_none_on_non_zero_exit() -> None:
+    """`/usr/bin/false` ignores `--version` and always exits 1 -- a real
+    non-zero exit, not a simulated one."""
+    assert get_version(["false"]) is None
+
+
+def test_get_version_returns_none_when_executable_not_found() -> None:
+    assert get_version(["nonexistent_binary_xyz_123"]) is None
+
+
+def test_get_version_returns_none_on_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_run(*args: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        raise subprocess.TimeoutExpired(cmd=["tool", "--version"], timeout=5)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    assert get_version(["tool"]) is None
+
+
+def test_get_version_returns_none_on_empty_stdout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_run(*args: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(
+            args=["tool", "--version"], returncode=0, stdout="   \n"
+        )
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    assert get_version(["tool"]) is None
 
 
 def test_find_subcommands_recursive(monkeypatch: pytest.MonkeyPatch) -> None:

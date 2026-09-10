@@ -11,7 +11,7 @@ from ..installer import install_manpage
 from ..logging import logger
 from ..manifest import Tier
 from ..models import PipelineResult
-from ..sources.crawler import find_subcommands, format_help_block
+from ..sources.crawler import find_subcommands, format_help_block, get_version
 from ..sources.discovery import discover_repo, find_installation
 from ..sources.docs import fetch_and_extract_docs, format_docs_section
 
@@ -142,16 +142,28 @@ def run_pipeline(
 
     installed_path = None
     if install and actual_roff_path and actual_roff_path.exists():
+        if found is not None:
+            # `version_matched` -- not `installed_version is not None` -- is
+            # the recorded fact (ADR-0019): a page built from default-branch
+            # docs must record no version even though the binary has one.
+            recorded_version = installed_version if version_matched else None
+        else:
+            # ADR-0020: no provider claims this binary, so there is no
+            # `Installation` to match a doc tag against -- `installed_version`
+            # is None and `version_matched` is always False here. Recording
+            # the binary's own `--version` output is still consistent with
+            # ADR-0019 rather than an exception to it: a help-only page
+            # documents exactly the binary that was crawled, so that
+            # binary's own version report is matched evidence, more directly
+            # than a tag match is.
+            recorded_version = get_version([str(executable)])
         installed_path = install_manpage(
             actual_roff_path,
             tool_name,
             Tier.SYNTHESIS,
             selected_model,
             force=force,
-            # `version_matched` -- not `installed_version is not None` -- is
-            # the recorded fact (ADR-0019): a page built from default-branch
-            # docs must record no version even though the binary has one.
-            version=installed_version if version_matched else None,
+            version=recorded_version,
         )
 
     return PipelineResult(
