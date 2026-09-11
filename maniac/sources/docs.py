@@ -85,6 +85,7 @@ IGNORE_FILE_PATTERNS = {
 MAX_TOTAL_DOC_CHARS = 75_000
 TRUNCATION_MARKER = "\n\n[... truncated ...]"
 _RELEASE_ARCHIVE_LIMIT = 10 * 1024 * 1024
+_RELEASE_ARCHIVE_CANDIDATE_LIMIT = 256 * 1024
 _RELEASE_MEMBER_LIMIT = 2 * 1024 * 1024
 _RELEASE_EXTRACTED_LIMIT = 8 * 1024 * 1024
 _MAN_ASSET_TOKEN = re.compile(
@@ -445,7 +446,7 @@ def _discover_github_release_manpages(
             _MAN_ASSET_TOKEN.search(name) is not None
             or (
                 isinstance(asset.get("size"), int)
-                and asset["size"] <= _RELEASE_ARCHIVE_LIMIT
+                and asset["size"] <= _RELEASE_ARCHIVE_CANDIDATE_LIMIT
             )
         )
         if not direct and not archive_candidate:
@@ -504,7 +505,6 @@ def _manpages_from_release_archive(
             if (
                 not member.isfile()
                 or not _safe_release_member_name(member.name)
-                or not _release_path_can_be_manpage(member.name)
                 or not _is_manpage_filename(member.name)
                 or member.size > _RELEASE_MEMBER_LIMIT
             ):
@@ -567,13 +567,6 @@ def _is_valid_bundle_page(page: Path) -> bool:
     return (
         not is_help2man_content(content)
         and re.search(r"(?m)^\.(?:TH|Dt)\s+", content[:8192]) is not None
-    )
-
-
-def _release_path_can_be_manpage(path: str) -> bool:
-    parts = Path(path).parts
-    return _path_can_be_repo_manpage(path) or (
-        len(parts) > 1 and _path_can_be_repo_manpage(str(Path(*parts[1:])))
     )
 
 

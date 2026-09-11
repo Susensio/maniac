@@ -472,10 +472,11 @@ def test_github_release_archive_keeps_valid_companion_manpages(
     output = io.BytesIO()
     with tarfile.open(fileobj=output, mode="w:gz") as tar:
         for name, content in {
-            "release/man/eza.1": b".TH EZA 1\n",
-            "release/man/eza_colors.5": b".TH EZA_COLORS 5\n",
-            "release/completions/eza.fish": b"complete -c eza",
-            "release/man/not-a-page.txt": b".TH NOT_A_PAGE 1\n",
+            "./target/man-0.23.5/eza.1": b".TH EZA 1\n",
+            "./target/man-0.23.5/eza_colors.5": b".TH EZA_COLORS 5\n",
+            "./target/man-0.23.5/eza_colors-explanation.5": b".TH EZA_COLORS_EXPLANATION 5\n",
+            "./target/completions/eza.fish": b"complete -c eza",
+            "./target/man-0.23.5/not-a-page.txt": b".TH NOT_A_PAGE 1\n",
         }.items():
             info = tarfile.TarInfo(name)
             info.size = len(content)
@@ -493,8 +494,40 @@ def test_github_release_archive_keeps_valid_companion_manpages(
 
     pages = discover_repo_manpages(source, "eza", cache_dir=tmp_path, version="0.23.5")
 
-    assert [page.name for page in pages] == ["eza.1", "eza_colors.5"]
+    assert [page.name for page in pages] == [
+        "eza.1",
+        "eza_colors-explanation.5",
+        "eza_colors.5",
+    ]
     assert all(page.parent.parent.name == "manpages" for page in pages)
+
+
+def test_release_probe_skips_large_non_man_archives(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from maniac.sources import docs as docs_module
+
+    requested: list[str] = []
+
+    def fake_download(url: str, cfg: object) -> bytes:
+        requested.append(url)
+        if url.startswith("https://api.github.com/"):
+            return b'{"assets": [{"name": "eza_x86_64.tar.gz", "size": 780000, "browser_download_url": "https://example.test/linux"}, {"name": "eza.zip", "size": 1500000, "browser_download_url": "https://example.test/zip"}, {"name": "man-0.23.5.tar.gz", "size": 10500, "browser_download_url": "https://example.test/man"}]}'
+        return b"not a tar archive"
+
+    monkeypatch.setattr(docs_module, "_download", fake_download)
+    monkeypatch.setattr(docs_module, "_discover_remote_manpage", lambda *args: None)
+    monkeypatch.setattr(docs_module, "_find_matching_tag", lambda *args: "v0.23.5")
+    source = RepoSource(name="eza", target="eza-community/eza", is_local=False)
+
+    assert (
+        discover_repo_manpages(source, "eza", cache_dir=tmp_path, version="0.23.5")
+        == []
+    )
+    assert requested == [
+        "https://api.github.com/repos/eza-community/eza/releases/tags/v0.23.5",
+        "https://example.test/man",
+    ]
 
 
 def test_malformed_release_asset_degrades_to_missing(
