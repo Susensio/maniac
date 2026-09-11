@@ -1,6 +1,8 @@
 """Repository fetching and documentation extraction."""
 
+import bz2
 import fcntl
+import gzip
 import json
 import lzma
 import os
@@ -13,7 +15,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from fnmatch import fnmatch
 from hashlib import sha256
-from io import BytesIO
+from io import BytesIO, TextIOWrapper
 from pathlib import Path
 from urllib.error import URLError
 from urllib.request import Request, urlopen
@@ -27,7 +29,6 @@ from .manpages import (
     REPO_MANPAGE_DIRS,
     is_help2man_content,
     manpage_documents,
-    read_manpage_source,
 )
 from .manpages import find_repo_manpage as _find_repo_manpage
 
@@ -500,12 +501,13 @@ def _manpages_from_release_archive(
     pages: list[Path] = []
     primary: Path | None = None
     extracted_total = 0
-    with tarfile.open(fileobj=BytesIO(archive), mode="r:*") as tar:
-        for member in sorted(tar.getmembers(), key=lambda item: item.name):
+    with tarfile.open(fileobj=BytesIO(archive), mode="r|*") as tar:
+        for member in tar:
             if (
                 not member.isfile()
                 or not _safe_release_member_name(member.name)
                 or not _is_manpage_filename(member.name)
+                or not _is_related_bundle_page(member.name, binary_name)
                 or member.size > _RELEASE_MEMBER_LIMIT
             ):
                 continue
@@ -550,6 +552,17 @@ def _matches_primary_manpage_name(path: str, binary_name: str) -> bool:
     return any(fnmatch(name, pattern) for pattern in patterns)
 
 
+def _is_related_bundle_page(path: str, binary_name: str) -> bool:
+    name = Path(path).name
+    stem = name
+    for suffix in (".gz", ".bz2", ".xz", ".zst"):
+        stem = stem.removesuffix(suffix)
+    stem = stem.rsplit(".", 1)[0]
+    return stem == binary_name or stem.startswith(
+        (f"{binary_name}-", f"{binary_name}_")
+    )
+
+
 def _safe_release_member_name(path: str) -> bool:
     member_path = Path(path)
     return (
@@ -561,13 +574,38 @@ def _safe_release_member_name(path: str) -> bool:
 
 def _is_valid_bundle_page(page: Path) -> bool:
     try:
-        content = read_manpage_source(page)
-    except (OSError, UnicodeError, lzma.LZMAError, zstandard.ZstdError):
+        content = _read_bounded_manpage(page)
+    except (EOFError, OSError, UnicodeError, lzma.LZMAError, zstandard.ZstdError):
         return False
     return (
         not is_help2man_content(content)
         and re.search(r"(?m)^\.(?:TH|Dt)\s+", content[:8192]) is not None
     )
+
+
+def _read_bounded_manpage(page: Path) -> str:
+    """Read at most one release member's decoded text, rejecting compression bombs."""
+    limit = _RELEASE_MEMBER_LIMIT + 1
+    if page.suffix == ".gz":
+        opener = gzip.open
+    elif page.suffix == ".bz2":
+        opener = bz2.open
+    elif page.suffix in {".xz", ".lzma"}:
+        opener = lzma.open
+    elif page.suffix == ".zst":
+        stream = zstandard.ZstdDecompressor().stream_reader(page.open("rb"))
+        with TextIOWrapper(stream, encoding="utf-8", errors="replace") as file:
+            content = file.read(limit)
+        if len(content) > _RELEASE_MEMBER_LIMIT:
+            raise OSError("decompressed manpage exceeds limit")
+        return content
+    else:
+        opener = open
+    with opener(page, "rt", encoding="utf-8", errors="replace") as file:
+        content = file.read(limit)
+    if len(content) > _RELEASE_MEMBER_LIMIT:
+        raise OSError("decompressed manpage exceeds limit")
+    return content
 
 
 def _download(url: str, cfg: Config) -> bytes | None:
@@ -577,15 +615,15 @@ def _download(url: str, cfg: Config) -> bytes | None:
         ) as response:
             content = response.read(_RELEASE_ARCHIVE_LIMIT + 1)
             return content if len(content) <= _RELEASE_ARCHIVE_LIMIT else None
-    except (OSError, URLError) as error:
+    except (OSError, URLError, ValueError) as error:
         logger.debug("Download failed", url=url, error=str(error))
         return None
 
 
 def _valid_page(page: Path, binary_name: str) -> bool:
     try:
-        content = read_manpage_source(page)
-    except (OSError, UnicodeError, lzma.LZMAError, zstandard.ZstdError):
+        content = _read_bounded_manpage(page)
+    except (EOFError, OSError, UnicodeError, lzma.LZMAError, zstandard.ZstdError):
         return False
     return not is_help2man_content(content) and manpage_documents(content, binary_name)
 

@@ -229,6 +229,7 @@ def _try_repository(
             _manpage_owner(candidate),
             Tier.REPOSITORY,
             source.target,
+            target_dir=_manpage_directory(candidate, cfg),
             force=force,
             version=inst.version,
             config=cfg,
@@ -252,3 +253,12 @@ def _manpage_owner(page: Path) -> str:
     if path.suffix in {".gz", ".bz2", ".xz", ".zst"}:
         path = path.with_suffix("")
     return path.with_suffix("").name
+
+
+def _manpage_directory(page: Path, cfg: Config) -> Path:
+    """Use the configured man1 directory for section 1 and its manpath sibling otherwise."""
+    path = (
+        page.with_suffix("") if page.suffix in {".gz", ".bz2", ".xz", ".zst"} else page
+    )
+    section = path.suffix.removeprefix(".")
+    return cfg.man_dir if section == "1" else cfg.man_dir.parent / f"man{section}"

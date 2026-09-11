@@ -199,7 +199,8 @@ def test_run_install_installs_all_anchored_release_manpages(
         backup_dir=tmp_path / "state" / "backups",
     )
     cfg.man_dir.mkdir()
-    vendor_companion = cfg.man_dir / companion.name
+    vendor_companion = cfg.man_dir.parent / "man5" / companion.name
+    vendor_companion.parent.mkdir()
     vendor_companion.write_text("vendor page\n", encoding="utf-8")
     provider = _FakeProvider(local_docs=[], source=source)
     inst = _installation(version="0.23.5", binary="eza")
@@ -216,15 +217,15 @@ def test_run_install_installs_all_anchored_release_manpages(
 
     assert outcome.installed_path == cfg.man_dir / primary.name
     assert (cfg.man_dir / primary.name).read_text(encoding="utf-8") == ".TH EZA 1\n"
-    assert (cfg.man_dir / companion.name).read_text(encoding="utf-8") == (
-        ".TH EZA_COLORS 5\n"
-    )
+    companion_path = cfg.man_dir.parent / "man5" / companion.name
+    assert companion_path.read_text(encoding="utf-8") == (".TH EZA_COLORS 5\n")
     primary_entry = manifest.lookup("eza", config=cfg)
     assert primary_entry is not None
     assert primary_entry.source == source.target
     companion_entry = manifest.lookup("eza_colors", config=cfg)
     assert companion_entry is not None
     assert companion_entry.source == source.target
+    assert companion_entry.path == companion_path
     assert companion_entry.backup == cfg.backup_dir / companion.name
     assert companion_entry.backup.read_text(encoding="utf-8") == "vendor page\n"
 

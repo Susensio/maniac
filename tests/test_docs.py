@@ -475,6 +475,7 @@ def test_github_release_archive_keeps_valid_companion_manpages(
             "./target/man-0.23.5/eza.1": b".TH EZA 1\n",
             "./target/man-0.23.5/eza_colors.5": b".TH EZA_COLORS 5\n",
             "./target/man-0.23.5/eza_colors-explanation.5": b".TH EZA_COLORS_EXPLANATION 5\n",
+            "./target/man-0.23.5/foo.1": b".TH FOO 1\n",
             "./target/completions/eza.fish": b"complete -c eza",
             "./target/man-0.23.5/not-a-page.txt": b".TH NOT_A_PAGE 1\n",
         }.items():
@@ -496,8 +497,8 @@ def test_github_release_archive_keeps_valid_companion_manpages(
 
     assert [page.name for page in pages] == [
         "eza.1",
-        "eza_colors-explanation.5",
         "eza_colors.5",
+        "eza_colors-explanation.5",
     ]
     assert all(page.parent.parent.name == "manpages" for page in pages)
 
@@ -579,6 +580,39 @@ def test_release_archive_rejects_an_oversized_member(tmp_path: Path) -> None:
         )
         == []
     )
+
+
+def test_compressed_manpage_expanding_past_limit_is_rejected(tmp_path: Path) -> None:
+    import gzip
+
+    from maniac.sources import docs as docs_module
+
+    page = tmp_path / "tool.1.gz"
+    with gzip.open(page, "wb") as file:
+        file.write(b".TH TOOL 1\n" + b"x" * docs_module._RELEASE_MEMBER_LIMIT)
+
+    assert docs_module._valid_page(page, "tool") is False
+
+
+def test_truncated_compressed_manpage_is_rejected(tmp_path: Path) -> None:
+    import gzip
+
+    from maniac.sources import docs as docs_module
+
+    page = tmp_path / "tool.1.gz"
+    page.write_bytes(gzip.compress(b".TH TOOL 1\n")[:-4])
+
+    assert docs_module._valid_page(page, "tool") is False
+
+
+def test_download_degrades_on_invalid_request_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from maniac.sources import docs as docs_module
+
+    monkeypatch.setattr(docs_module, "urlopen", lambda *args, **kwargs: None)
+
+    assert docs_module._download("\x00", Config()) is None
 
 
 def test_clone_configures_sparse_checkout_for_nested_documentation(
