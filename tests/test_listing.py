@@ -23,6 +23,7 @@ from maniac.cli.listing import (
     _ProgressReporter,
     _render_list,
     _resolve_upstream,
+    _streaming_table,
     _StreamingList,
     compute_rows,
 )
@@ -385,7 +386,7 @@ def test_compute_rows_bounds_upstream_probes_and_keeps_row_order(
 
     rows = compute_rows(config=_config(tmp_path), on_row_scan=on_row_scan)
 
-    assert [row.tool for row in rows] == [f"tool{index}" for index in range(12)]
+    assert [row.tool for row in rows] == sorted(f"tool{index}" for index in range(12))
     assert rows[0].source is PageSource.NONE
     assert all(row.source is PageSource.UPSTREAM for row in rows[1:])
     assert max_active <= 8
@@ -478,7 +479,7 @@ def test_streaming_list_renders_checking_before_a_blocked_probe_finishes(
             frames.append(renderable)
 
         def start(self) -> None:
-            return None
+            self.refresh()
 
         def update(self, renderable: object, *, refresh: bool) -> None:
             frames.append(renderable)
@@ -499,7 +500,6 @@ def test_streaming_list_renders_checking_before_a_blocked_probe_finishes(
         Console(file=buf, force_terminal=True, no_color=True),
         FakeReporter(),
     )
-    renderer.discovering()
     result: list[ToolRow] = []
 
     worker = threading.Thread(
@@ -532,7 +532,7 @@ def test_streaming_list_renders_checking_before_a_blocked_probe_finishes(
     assert "checking…" not in final
 
 
-def test_streaming_skeleton_arrives_before_enumeration_finishes(
+def test_streaming_skeleton_waits_for_complete_enumeration(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     provider = _FakeProvider()
@@ -541,8 +541,6 @@ def test_streaming_skeleton_arrives_before_enumeration_finishes(
     release_enumeration = threading.Event()
 
     def enumerate_installations(on_start=None, on_scan=None, on_found=None):
-        assert on_found is not None
-        on_found(provider, inst)
         assert release_enumeration.wait(timeout=2)
         return [(provider, inst)]
 
@@ -556,13 +554,14 @@ def test_streaming_skeleton_arrives_before_enumeration_finishes(
         )
     )
     worker.start()
-    assert skeleton_seen.wait(timeout=2)
+    assert not skeleton_seen.wait(timeout=0.1)
     release_enumeration.set()
+    assert skeleton_seen.wait(timeout=2)
     worker.join(timeout=2)
     assert not worker.is_alive()
 
 
-def test_compute_rows_restores_sorted_order_after_unsorted_found_callbacks(
+def test_compute_rows_emits_one_sorted_complete_skeleton(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     provider = _FakeProvider()
@@ -570,10 +569,7 @@ def test_compute_rows_restores_sorted_order_after_unsorted_found_callbacks(
     beta = _installation(binary="beta")
 
     def enumerate_installations(on_start=None, on_scan=None, on_found=None):
-        assert on_found is not None
-        on_found(provider, beta)
-        on_found(provider, alpha)
-        return [(provider, alpha), (provider, beta)]
+        return [(provider, beta), (provider, alpha)]
 
     monkeypatch.setattr(
         "maniac.cli.listing.discovery.enumerate_installations", enumerate_installations
@@ -585,8 +581,7 @@ def test_compute_rows_restores_sorted_order_after_unsorted_found_callbacks(
         on_skeleton=lambda snapshot: skeletons.append([row.tool for row in snapshot]),
     )
 
-    assert skeletons[0] == ["beta"]
-    assert skeletons[-1] == ["alpha", "beta"]
+    assert skeletons == [["alpha", "beta"]]
     assert [row.tool for row in rows] == ["alpha", "beta"]
 
 
@@ -601,9 +596,6 @@ def test_compute_rows_streaming_local_callbacks_handle_multiple_partial_rows(
     ]
 
     def enumerate_installations(on_start=None, on_scan=None, on_found=None):
-        assert on_found is not None
-        for provider, inst in installations:
-            on_found(provider, inst)
         return installations
 
     monkeypatch.setattr(
@@ -633,7 +625,7 @@ def test_streaming_list_throttles_rapid_updates(
             return None
 
         def start(self) -> None:
-            return None
+            self.refresh()
 
         def update(self, renderable: object, *, refresh: bool) -> None:
             assert not refresh
@@ -643,7 +635,7 @@ def test_streaming_list_throttles_rapid_updates(
             refreshes += 1
 
         def stop(self) -> None:
-            return None
+            self.refresh()
 
     class FakeReporter:
         def stop(self) -> None:
@@ -651,19 +643,23 @@ def test_streaming_list_throttles_rapid_updates(
 
     monkeypatch.setattr("maniac.cli.listing.Live", FakeLive)
     monkeypatch.setattr("maniac.cli.listing.monotonic", lambda: 1.0)
+    rows = [
+        ToolRow("first", "first", "fake", ActionState.MISSING, PageSource.NONE, None),
+        ToolRow("last", "last", "fake", ActionState.MISSING, PageSource.NONE, None),
+    ]
     renderer = _StreamingList(Console(file=io.StringIO()), FakeReporter())
-    renderer.discovering()
-    rows = [ToolRow("tool", "tool", "fake", ActionState.MISSING, PageSource.NONE, None)]
+    renderer.skeleton(rows)
     for _ in range(20):
-        renderer.skeleton(rows)
+        renderer.local(rows, 0, False)
+    renderer.local(rows, 1, False)
     renderer.stop()
 
-    # The terminal's final refresh belongs to `Live.stop()`, not an explicit
-    # extra repaint before it.
-    assert refreshes == 1
+    # Rich refreshes once at start and once at stop. The immediate callbacks
+    # are coalesced, including the final update immediately before stop.
+    assert refreshes == 2
 
 
-def test_streaming_list_replaces_provisional_rows_with_the_grouped_final_table(
+def test_streaming_list_keeps_fixed_binary_rows_at_completion(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     renderables: list[object] = []
@@ -675,7 +671,7 @@ def test_streaming_list_replaces_provisional_rows_with_the_grouped_final_table(
             renderables.append(renderable)
 
         def start(self) -> None:
-            return None
+            self.refresh()
 
         def update(self, renderable: object, *, refresh: bool) -> None:
             renderables.append(renderable)
@@ -688,6 +684,7 @@ def test_streaming_list_replaces_provisional_rows_with_the_grouped_final_table(
         def stop(self) -> None:
             nonlocal stopped
             stopped += 1
+            self.refresh()
 
     class FakeReporter:
         def stop(self) -> None:
@@ -702,20 +699,77 @@ def test_streaming_list_replaces_provisional_rows_with_the_grouped_final_table(
         ToolRow("beta", "beta", "fake", ActionState.OK, PageSource.SYSTEM, None),
     ]
 
-    renderer.discovering()
     renderer.skeleton(rows)
     for index in range(len(rows)):
         renderer.local(rows, index, False)
     renderer.stop()
 
-    output = io.StringIO()
-    Console(file=output, force_terminal=True, no_color=True).print(renderables[-1])
-    final = output.getvalue()
-    assert "alpha (2 binaries)" in final
-    assert "alpha-sub" not in final
-    assert final.index("alpha (2 binaries)") < final.index("beta")
-    assert refreshes == 0
+    def render_text(renderable: object) -> str:
+        output = io.StringIO()
+        Console(file=output, force_terminal=True, no_color=True).print(renderable)
+        return output.getvalue()
+
+    frames = [render_text(renderable) for renderable in renderables]
+    final = frames[-1]
+    assert "alpha" in final
+    assert "alpha-sub" in final
+    assert "alpha (2 binaries)" not in final
+    assert final.index("alpha") < final.index("alpha-sub") < final.index("beta")
+    for frame in frames:
+        assert frame.count("alpha-sub") == 1
+        assert frame.count("beta") == 1
+        assert frame.index("alpha") < frame.index("alpha-sub") < frame.index("beta")
+    assert refreshes == 2
     assert stopped == 1
+
+
+def test_streaming_table_keeps_column_geometry_for_long_upstreams() -> None:
+    rows = [
+        ToolRow(
+            "long-tool-name",
+            "long-tool-name",
+            "fake",
+            ActionState.MISSING,
+            PageSource.NONE,
+            None,
+        ),
+        ToolRow("short", "short", "fake", ActionState.MISSING, PageSource.NONE, None),
+    ]
+    checking = _streaming_table(rows, {0, 1})
+    resolved_rows = [
+        ToolRow(
+            "long-tool-name",
+            "long-tool-name",
+            "fake",
+            ActionState.AVAILABLE,
+            PageSource.UPSTREAM,
+            RepoSource(
+                name="long-tool-name",
+                target="owner/" + "very-long-upstream-name-" * 8,
+                is_local=False,
+            ),
+        ),
+        rows[1],
+    ]
+    resolved = _streaming_table(resolved_rows, {1})
+
+    checking_columns = checking.columns
+    resolved_columns = resolved.columns
+    assert [
+        (column.width, column.ratio, column.no_wrap, column.overflow)
+        for column in checking_columns
+    ] == [
+        (column.width, column.ratio, column.no_wrap, column.overflow)
+        for column in resolved_columns
+    ]
+    assert checking_columns[0].width == len("long-tool-name")
+    assert checking_columns[1].width == len("checking…")
+    assert checking_columns[2].width == len("upstream")
+    assert checking_columns[3].ratio == 1
+
+    output = io.StringIO()
+    Console(file=output, force_terminal=True, no_color=True, width=60).print(resolved)
+    assert "…" in output.getvalue()
 
 
 def test_streaming_list_keeps_provisional_rows_when_computation_fails(
@@ -752,9 +806,8 @@ def test_streaming_list_keeps_provisional_rows_when_computation_fails(
         ),
     ]
 
-    renderer.discovering()
     renderer.skeleton(rows)
-    renderer.stop(completed=False)
+    renderer.stop()
 
     output = io.StringIO()
     Console(file=output, force_terminal=True, no_color=True).print(renderables[-1])
@@ -851,17 +904,21 @@ def test_cli_streaming_error_keeps_provisional_rows_and_propagates(
 
     def enumerate_installations(on_start=None, on_scan=None, on_found=None):
         assert on_start is not None
-        assert on_found is not None
         on_start(2)
-        on_found(provider, _installation(binary="alpha"))
-        on_found(provider, _installation(binary="alpha-sub", package="alpha"))
-        raise RuntimeError("discovery failed")
+        return [
+            (provider, _installation(binary="alpha")),
+            (provider, _installation(binary="alpha-sub", package="alpha")),
+        ]
 
     monkeypatch.setattr(
         cli_module.console, "_instance", Console(force_terminal=True, no_color=True)
     )
     monkeypatch.setattr(cli_module, "Config", lambda: _config(tmp_path))
     monkeypatch.setattr("maniac.cli.listing.Live", FakeLive)
+    monkeypatch.setattr(
+        "maniac.cli.listing._classify",
+        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("local failed")),
+    )
     monkeypatch.setattr(
         "maniac.cli.listing.discovery.enumerate_installations", enumerate_installations
     )

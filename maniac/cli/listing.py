@@ -131,6 +131,10 @@ class PageSource(Enum):
     NONE = ""
 
 
+_STREAMING_STATE_WIDTH = len("checking…")
+_STREAMING_SOURCE_WIDTH = max(len(source.value) for source in PageSource)
+
+
 UPSTREAM_PROBE_WORKERS = 8
 
 
@@ -392,7 +396,8 @@ def compute_rows(
     path, which never calls it); `on_row_*` wraps this function's own
     per-row `_classify` loop, whichever path runs it.
 
-    `on_skeleton` receives provider-derived rows before local classification.
+    `on_skeleton` receives the complete, alphabetized provider-derived inventory
+    before local classification.
     `on_local_row` fills one row and says whether its tier-2 probe is pending.
     `on_initial_rows` receives the fully local snapshot for compatible callers.
     `on_upstream_rows` receives one snapshot per deduplicated probe group.
@@ -437,60 +442,29 @@ def compute_rows(
             rows, installations, cfg, on_row_scan, on_upstream_rows
         )
 
-    rows: list[ToolRow] = []
-
-    def found(provider: Any, inst: Any) -> None:
-        rows.append(
-            ToolRow(
-                tool=inst.binary,
-                package=inst.package,
-                provider=provider.name,
-                state=ActionState.MISSING,
-                source=PageSource.NONE,
-                upstream=None,
-            )
-        )
-        assert on_skeleton is not None
-        on_skeleton(rows.copy())
-
     enumerate_kwargs: dict[str, Any] = {
         "on_start": on_discovery_start,
         "on_scan": on_discovery_scan,
     }
+    # `enumerate_installations` sorts today, but the live table's row identity
+    # must not depend on that implementation detail.
+    installations = sorted(
+        discovery.enumerate_installations(**enumerate_kwargs),
+        key=lambda item: item[1].binary,
+    )
+    rows = [
+        ToolRow(
+            tool=inst.binary,
+            package=inst.package,
+            provider=provider.name,
+            state=ActionState.MISSING,
+            source=PageSource.NONE,
+            upstream=None,
+        )
+        for provider, inst in installations
+    ]
     if on_skeleton is not None:
-        enumerate_kwargs["on_found"] = found
-    installations = discovery.enumerate_installations(**enumerate_kwargs)
-    if on_skeleton is None:
-        rows = [
-            ToolRow(
-                tool=inst.binary,
-                package=inst.package,
-                provider=provider.name,
-                state=ActionState.MISSING,
-                source=PageSource.NONE,
-                upstream=None,
-            )
-            for provider, inst in installations
-        ]
-    else:
-        # Discovery may report claims as it finds them, but returns the
-        # canonical alphabetized inventory after its walk. Keep early frames
-        # responsive, then restore that stable order before local results can
-        # turn the skeleton into the completed table.
-        canonical_rows = [
-            ToolRow(
-                tool=inst.binary,
-                package=inst.package,
-                provider=provider.name,
-                state=ActionState.MISSING,
-                source=PageSource.NONE,
-                upstream=None,
-            )
-            for provider, inst in installations
-        ]
-        if rows != canonical_rows:
-            rows = canonical_rows
-            on_skeleton(rows.copy())
+        on_skeleton(rows.copy())
     if on_row_start is not None:
         on_row_start(len(installations))
     installations_by_row: list[Installation | None] = []
@@ -660,16 +634,29 @@ def _list_table(rows: list[ToolRow]) -> Table:
 
 
 def _streaming_table(rows: list[ToolRow], pending: set[int]) -> Any:
-    """One stable row per binary while facts arrive; grouping waits for completion."""
+    """One fixed row per binary while local and upstream facts arrive."""
     from rich.text import Text
 
     if not rows:
-        return Text("Discovering tools…", style="dim")
-    table = Table(title="Manpage Reachability")
-    table.add_column("Tool", style="cyan")
-    table.add_column("State")
-    table.add_column("Source")
-    table.add_column("Upstream")
+        return Text("No tools to report.", style="yellow")
+    tool_width = max(len("Tool"), *(len(row.tool) for row in rows))
+    table = Table(title="Manpage Reachability", expand=True)
+    table.add_column(
+        "Tool", style="cyan", width=tool_width, no_wrap=True, overflow="ellipsis"
+    )
+    table.add_column(
+        "State",
+        width=_STREAMING_STATE_WIDTH,
+        no_wrap=True,
+        overflow="ellipsis",
+    )
+    table.add_column(
+        "Source",
+        width=_STREAMING_SOURCE_WIDTH,
+        no_wrap=True,
+        overflow="ellipsis",
+    )
+    table.add_column("Upstream", ratio=1, no_wrap=True, overflow="ellipsis")
     for index, row in enumerate(rows):
         state = (
             "[dim]checking…[/dim]"
@@ -708,7 +695,7 @@ def _render_list(
 
 
 class _StreamingList:
-    """One Live table that replaces discovery progress after local facts exist."""
+    """One fixed Live table whose facts fill in after provider discovery."""
 
     def __init__(self, target_console: Any, reporter: Any) -> None:
         self._console = target_console
@@ -718,19 +705,19 @@ class _StreamingList:
         self._rows: list[ToolRow] = []
         self._last_refresh = 0.0
 
-    def discovering(self) -> None:
+    def skeleton(self, rows: list[ToolRow]) -> None:
         self._reporter.stop()
         self._live = Live(
-            _streaming_table([], set()),
+            _streaming_table(rows, set(range(len(rows)))),
             console=getattr(self._console, "_instance", self._console),
             auto_refresh=False,
         )
         self._live.start()
-
-    def skeleton(self, rows: list[ToolRow]) -> None:
         self._rows = rows
         self._pending = set(range(len(rows)))
-        self._publish()
+        # Rich renders the initial frame in `start`; defer the first callback
+        # refresh so it cannot immediately repaint the same geometry.
+        self._last_refresh = monotonic()
 
     def local(self, rows: list[ToolRow], index: int, upstream_pending: bool) -> None:
         self._rows = rows
@@ -747,21 +734,16 @@ class _StreamingList:
         if self._live is None:
             return
         self._live.update(_streaming_table(self._rows, self._pending), refresh=False)
-        if monotonic() - self._last_refresh >= 0.25:
+        # Completion gets Rich's one refresh in `Live.stop`; refreshing here
+        # would repaint the final frame twice in rapid succession.
+        if self._pending and monotonic() - self._last_refresh >= 0.25:
             self._live.refresh()
             self._last_refresh = monotonic()
 
-    def stop(self, *, completed: bool = True) -> None:
+    def stop(self) -> None:
         if self._live is not None:
-            if completed:
-                # `Live.stop()` performs its own last refresh. Replace the provisional
-                # frame first, but leave that one final repaint to Rich.
-                final = (
-                    _list_table(self._rows)
-                    if self._rows
-                    else "[yellow]No tools to report.[/yellow]"
-                )
-                self._live.update(final, refresh=False)
+            # Keep the completed table's binary rows in their original slots. `Live.stop`
+            # performs the one final repaint, so there is no separate grouped frame.
             self._live.stop()
 
 
@@ -818,10 +800,7 @@ def list_tools(
     def discovery_start(total: int) -> None:
         if reporter is not None:
             reporter.on_phase_start(total)
-        if renderer is not None:
-            renderer.discovering()
 
-    completed = False
     try:
         rows = compute_rows(
             tools,
@@ -834,10 +813,9 @@ def list_tools(
             on_local_row=renderer.local if renderer else None,
             on_upstream_rows=renderer.upstream if renderer else None,
         )
-        completed = True
     finally:
         if renderer is not None:
-            renderer.stop(completed=completed)
+            renderer.stop()
         if reporter is not None:
             reporter.stop()
     rows = _filter_rows(
