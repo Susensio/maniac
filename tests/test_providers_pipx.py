@@ -2,6 +2,8 @@
 
 from pathlib import Path
 
+import pytest
+
 from maniac.config import Config
 from maniac.models import RepoSource
 from maniac.sources.providers import pipx
@@ -12,6 +14,11 @@ Name: {name}
 Version: {version}
 {extra}
 """
+
+
+@pytest.fixture(autouse=True)
+def _clear_pipx_home_candidates_cache() -> None:
+    pipx._pipx_home_candidates.cache_clear()
 
 
 def _make_pipx_venv(
@@ -94,6 +101,14 @@ def test_detect_rejects_a_path_outside_pipx_venvs(tmp_path, monkeypatch) -> None
     provider = _provider(tmp_path, monkeypatch)
 
     assert provider.detect(bin_path) is None
+
+
+def test_pipx_home_candidates_are_cached_by_environment_inputs() -> None:
+    inputs = ("/home/tester/pipx", None, "/home/tester")
+
+    assert pipx._pipx_home_candidates(*inputs) == ("/home/tester/pipx",)
+    assert pipx._pipx_home_candidates(*inputs) == ("/home/tester/pipx",)
+    assert pipx._pipx_home_candidates.cache_info().hits == 1
 
 
 def test_resolve_source_reads_a_repository_project_url(tmp_path, monkeypatch) -> None:

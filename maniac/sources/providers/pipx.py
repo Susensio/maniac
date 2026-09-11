@@ -2,6 +2,7 @@
 
 import email
 import os
+from functools import cache
 from pathlib import Path
 
 from ...config import Config
@@ -23,7 +24,11 @@ class PipxProvider:
     def detect(self, bin_path: Path) -> Installation | None:
         resolved = resolve_cached(bin_path)
         resolved_str = str(resolved)
-        for home in _pipx_home_candidates():
+        for home in _pipx_home_candidates(
+            os.environ.get("PIPX_HOME"),
+            os.environ.get("XDG_DATA_HOME"),
+            str(Path.home()),
+        ):
             marker = f"{home}/venvs/"
             if marker not in resolved_str:
                 continue
@@ -60,17 +65,22 @@ class PipxProvider:
         return find_install_root_manpages(inst.root, inst.binary)
 
 
-def _pipx_home_candidates() -> list[str]:
+@cache
+def _pipx_home_candidates(
+    pipx_home: str | None, xdg_data_home: str | None, home: str
+) -> tuple[str, ...]:
     """`$PIPX_HOME`, then pipx's own documented defaults, in the order pipx
     itself resolves them: an explicit env var, then the XDG data dir, then
     the pre-1.0 fallback location pipx still honours if it exists.
     """
-    env = os.environ.get("PIPX_HOME")
-    if env:
-        return [str(Path(env).expanduser())]
-    xdg_data = os.environ.get("XDG_DATA_HOME")
-    default = Path(xdg_data).expanduser() if xdg_data else Path.home() / ".local/share"
-    return [str(default / "pipx"), str(Path.home() / ".local/pipx")]
+    if pipx_home:
+        return (str(Path(pipx_home).expanduser()),)
+    default = (
+        Path(xdg_data_home).expanduser()
+        if xdg_data_home
+        else Path(home) / ".local/share"
+    )
+    return (str(default / "pipx"), str(Path(home) / ".local/pipx"))
 
 
 def _find_metadata(root: Path, package: str) -> email.message.Message | None:

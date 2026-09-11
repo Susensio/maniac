@@ -9,8 +9,15 @@ listed in `.crates2.json`.
 import json
 from pathlib import Path
 
+import pytest
+
 from maniac.config import Config
 from maniac.sources.providers import cargo
+
+
+@pytest.fixture(autouse=True)
+def _clear_cargo_metadata_cache() -> None:
+    cargo._crates_by_binary.cache_clear()
 
 
 def _make_cargo_home(tmp_path: Path, installs: dict[str, list[str]]) -> Path:
@@ -80,6 +87,36 @@ def test_detect_rejects_a_rustup_shim_not_in_crates2_json(
     provider = _provider(tmp_path, monkeypatch, cargo_home)
 
     assert provider.detect(rustc) is None
+
+
+def test_detect_parses_each_cargo_metadata_file_once(tmp_path, monkeypatch) -> None:
+    cargo_home = _make_cargo_home(
+        tmp_path,
+        {
+            "hexyl 0.17.0 (registry+https://github.com/rust-lang/crates.io-index)": [
+                "hexyl",
+                "hexedit",
+            ]
+        },
+    )
+    hexyl = cargo_home / "bin" / "hexyl"
+    hexedit = cargo_home / "bin" / "hexedit"
+    hexyl.touch()
+    hexedit.touch()
+    provider = _provider(tmp_path, monkeypatch, cargo_home)
+    loads = cargo.json.loads
+    calls = 0
+
+    def count_loads(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return loads(*args, **kwargs)
+
+    monkeypatch.setattr(cargo.json, "loads", count_loads)
+
+    assert provider.detect(hexyl) is not None
+    assert provider.detect(hexedit) is not None
+    assert calls == 1
 
 
 def test_detect_returns_none_without_cargo_home_set(tmp_path, monkeypatch) -> None:

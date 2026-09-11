@@ -6,6 +6,7 @@ it as wrong on the development system (`~/.local/share/cargo` there).
 
 import json
 import os
+from functools import cache
 from pathlib import Path
 
 from ...config import Config
@@ -62,24 +63,36 @@ def _find_crate(cargo_home: Path, binary_name: str) -> tuple[str, str] | None:
     """Return `(crate, version)` for the crate whose `.crates2.json` entry
     lists `binary_name` among its `bins`, or None if no entry does.
     """
-    crates2_path = cargo_home / ".crates2.json"
+    return _crates_by_binary(cargo_home / ".crates2.json").get(binary_name)
+
+
+@cache
+def _crates_by_binary(crates2_path: Path) -> dict[str, tuple[str, str]]:
+    """Map Cargo-installed executable names to their crate and version.
+
+    Cargo metadata cannot change during one CLI invocation. Parsing it once
+    avoids reading `.crates2.json` for every executable examined from `$PATH`.
+    """
     try:
         data = json.loads(crates2_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError, UnicodeDecodeError) as e:
         logger.debug(
             "Error reading cargo .crates2.json", path=str(crates2_path), error=str(e)
         )
-        return None
+        return {}
     installs = data.get("installs")
     if not isinstance(installs, dict):
-        return None
+        return {}
+    crates: dict[str, tuple[str, str]] = {}
     for key, entry in installs.items():
         if not isinstance(entry, dict):
             continue
-        if binary_name not in entry.get("bins", []):
-            continue
         name, _, rest = key.partition(" ")
         version, _, _source = rest.partition(" ")
-        if name and version:
-            return name, version
-    return None
+        bins = entry.get("bins")
+        if not name or not version or not isinstance(bins, list):
+            continue
+        for binary in bins:
+            if isinstance(binary, str):
+                crates.setdefault(binary, (name, version))
+    return crates
