@@ -383,6 +383,32 @@ def test_compute_rows_bounds_upstream_probes_and_keeps_row_order(
     assert completions == 12
 
 
+def test_compute_rows_deduplicates_identical_upstream_binary_probes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    source = RepoSource(name="tool", target="owner/tool", is_local=False)
+    installations = [
+        (_FakeProvider(source=source), _installation(binary="tool")) for _ in range(3)
+    ]
+    monkeypatch.setattr(
+        "maniac.cli.listing.discovery.enumerate_installations",
+        lambda on_start=None, on_scan=None: installations,
+    )
+    probes = 0
+
+    def discover(*args: object, **kwargs: object) -> Path:
+        nonlocal probes
+        probes += 1
+        return Path("/page")
+
+    monkeypatch.setattr("maniac.cli.listing.discover_repo_manpage", discover)
+
+    rows = compute_rows(config=_config(tmp_path))
+
+    assert probes == 1
+    assert all(row.source is PageSource.UPSTREAM for row in rows)
+
+
 # -- _classify: the four states ----------------------------------------------
 
 

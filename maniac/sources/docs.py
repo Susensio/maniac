@@ -11,13 +11,15 @@ import shutil
 import subprocess
 import tarfile
 import tempfile
+import threading
+import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from fnmatch import fnmatch
 from hashlib import sha256
 from io import BytesIO, TextIOWrapper
 from pathlib import Path
-from urllib.error import URLError
+from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 import zstandard
@@ -92,6 +94,11 @@ _RELEASE_EXTRACTED_LIMIT = 8 * 1024 * 1024
 _MAN_ASSET_TOKEN = re.compile(
     r"(?:^|[-_.])man(?:page|pages)?(?:[-_.]|$)", re.IGNORECASE
 )
+_NEGATIVE_CACHE_TTL = 5 * 60
+_CACHE_MAX_BYTES = 8 * 1024
+_cache_locks: dict[Path, threading.Lock] = {}
+_cache_locks_guard = threading.Lock()
+_lookup_state = threading.local()
 
 
 def fetch_and_extract_docs(
@@ -238,15 +245,49 @@ def discover_repo_manpages(
         if source.local_path is None:
             return []
         page = _find_repo_manpage(source.local_path, binary_name)
-    else:
-        page = _discover_remote_manpage(
-            source, binary_name, cache_dir_path, cfg, version
+        return [page] if page is not None and _valid_page(page, binary_name) else []
+
+    clone_url = source.clone_url
+    if clone_url is None:
+        return []
+
+    # Versioned upstream results are immutable once published.  Holding this
+    # lock across a cold probe makes concurrent list rows share one network trip.
+    if version is None:
+        return _discover_remote_then_release(
+            source, binary_name, cache_dir_path, cfg, version, None
         )
+    probe_path = _upstream_cache_path(
+        cache_dir_path, "probes", clone_url, version, binary_name
+    )
+    with _cache_lock(probe_path):
+        cached = _read_probe_cache(probe_path, cache_dir_path, binary_name)
+        if cached is not None:
+            return cached
+        tag = _find_matching_tag_cached(cache_dir_path, clone_url, version, cfg)
+        pages = _discover_remote_then_release(
+            source, binary_name, cache_dir_path, cfg, version, tag
+        )
+        if pages:
+            _write_probe_cache(probe_path, pages)
+        return pages
+
+
+def _discover_remote_then_release(
+    source: RepoSource,
+    binary_name: str,
+    cache_dir: Path,
+    cfg: Config,
+    version: str | None,
+    tag: str | None,
+) -> list[Path]:
+    if version is not None and tag is None:
+        return []
+    page = _discover_remote_manpage(source, binary_name, cache_dir, cfg, version, tag)
     if page is not None:
         return [page] if _valid_page(page, binary_name) else []
-
     return _discover_github_release_manpages(
-        source, binary_name, cache_dir_path, cfg, version
+        source, binary_name, cache_dir, cfg, version, tag
     )
 
 
@@ -256,6 +297,7 @@ def _discover_remote_manpage(
     cache_dir: Path,
     cfg: Config,
     version: str | None,
+    tag: str | None = None,
 ) -> Path | None:
     """Find one page from a bare, filtered object cache; never make a worktree."""
     clone_url = source.clone_url
@@ -264,7 +306,7 @@ def _discover_remote_manpage(
     ref_name = "default"
     fetch_ref = "HEAD"
     if version is not None:
-        tag = _find_matching_tag(clone_url, version, cfg.timeout_git)
+        tag = tag or _find_matching_tag_cached(cache_dir, clone_url, version, cfg)
         if tag is None:
             return None
         ref_name = tag
@@ -397,9 +439,12 @@ def _materialize_page(
 ) -> Path:
     key = sha256(f"{source.target}\0{ref}\0{original_path}".encode()).hexdigest()
     destination = cache_dir / "manpages" / key / Path(original_path).name
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    if not destination.exists():
-        destination.write_bytes(content)
+    with _cache_lock(destination):
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(dir=destination.parent, delete=False) as file:
+            temporary = Path(file.name)
+            file.write(content)
+        temporary.replace(destination)
     return destination
 
 
@@ -409,13 +454,14 @@ def _discover_github_release_manpages(
     cache_dir: Path,
     cfg: Config,
     version: str | None,
+    tag: str | None = None,
 ) -> list[Path]:
     if version is None or source.target.count("/") != 1:
         return []
     clone_url = source.clone_url
     if clone_url is None:
         return []
-    tag = _find_matching_tag(clone_url, version, cfg.timeout_git)
+    tag = tag or _find_matching_tag_cached(cache_dir, clone_url, version, cfg)
     if tag is None:
         return []
     metadata = _download_cached(
@@ -477,21 +523,33 @@ def _is_release_archive(name: str) -> bool:
 
 def _download_cached(url: str, cache_dir: Path, cfg: Config) -> bytes | None:
     destination = cache_dir / "releases" / sha256(url.encode()).hexdigest()
-    try:
-        if destination.stat().st_size <= _RELEASE_ARCHIVE_LIMIT:
-            return destination.read_bytes()
-        destination.unlink()
-    except OSError:
-        pass
-    content = _download(url, cfg)
-    if content is None or len(content) > _RELEASE_ARCHIVE_LIMIT:
-        return None
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile(dir=destination.parent, delete=False) as file:
-        temporary = Path(file.name)
-        file.write(content)
-    temporary.replace(destination)
-    return content
+    negative_path = _upstream_cache_path(cache_dir, "downloads", url)
+    with _cache_lock(destination):
+        try:
+            if destination.stat().st_size <= _RELEASE_ARCHIVE_LIMIT:
+                return destination.read_bytes()
+            destination.unlink()
+        except OSError:
+            pass
+        negative = _read_json_cache(negative_path)
+        created = negative.get("created") if negative is not None else None
+        if (
+            isinstance(created, (int, float))
+            and time.time() - created < _NEGATIVE_CACHE_TTL
+        ):
+            return None
+        _lookup_state.definitive = True
+        content = _download(url, cfg)
+        if content is None or len(content) > _RELEASE_ARCHIVE_LIMIT:
+            if _lookup_state.definitive:
+                _write_json_cache(negative_path, {"created": time.time()})
+            return None
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(dir=destination.parent, delete=False) as file:
+            temporary = Path(file.name)
+            file.write(content)
+        temporary.replace(destination)
+        return content
 
 
 def _manpages_from_release_archive(
@@ -609,15 +667,25 @@ def _read_bounded_manpage(page: Path) -> str:
 
 
 def _download(url: str, cfg: Config) -> bytes | None:
+    """Download bytes, recording whether a missing response was definitive."""
+    content, definitive = _download_result(url, cfg)
+    _lookup_state.definitive = definitive
+    return content
+
+
+def _download_result(url: str, cfg: Config) -> tuple[bytes | None, bool]:
     try:
         with urlopen(
             Request(url, headers={"User-Agent": "maniac"}), timeout=cfg.timeout_git
         ) as response:
             content = response.read(_RELEASE_ARCHIVE_LIMIT + 1)
-            return content if len(content) <= _RELEASE_ARCHIVE_LIMIT else None
+            return (content if len(content) <= _RELEASE_ARCHIVE_LIMIT else None), True
+    except HTTPError as error:
+        logger.debug("Download failed", url=url, error=str(error))
+        return None, error.code in {404, 410}
     except (OSError, URLError, ValueError) as error:
         logger.debug("Download failed", url=url, error=str(error))
-        return None
+        return None, False
 
 
 def _valid_page(page: Path, binary_name: str) -> bool:
@@ -650,6 +718,111 @@ def _cache_matches_source(cache_dir: Path, clone_url: str, timeout: int) -> bool
     return result.returncode == 0 and result.stdout.strip() == clone_url
 
 
+def _upstream_cache_path(cache_dir: Path, kind: str, *parts: str) -> Path:
+    digest = sha256("\0".join(parts).encode()).hexdigest()
+    return cache_dir / "upstream" / kind / f"{digest}.json"
+
+
+@contextmanager
+def _cache_lock(path: Path) -> Iterator[None]:
+    """Serialize a cache key across threads and processes."""
+    with _cache_locks_guard:
+        thread_lock = _cache_locks.setdefault(path, threading.Lock())
+    with thread_lock:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        lock_path = path.with_suffix(".lock")
+        with lock_path.open("w", encoding="utf-8") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            yield
+
+
+def _read_json_cache(path: Path) -> dict[str, object] | None:
+    try:
+        if path.stat().st_size > _CACHE_MAX_BYTES:
+            raise OSError("cache entry exceeds limit")
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        path.unlink(missing_ok=True)
+        return None
+    if isinstance(payload, dict):
+        return payload
+    path.unlink(missing_ok=True)
+    return None
+
+
+def _write_json_cache(path: Path, payload: dict[str, object]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", dir=path.parent, encoding="utf-8", delete=False
+        ) as file:
+            temporary = Path(file.name)
+            json.dump(payload, file, separators=(",", ":"))
+        temporary.replace(path)
+    except OSError as error:
+        logger.debug("Could not write upstream cache", path=str(path), error=str(error))
+
+
+def _find_matching_tag_cached(
+    cache_dir: Path, clone_url: str, version: str, cfg: Config
+) -> str | None:
+    path = _upstream_cache_path(cache_dir, "tags", clone_url, version)
+    with _cache_lock(path):
+        cached = _read_json_cache(path)
+        if cached is not None:
+            tag = cached.get("tag")
+            if isinstance(tag, str) and tag:
+                return tag
+            created = cached.get("created")
+            if (
+                tag is None
+                and isinstance(created, (int, float))
+                and time.time() - created < _NEGATIVE_CACHE_TTL
+            ):
+                return None
+        _lookup_state.definitive = True
+        tag = _find_matching_tag(clone_url, version, cfg.timeout_git)
+        if tag is not None or _lookup_state.definitive:
+            _write_json_cache(path, {"tag": tag, "created": time.time()})
+        return tag
+
+
+def _read_probe_cache(
+    path: Path, cache_dir: Path, binary_name: str
+) -> list[Path] | None:
+    cached = _read_json_cache(path)
+    if cached is None:
+        return None
+    pages = cached.get("pages")
+    if isinstance(pages, list) and all(isinstance(page, str) for page in pages):
+        resolved = [Path(page) for page in pages]
+        manpages_dir = cache_dir / "manpages"
+        if (
+            resolved
+            and all(
+                page.is_relative_to(manpages_dir) and page.exists() for page in resolved
+            )
+            and _valid_page(resolved[0], binary_name)
+            and all(_is_valid_bundle_page(page) for page in resolved[1:])
+        ):
+            return resolved
+    created = cached.get("created")
+    if (
+        pages == []
+        and isinstance(created, (int, float))
+        and time.time() - created < _NEGATIVE_CACHE_TTL
+    ):
+        return []
+    path.unlink(missing_ok=True)
+    return None
+
+
+def _write_probe_cache(path: Path, pages: list[Path]) -> None:
+    _write_json_cache(
+        path, {"pages": [str(page) for page in pages], "created": time.time()}
+    )
+
+
 def _find_matching_tag(clone_url: str, version: str, timeout: int) -> str | None:
     """Return the git tag naming `version`, or None if none does.
 
@@ -670,8 +843,10 @@ def _find_matching_tag(clone_url: str, version: str, timeout: int) -> str | None
         )
     except (OSError, subprocess.SubprocessError) as e:
         logger.debug("Error listing remote tags", url=clone_url, error=str(e))
+        _lookup_state.definitive = False
         return None
     if result.returncode != 0:
+        _lookup_state.definitive = False
         return None
 
     tags: set[str] = set()
@@ -682,7 +857,9 @@ def _find_matching_tag(clone_url: str, version: str, timeout: int) -> str | None
 
     for candidate in _tag_candidates(version):
         if candidate in tags:
+            _lookup_state.definitive = True
             return candidate
+    _lookup_state.definitive = True
     return None
 
 

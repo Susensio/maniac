@@ -303,26 +303,43 @@ def _with_upstream_availability(
         if on_row_scan is not None:
             on_row_scan()
 
-    if len(eligible) == 1:
-        index = eligible[0]
+    grouped: dict[tuple[str, str, str], list[int]] = {}
+    for index in eligible:
         source = rows[index].upstream
         inst = installations[index]
         assert source is not None
         assert inst is not None
-        apply(index, _probe_upstream(source, inst, cfg))
+        clone_url = source.clone_url or source.target
+        grouped.setdefault((clone_url, inst.version or "", inst.binary), []).append(
+            index
+        )
+
+    def probe(index: int) -> bool:
+        source = rows[index].upstream
+        inst = installations[index]
+        assert source is not None
+        assert inst is not None
+        return _probe_upstream(source, inst, cfg)
+
+    groups = list(grouped.values())
+    if len(groups) == 1:
+        indexes = groups[0]
+        index = indexes[0]
+        source = rows[index].upstream
+        inst = installations[index]
+        assert source is not None
+        assert inst is not None
+        available = _probe_upstream(source, inst, cfg)
+        for index in indexes:
+            apply(index, available)
     elif eligible:
-
-        def probe(index: int) -> bool:
-            source = rows[index].upstream
-            inst = installations[index]
-            assert source is not None
-            assert inst is not None
-            return _probe_upstream(source, inst, cfg)
-
         with ThreadPoolExecutor(max_workers=UPSTREAM_PROBE_WORKERS) as executor:
-            futures = {executor.submit(probe, index): index for index in eligible}
+            futures = {
+                executor.submit(probe, indexes[0]): indexes for indexes in groups
+            }
             for future in as_completed(futures):
-                apply(futures[future], future.result())
+                for index in futures[future]:
+                    apply(index, future.result())
 
     return rows
 
