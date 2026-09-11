@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from maniac import manifest
 from maniac.config import Config
 from maniac.models import Installation, RepoSource
 from maniac.orchestration.install import InstallRefused, Tier, run_install
@@ -47,12 +48,12 @@ class _FakeProvider:
 
 
 def _installation(
-    version: str | None = "1.2.3", root: Path = Path("/root")
+    version: str | None = "1.2.3", root: Path = Path("/root"), binary: str = "tool"
 ) -> Installation:
     return Installation(
-        binary="tool",
-        bin_path=Path("/bin/tool"),
-        real_path=Path("/bin/tool"),
+        binary=binary,
+        bin_path=Path("/bin") / binary,
+        real_path=Path("/bin") / binary,
         provider="fake",
         package="tool",
         version=version,
@@ -98,8 +99,8 @@ def test_run_install_falls_through_to_repository_when_no_install_root_page(
     page = tmp_path / "tool.1"
     page.write_text(".TH TOOL 1\n", encoding="utf-8")
     monkeypatch.setattr(
-        "maniac.orchestration.install.discover_repo_manpage",
-        lambda source, binary, cache_dir=None, config=None, version=None: page,
+        "maniac.orchestration.install.discover_repo_manpages",
+        lambda source, binary, cache_dir=None, config=None, version=None: [page],
     )
     monkeypatch.setattr(
         "maniac.orchestration.install.install_manpage",
@@ -127,8 +128,8 @@ def test_run_install_tier2_rejects_a_page_naming_a_different_binary(
     page = tmp_path / "tool.1"
     page.write_text(".TH SOMETHINGELSE 1\n", encoding="utf-8")
     monkeypatch.setattr(
-        "maniac.orchestration.install.discover_repo_manpage",
-        lambda source, binary, cache_dir=None, config=None, version=None: page,
+        "maniac.orchestration.install.discover_repo_manpages",
+        lambda source, binary, cache_dir=None, config=None, version=None: [page],
     )
 
     from maniac.models import PipelineResult
@@ -167,19 +168,65 @@ def test_run_install_tier2_skipped_without_an_installed_version(
     )
     called = False
 
-    def _discover_repo_manpage(*args: object, **kwargs: object) -> Path:
+    def _discover_repo_manpages(*args: object, **kwargs: object) -> list[Path]:
         nonlocal called
         called = True
         raise AssertionError("tier 2 must not run without an installed version")
 
     monkeypatch.setattr(
-        "maniac.orchestration.install.discover_repo_manpage", _discover_repo_manpage
+        "maniac.orchestration.install.discover_repo_manpages", _discover_repo_manpages
     )
 
     outcome = run_install("tool", no_generate=True)
 
     assert not called
     assert outcome.tier is None
+
+
+def test_run_install_installs_all_anchored_release_manpages(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    source = RepoSource(name="eza", target="eza-community/eza", is_local=False)
+    primary = tmp_path / "eza.1"
+    companion = tmp_path / "eza_colors.5"
+    primary.write_text(".TH EZA 1\n", encoding="utf-8")
+    companion.write_text(".TH EZA_COLORS 5\n", encoding="utf-8")
+    cfg = Config(
+        cache_dir=tmp_path / "cache",
+        man_dir=tmp_path / "man",
+        output_dir=tmp_path / "output",
+        manifest_path=tmp_path / "state" / "installed.json",
+        backup_dir=tmp_path / "state" / "backups",
+    )
+    cfg.man_dir.mkdir()
+    vendor_companion = cfg.man_dir / companion.name
+    vendor_companion.write_text("vendor page\n", encoding="utf-8")
+    provider = _FakeProvider(local_docs=[], source=source)
+    inst = _installation(version="0.23.5", binary="eza")
+    monkeypatch.setattr(
+        "maniac.orchestration.install.discovery.find_installation",
+        lambda name, bin_dir=None: (provider, inst),
+    )
+    monkeypatch.setattr(
+        "maniac.orchestration.install.discover_repo_manpages",
+        lambda *args, **kwargs: [primary, companion],
+    )
+
+    outcome = run_install("eza", no_generate=True, force=True, config=cfg)
+
+    assert outcome.installed_path == cfg.man_dir / primary.name
+    assert (cfg.man_dir / primary.name).read_text(encoding="utf-8") == ".TH EZA 1\n"
+    assert (cfg.man_dir / companion.name).read_text(encoding="utf-8") == (
+        ".TH EZA_COLORS 5\n"
+    )
+    primary_entry = manifest.lookup("eza", config=cfg)
+    assert primary_entry is not None
+    assert primary_entry.source == source.target
+    companion_entry = manifest.lookup("eza_colors", config=cfg)
+    assert companion_entry is not None
+    assert companion_entry.source == source.target
+    assert companion_entry.backup == cfg.backup_dir / companion.name
+    assert companion_entry.backup.read_text(encoding="utf-8") == "vendor page\n"
 
 
 def test_generate_flag_skips_tiers_1_and_2(

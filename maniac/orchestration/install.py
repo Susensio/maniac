@@ -19,7 +19,7 @@ from ..logging import logger
 from ..manifest import Tier
 from ..models import Installation, PipelineResult
 from ..sources import discovery
-from ..sources.docs import discover_repo_manpage
+from ..sources.docs import discover_repo_manpages
 from ..sources.manpages import (
     manpage_documents,
     read_manpage_source,
@@ -206,12 +206,13 @@ def _try_repository(
     if source is None:
         return None
 
-    page = discover_repo_manpage(
+    pages = discover_repo_manpages(
         source, inst.binary, cache_dir=cache_dir_path, config=cfg, version=inst.version
     )
-    if page is None:
+    if not pages:
         return None
 
+    page = pages[0]
     content = read_manpage_source(page)
     if not manpage_documents(content, inst.binary):
         logger.debug(
@@ -221,15 +222,20 @@ def _try_repository(
         )
         return None
 
-    installed_path = install_manpage(
-        page,
-        inst.binary,
-        Tier.REPOSITORY,
-        source.target,
-        force=force,
-        version=inst.version,
-        config=cfg,
-    )
+    installed_path: Path | None = None
+    for candidate in pages:
+        installed = install_manpage(
+            candidate,
+            _manpage_owner(candidate),
+            Tier.REPOSITORY,
+            source.target,
+            force=force,
+            version=inst.version,
+            config=cfg,
+        )
+        if candidate == page:
+            installed_path = installed
+    assert installed_path is not None
     detail = f"upstream manpage from repository ({inst.version})   [no synthesis]"
     return InstallOutcome(
         tool=inst.binary,
@@ -238,3 +244,11 @@ def _try_repository(
         source_path=page,
         installed_path=installed_path,
     )
+
+
+def _manpage_owner(page: Path) -> str:
+    """Return the manpage name without its section or compression suffix."""
+    path = page
+    if path.suffix in {".gz", ".bz2", ".xz", ".zst"}:
+        path = path.with_suffix("")
+    return path.with_suffix("").name

@@ -1,18 +1,24 @@
 """Repository fetching and documentation extraction."""
 
+import fcntl
 import json
+import lzma
 import os
 import re
 import shutil
 import subprocess
 import tarfile
+import tempfile
 from collections.abc import Iterator
+from contextlib import contextmanager
 from fnmatch import fnmatch
 from hashlib import sha256
 from io import BytesIO
 from pathlib import Path
 from urllib.error import URLError
 from urllib.request import Request, urlopen
+
+import zstandard
 
 from ..config import Config
 from ..logging import logger
@@ -79,6 +85,8 @@ IGNORE_FILE_PATTERNS = {
 MAX_TOTAL_DOC_CHARS = 75_000
 TRUNCATION_MARKER = "\n\n[... truncated ...]"
 _RELEASE_ARCHIVE_LIMIT = 10 * 1024 * 1024
+_RELEASE_MEMBER_LIMIT = 2 * 1024 * 1024
+_RELEASE_EXTRACTED_LIMIT = 8 * 1024 * 1024
 _MAN_ASSET_TOKEN = re.compile(
     r"(?:^|[-_.])man(?:page|pages)?(?:[-_.]|$)", re.IGNORECASE
 )
@@ -199,37 +207,45 @@ def discover_repo_manpage(
     can install as-is instead of generating one. With `version`, resolves the
     git tag naming it (ADR-0016 tier 2) rather than the default branch.
     """
+    pages = discover_repo_manpages(
+        source,
+        binary_name,
+        cache_dir=cache_dir,
+        config=config,
+        version=version,
+    )
+    return pages[0] if pages else None
+
+
+def discover_repo_manpages(
+    source: RepoSource,
+    binary_name: str,
+    cache_dir: str | Path | None = None,
+    config: Config | None = None,
+    version: str | None = None,
+) -> list[Path]:
+    """Return all safe manpages in a release bundle anchored to ``binary_name``.
+
+    Repository trees remain primary-page-only: unlike a release archive, a
+    checkout can contain unrelated documentation trees.  A release bundle is
+    accepted only after its primary page proves it documents the binary.
+    """
     cfg = config or Config()
     cache_dir_path = Path(cache_dir) if cache_dir is not None else cfg.cache_dir
     if source.is_local:
         if source.local_path is None:
-            return None
+            return []
         page = _find_repo_manpage(source.local_path, binary_name)
     else:
         page = _discover_remote_manpage(
             source, binary_name, cache_dir_path, cfg, version
         )
-    if page is None:
-        page = _discover_github_release_manpage(
-            source, binary_name, cache_dir_path, cfg, version
-        )
-    if page is None:
-        return None
-    try:
-        content = read_manpage_source(page)
-    except (OSError, UnicodeError) as error:
-        logger.debug(
-            "Unable to read repository manpage", path=str(page), error=str(error)
-        )
-        return None
-    if not manpage_documents(content, binary_name):
-        logger.debug(
-            "Repository manpage does not name the binary it claims to document",
-            tool=binary_name,
-            path=str(page),
-        )
-        return None
-    return page
+    if page is not None:
+        return [page] if _valid_page(page, binary_name) else []
+
+    return _discover_github_release_manpages(
+        source, binary_name, cache_dir_path, cfg, version
+    )
 
 
 def _discover_remote_manpage(
@@ -276,6 +292,21 @@ def _bare_cache_dir(cache_dir: Path, clone_url: str) -> Path:
 
 
 def _fetch_bare_ref(
+    repo: Path, clone_url: str, ref_name: str, fetch_ref: str, cfg: Config
+) -> str | None:
+    with _bare_cache_lock(repo):
+        return _fetch_bare_ref_locked(repo, clone_url, ref_name, fetch_ref, cfg)
+
+
+@contextmanager
+def _bare_cache_lock(repo: Path) -> Iterator[None]:
+    repo.parent.mkdir(parents=True, exist_ok=True)
+    with (repo.parent / f"{repo.name}.lock").open("w", encoding="utf-8") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        yield
+
+
+def _fetch_bare_ref_locked(
     repo: Path, clone_url: str, ref_name: str, fetch_ref: str, cfg: Config
 ) -> str | None:
     ref = f"refs/maniac/{sha256(ref_name.encode()).hexdigest()[:16]}"
@@ -362,43 +393,45 @@ def _path_can_be_repo_manpage(path: str) -> bool:
 def _materialize_page(
     cache_dir: Path, source: RepoSource, ref: str, original_path: str, content: bytes
 ) -> Path:
-    suffixes = "".join(Path(original_path).suffixes)
     key = sha256(f"{source.target}\0{ref}\0{original_path}".encode()).hexdigest()
-    destination = cache_dir / "manpages" / f"{key}{suffixes}"
+    destination = cache_dir / "manpages" / key / Path(original_path).name
     destination.parent.mkdir(parents=True, exist_ok=True)
     if not destination.exists():
         destination.write_bytes(content)
     return destination
 
 
-def _discover_github_release_manpage(
+def _discover_github_release_manpages(
     source: RepoSource,
     binary_name: str,
     cache_dir: Path,
     cfg: Config,
     version: str | None,
-) -> Path | None:
+) -> list[Path]:
     if version is None or source.target.count("/") != 1:
-        return None
+        return []
     clone_url = source.clone_url
     if clone_url is None:
-        return None
+        return []
     tag = _find_matching_tag(clone_url, version, cfg.timeout_git)
     if tag is None:
-        return None
+        return []
     metadata = _download_cached(
         f"https://api.github.com/repos/{source.target}/releases/tags/{tag}",
         cache_dir,
         cfg,
     )
     if metadata is None:
-        return None
+        return []
     try:
-        assets = json.loads(metadata).get("assets", [])
+        document = json.loads(metadata)
     except (UnicodeDecodeError, json.JSONDecodeError):
-        return None
+        return []
+    if not isinstance(document, dict):
+        return []
+    assets = document.get("assets", [])
     if not isinstance(assets, list):
-        return None
+        return []
     for asset in assets:
         if not isinstance(asset, dict) or not isinstance(
             asset.get("browser_download_url"), str
@@ -423,17 +456,17 @@ def _discover_github_release_manpage(
         if direct:
             page = _materialize_page(cache_dir, source, tag, name, content)
             if _valid_page(page, binary_name):
-                return page
+                return [page]
             continue
         try:
-            page = _manpage_from_release_archive(
+            pages = _manpages_from_release_archive(
                 content, source, binary_name, cache_dir, tag
             )
         except (OSError, tarfile.TarError):
             continue
-        if page is not None:
-            return page
-    return None
+        if pages:
+            return pages
+    return []
 
 
 def _is_release_archive(name: str) -> bool:
@@ -443,35 +476,98 @@ def _is_release_archive(name: str) -> bool:
 def _download_cached(url: str, cache_dir: Path, cfg: Config) -> bytes | None:
     destination = cache_dir / "releases" / sha256(url.encode()).hexdigest()
     try:
-        return destination.read_bytes()
+        if destination.stat().st_size <= _RELEASE_ARCHIVE_LIMIT:
+            return destination.read_bytes()
+        destination.unlink()
     except OSError:
         pass
     content = _download(url, cfg)
-    if content is None:
+    if content is None or len(content) > _RELEASE_ARCHIVE_LIMIT:
         return None
     destination.parent.mkdir(parents=True, exist_ok=True)
-    destination.write_bytes(content)
+    with tempfile.NamedTemporaryFile(dir=destination.parent, delete=False) as file:
+        temporary = Path(file.name)
+        file.write(content)
+    temporary.replace(destination)
     return content
 
 
-def _manpage_from_release_archive(
+def _manpages_from_release_archive(
     archive: bytes, source: RepoSource, binary_name: str, cache_dir: Path, tag: str
-) -> Path | None:
+) -> list[Path]:
+    """Materialize every valid page from an archive with a valid primary page."""
+    pages: list[Path] = []
+    primary: Path | None = None
+    extracted_total = 0
     with tarfile.open(fileobj=BytesIO(archive), mode="r:*") as tar:
         for member in sorted(tar.getmembers(), key=lambda item: item.name):
-            if not member.isfile() or not _release_path_can_be_manpage(member.name):
-                continue
-            if not any(_matching_manpage_paths([member.name], binary_name)):
+            if (
+                not member.isfile()
+                or not _safe_release_member_name(member.name)
+                or not _release_path_can_be_manpage(member.name)
+                or not _is_manpage_filename(member.name)
+                or member.size > _RELEASE_MEMBER_LIMIT
+            ):
                 continue
             extracted = tar.extractfile(member)
             if extracted is None:
                 continue
-            page = _materialize_page(
-                cache_dir, source, tag, member.name, extracted.read()
-            )
-            if _valid_page(page, binary_name):
-                return page
-    return None
+            content = extracted.read(_RELEASE_MEMBER_LIMIT + 1)
+            if len(content) > _RELEASE_MEMBER_LIMIT:
+                continue
+            extracted_total += len(content)
+            if extracted_total > _RELEASE_EXTRACTED_LIMIT:
+                return []
+            page = _materialize_page(cache_dir, source, tag, member.name, content)
+            if not _is_valid_bundle_page(page):
+                continue
+            pages.append(page)
+            if _matches_primary_manpage_name(member.name, binary_name) and _valid_page(
+                page, binary_name
+            ):
+                primary = page
+    if primary is None:
+        return []
+    return [primary, *(page for page in pages if page != primary)]
+
+
+def _is_manpage_filename(path: str) -> bool:
+    name = Path(path).name
+    for suffix in (".gz", ".bz2", ".xz", ".zst"):
+        if name.endswith(suffix):
+            name = name.removesuffix(suffix)
+            break
+    return re.search(r"\.[1-9]$", name) is not None
+
+
+def _matches_primary_manpage_name(path: str, binary_name: str) -> bool:
+    name = Path(path).name
+    patterns = [
+        f"{binary_name}{variant}.[1-9]{suffix}"
+        for variant in ("", "-*")
+        for suffix in ("", ".gz", ".bz2", ".xz", ".zst")
+    ]
+    return any(fnmatch(name, pattern) for pattern in patterns)
+
+
+def _safe_release_member_name(path: str) -> bool:
+    member_path = Path(path)
+    return (
+        not member_path.is_absolute()
+        and ".." not in member_path.parts
+        and len(member_path.name.encode()) <= 255
+    )
+
+
+def _is_valid_bundle_page(page: Path) -> bool:
+    try:
+        content = read_manpage_source(page)
+    except (OSError, UnicodeError, lzma.LZMAError, zstandard.ZstdError):
+        return False
+    return (
+        not is_help2man_content(content)
+        and re.search(r"(?m)^\.(?:TH|Dt)\s+", content[:8192]) is not None
+    )
 
 
 def _release_path_can_be_manpage(path: str) -> bool:
@@ -486,7 +582,8 @@ def _download(url: str, cfg: Config) -> bytes | None:
         with urlopen(
             Request(url, headers={"User-Agent": "maniac"}), timeout=cfg.timeout_git
         ) as response:
-            return response.read()
+            content = response.read(_RELEASE_ARCHIVE_LIMIT + 1)
+            return content if len(content) <= _RELEASE_ARCHIVE_LIMIT else None
     except (OSError, URLError) as error:
         logger.debug("Download failed", url=url, error=str(error))
         return None
@@ -495,7 +592,7 @@ def _download(url: str, cfg: Config) -> bytes | None:
 def _valid_page(page: Path, binary_name: str) -> bool:
     try:
         content = read_manpage_source(page)
-    except (OSError, UnicodeError):
+    except (OSError, UnicodeError, lzma.LZMAError, zstandard.ZstdError):
         return False
     return not is_help2man_content(content) and manpage_documents(content, binary_name)
 
@@ -589,7 +686,27 @@ def _clone_repository(
         return False
 
     if res.returncode == 0:
-        return True
+        sparse = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(dest_dir),
+                "sparse-checkout",
+                "set",
+                "--no-cone",
+                *sorted(DOC_DIRS),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=cfg.timeout_git,
+            check=False,
+        )
+        if sparse.returncode == 0:
+            return True
+        log = logger.debug if optional else logger.error
+        log("Failed configuring sparse checkout", url=clone_url)
+        shutil.rmtree(dest_dir, ignore_errors=True)
+        return False
 
     log = logger.debug if optional else logger.error
     log("Failed cloning repository", url=clone_url, error=res.stderr.strip())
