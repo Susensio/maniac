@@ -111,6 +111,14 @@ hx       synthesized from --help + repo docs
 
 `--no-generate` restricts this to the first two tiers and never calls an LLM; `--generate` forces the third, skipping the first two outright.
 
+For `list`, upstream repository checks inspect the exact version-matched tree without cloning or checking out a worktree, using cached Git tree objects and materializing only a selected page.
+For GitHub sources, MANIAC also inspects bounded, likely release artifacts independently, validates their archive contents rather than trusting artifact names, and can therefore discover release-only pages such as eza's.
+It never reads handcrafted Mise `extra_assets` entries.
+A validated bundle retains and installs every valid companion manpage across sections.
+The default cache is `$XDG_CACHE_HOME/maniac/repos` (normally `~/.cache/maniac/repos`), with bare filtered Git objects under `git/`, selected pages under `manpages/`, release responses and assets under `releases/`, and tag/probe decisions under `upstream/`.
+Positive versioned results persist; definitive misses expire after five minutes, and transient network failures are not cached as misses.
+`list` uses no sparse checkout; sparse checkouts are reserved for synthesis and limited to documentation paths.
+
 ```bash
 # Install for a single tool
 maniac install hx
