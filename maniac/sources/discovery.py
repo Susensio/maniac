@@ -87,6 +87,7 @@ def find_installation(
 def enumerate_installations(
     on_start: Callable[[int], None] | None = None,
     on_scan: Callable[[], None] | None = None,
+    on_found: Callable[["Provider", Installation], None] | None = None,
 ) -> "list[tuple[Provider, Installation]]":
     """Walk the login `$PATH` once per unique binary name, resolved through the provider registry.
 
@@ -132,6 +133,8 @@ def enumerate_installations(
         claim = _detect_via_registry(bin_path)
         if claim is not None:
             found.append(claim)
+            if on_found is not None:
+                on_found(*claim)
         if on_scan is not None:
             on_scan()
 

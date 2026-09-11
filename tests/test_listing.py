@@ -23,6 +23,7 @@ from maniac.cli.listing import (
     _ProgressReporter,
     _render_list,
     _resolve_upstream,
+    _StreamingList,
     compute_rows,
 )
 from maniac.config import Config
@@ -105,7 +106,11 @@ def test_compute_rows_no_args_walks_providers_not_the_manpath(
     inst = _installation(root=tmp_path)
     monkeypatch.setattr(
         "maniac.cli.listing.discovery.enumerate_installations",
-        lambda on_start=None, on_scan=None: [(provider, inst)],
+        lambda on_start=None, on_scan=None, on_found=None: [
+            (on_found(provider, inst), (provider, inst))[1]
+            if on_found is not None
+            else (provider, inst)
+        ],
     )
 
     rows = compute_rows(config=_config(tmp_path))
@@ -255,7 +260,11 @@ def test_compute_rows_upgrades_a_versioned_cached_repository_page(
     inst = _installation(binary="fzf", version="0.74.3")
     monkeypatch.setattr(
         "maniac.cli.listing.discovery.enumerate_installations",
-        lambda on_start=None, on_scan=None: [(provider, inst)],
+        lambda on_start=None, on_scan=None, on_found=None: [
+            (on_found(provider, inst), (provider, inst))[1]
+            if on_found is not None
+            else (provider, inst)
+        ],
     )
     monkeypatch.setattr(
         "maniac.cli.listing.discover_repo_manpage", lambda *args, **kwargs: page
@@ -407,6 +416,485 @@ def test_compute_rows_deduplicates_identical_upstream_binary_probes(
 
     assert probes == 1
     assert all(row.source is PageSource.UPSTREAM for row in rows)
+
+
+def test_deduplicated_probe_publishes_all_siblings_atomically(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    source = RepoSource(name="tool", target="owner/tool", is_local=False)
+    installations = [
+        (_FakeProvider(source=source), _installation(binary="tool")) for _ in range(3)
+    ]
+    monkeypatch.setattr(
+        "maniac.cli.listing.discovery.enumerate_installations",
+        lambda on_start=None, on_scan=None: installations,
+    )
+    monkeypatch.setattr(
+        "maniac.cli.listing.discover_repo_manpage",
+        lambda *args, **kwargs: Path("/page"),
+    )
+    published: list[tuple[list[ToolRow], set[int]]] = []
+
+    compute_rows(
+        config=_config(tmp_path),
+        on_upstream_rows=lambda rows, indexes: published.append((rows, indexes)),
+    )
+
+    assert len(published) == 1
+    snapshot, indexes = published[0]
+    assert indexes == {0, 1, 2}
+    assert all(row.source is PageSource.UPSTREAM for row in snapshot)
+
+
+def test_streaming_list_renders_checking_before_a_blocked_probe_finishes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The first Live frame is local truth, never a premature remote miss."""
+    source = RepoSource(name="tool", target="owner/tool", is_local=False)
+    provider = _FakeProvider(source=source)
+    inst = _installation()
+    monkeypatch.setattr(
+        "maniac.cli.listing.discovery.enumerate_installations",
+        lambda on_start=None, on_scan=None, on_found=None: [
+            (on_found(provider, inst), (provider, inst))[1]
+            if on_found is not None
+            else (provider, inst)
+        ],
+    )
+    probe_started = threading.Event()
+    release_probe = threading.Event()
+
+    def blocked_probe(*args: object, **kwargs: object) -> Path:
+        probe_started.set()
+        assert release_probe.wait(timeout=2)
+        return Path("/page")
+
+    monkeypatch.setattr("maniac.cli.listing.discover_repo_manpage", blocked_probe)
+
+    frames: list[object] = []
+
+    class FakeLive:
+        def __init__(self, renderable: object, **kwargs: object) -> None:
+            frames.append(renderable)
+
+        def start(self) -> None:
+            return None
+
+        def update(self, renderable: object, *, refresh: bool) -> None:
+            frames.append(renderable)
+
+        def refresh(self) -> None:
+            return None
+
+        def stop(self) -> None:
+            return None
+
+    class FakeReporter:
+        def stop(self) -> None:
+            return None
+
+    monkeypatch.setattr("maniac.cli.listing.Live", FakeLive)
+    buf = io.StringIO()
+    renderer = _StreamingList(
+        Console(file=buf, force_terminal=True, no_color=True),
+        FakeReporter(),
+    )
+    renderer.discovering()
+    result: list[ToolRow] = []
+
+    worker = threading.Thread(
+        target=lambda: result.extend(
+            compute_rows(
+                config=_config(tmp_path),
+                on_skeleton=renderer.skeleton,
+                on_local_row=renderer.local,
+                on_upstream_rows=renderer.upstream,
+            )
+        )
+    )
+    worker.start()
+    assert probe_started.wait(timeout=2)
+    assert len(frames) >= 2
+    Console(file=buf, force_terminal=True, no_color=True).print(frames[-1])
+    initial = buf.getvalue()
+    assert "checking…" in initial
+    assert "missing" not in initial
+
+    release_probe.set()
+    worker.join(timeout=2)
+    assert not worker.is_alive()
+    assert result[0].state is ActionState.AVAILABLE
+    assert len(frames) >= 3
+    final_buffer = io.StringIO()
+    Console(file=final_buffer, force_terminal=True, no_color=True).print(frames[-1])
+    final = final_buffer.getvalue()
+    assert "available" in final
+    assert "checking…" not in final
+
+
+def test_streaming_skeleton_arrives_before_enumeration_finishes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    provider = _FakeProvider()
+    inst = _installation()
+    skeleton_seen = threading.Event()
+    release_enumeration = threading.Event()
+
+    def enumerate_installations(on_start=None, on_scan=None, on_found=None):
+        assert on_found is not None
+        on_found(provider, inst)
+        assert release_enumeration.wait(timeout=2)
+        return [(provider, inst)]
+
+    monkeypatch.setattr(
+        "maniac.cli.listing.discovery.enumerate_installations", enumerate_installations
+    )
+    worker = threading.Thread(
+        target=lambda: compute_rows(
+            config=_config(tmp_path),
+            on_skeleton=lambda rows: skeleton_seen.set(),
+        )
+    )
+    worker.start()
+    assert skeleton_seen.wait(timeout=2)
+    release_enumeration.set()
+    worker.join(timeout=2)
+    assert not worker.is_alive()
+
+
+def test_compute_rows_restores_sorted_order_after_unsorted_found_callbacks(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    provider = _FakeProvider()
+    alpha = _installation(binary="alpha")
+    beta = _installation(binary="beta")
+
+    def enumerate_installations(on_start=None, on_scan=None, on_found=None):
+        assert on_found is not None
+        on_found(provider, beta)
+        on_found(provider, alpha)
+        return [(provider, alpha), (provider, beta)]
+
+    monkeypatch.setattr(
+        "maniac.cli.listing.discovery.enumerate_installations", enumerate_installations
+    )
+    skeletons: list[list[str]] = []
+
+    rows = compute_rows(
+        config=_config(tmp_path),
+        on_skeleton=lambda snapshot: skeletons.append([row.tool for row in snapshot]),
+    )
+
+    assert skeletons[0] == ["beta"]
+    assert skeletons[-1] == ["alpha", "beta"]
+    assert [row.tool for row in rows] == ["alpha", "beta"]
+
+
+def test_compute_rows_streaming_local_callbacks_handle_multiple_partial_rows(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A local callback must decide only its completed row's probe status."""
+    source = RepoSource(name="tool", target="owner/tool", is_local=False)
+    installations = [
+        (_FakeProvider(source=source), _installation(binary="first")),
+        (_FakeProvider(source=source), _installation(binary="second")),
+    ]
+
+    def enumerate_installations(on_start=None, on_scan=None, on_found=None):
+        assert on_found is not None
+        for provider, inst in installations:
+            on_found(provider, inst)
+        return installations
+
+    monkeypatch.setattr(
+        "maniac.cli.listing.discovery.enumerate_installations", enumerate_installations
+    )
+    monkeypatch.setattr(
+        "maniac.cli.listing.discover_repo_manpage", lambda *args, **kwargs: None
+    )
+    local: list[tuple[int, bool]] = []
+
+    compute_rows(
+        config=_config(tmp_path),
+        on_skeleton=lambda rows: None,
+        on_local_row=lambda rows, index, pending: local.append((index, pending)),
+    )
+
+    assert local == [(0, True), (1, True)]
+
+
+def test_streaming_list_throttles_rapid_updates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    refreshes = 0
+
+    class FakeLive:
+        def __init__(self, renderable: object, **kwargs: object) -> None:
+            return None
+
+        def start(self) -> None:
+            return None
+
+        def update(self, renderable: object, *, refresh: bool) -> None:
+            assert not refresh
+
+        def refresh(self) -> None:
+            nonlocal refreshes
+            refreshes += 1
+
+        def stop(self) -> None:
+            return None
+
+    class FakeReporter:
+        def stop(self) -> None:
+            return None
+
+    monkeypatch.setattr("maniac.cli.listing.Live", FakeLive)
+    monkeypatch.setattr("maniac.cli.listing.monotonic", lambda: 1.0)
+    renderer = _StreamingList(Console(file=io.StringIO()), FakeReporter())
+    renderer.discovering()
+    rows = [ToolRow("tool", "tool", "fake", ActionState.MISSING, PageSource.NONE, None)]
+    for _ in range(20):
+        renderer.skeleton(rows)
+    renderer.stop()
+
+    # The terminal's final refresh belongs to `Live.stop()`, not an explicit
+    # extra repaint before it.
+    assert refreshes == 1
+
+
+def test_streaming_list_replaces_provisional_rows_with_the_grouped_final_table(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    renderables: list[object] = []
+    refreshes = 0
+    stopped = 0
+
+    class FakeLive:
+        def __init__(self, renderable: object, **kwargs: object) -> None:
+            renderables.append(renderable)
+
+        def start(self) -> None:
+            return None
+
+        def update(self, renderable: object, *, refresh: bool) -> None:
+            renderables.append(renderable)
+            assert not refresh
+
+        def refresh(self) -> None:
+            nonlocal refreshes
+            refreshes += 1
+
+        def stop(self) -> None:
+            nonlocal stopped
+            stopped += 1
+
+    class FakeReporter:
+        def stop(self) -> None:
+            return None
+
+    monkeypatch.setattr("maniac.cli.listing.Live", FakeLive)
+    monkeypatch.setattr("maniac.cli.listing.monotonic", lambda: 0.0)
+    renderer = _StreamingList(Console(file=io.StringIO()), FakeReporter())
+    rows = [
+        ToolRow("alpha", "alpha", "fake", ActionState.OK, PageSource.SYSTEM, None),
+        ToolRow("alpha-sub", "alpha", "fake", ActionState.OK, PageSource.SYSTEM, None),
+        ToolRow("beta", "beta", "fake", ActionState.OK, PageSource.SYSTEM, None),
+    ]
+
+    renderer.discovering()
+    renderer.skeleton(rows)
+    for index in range(len(rows)):
+        renderer.local(rows, index, False)
+    renderer.stop()
+
+    output = io.StringIO()
+    Console(file=output, force_terminal=True, no_color=True).print(renderables[-1])
+    final = output.getvalue()
+    assert "alpha (2 binaries)" in final
+    assert "alpha-sub" not in final
+    assert final.index("alpha (2 binaries)") < final.index("beta")
+    assert refreshes == 0
+    assert stopped == 1
+
+
+def test_streaming_list_keeps_provisional_rows_when_computation_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    renderables: list[object] = []
+
+    class FakeLive:
+        def __init__(self, renderable: object, **kwargs: object) -> None:
+            renderables.append(renderable)
+
+        def start(self) -> None:
+            return None
+
+        def update(self, renderable: object, *, refresh: bool) -> None:
+            renderables.append(renderable)
+
+        def refresh(self) -> None:
+            return None
+
+        def stop(self) -> None:
+            return None
+
+    class FakeReporter:
+        def stop(self) -> None:
+            return None
+
+    monkeypatch.setattr("maniac.cli.listing.Live", FakeLive)
+    renderer = _StreamingList(Console(file=io.StringIO()), FakeReporter())
+    rows = [
+        ToolRow("alpha", "alpha", "fake", ActionState.MISSING, PageSource.NONE, None),
+        ToolRow(
+            "alpha-sub", "alpha", "fake", ActionState.MISSING, PageSource.NONE, None
+        ),
+    ]
+
+    renderer.discovering()
+    renderer.skeleton(rows)
+    renderer.stop(completed=False)
+
+    output = io.StringIO()
+    Console(file=output, force_terminal=True, no_color=True).print(renderables[-1])
+    final = output.getvalue()
+    assert "checking…" in final
+    assert "alpha-sub" in final
+    assert "alpha (2 binaries)" not in final
+
+
+def test_compute_rows_callbacks_receive_snapshots_after_initial_and_each_probe(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Callbacks expose render-safe copies rather than the worker-owned row list."""
+    source = RepoSource(name="tool", target="owner/tool", is_local=False)
+    provider = _FakeProvider(source=source)
+    monkeypatch.setattr(
+        "maniac.cli.listing.discovery.enumerate_installations",
+        lambda on_start=None, on_scan=None: [(provider, _installation())],
+    )
+    monkeypatch.setattr(
+        "maniac.cli.listing.discover_repo_manpage",
+        lambda *args, **kwargs: Path("/page"),
+    )
+    initial: list[list[ToolRow]] = []
+    finalized: list[tuple[list[ToolRow], int]] = []
+
+    rows = compute_rows(
+        config=_config(tmp_path),
+        on_initial_rows=lambda snapshot, pending: initial.append(snapshot),
+        on_upstream_rows=lambda snapshot, indexes: finalized.append(
+            (snapshot, next(iter(indexes)))
+        ),
+    )
+
+    assert initial[0][0].state is ActionState.MISSING
+    assert initial[0][0].upstream is source
+    assert finalized[0][0][0].state is ActionState.AVAILABLE
+    assert finalized[0][1] == 0
+    assert initial[0] is not rows
+    assert finalized[0][0] is not rows
+
+
+def test_cli_streaming_leaves_live_table_as_the_only_final_render(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`list` must not print a duplicate ordinary table after stopping Live."""
+    monkeypatch.setattr(
+        cli_module.console, "_instance", Console(force_terminal=True, no_color=True)
+    )
+    monkeypatch.setattr(cli_module, "Config", lambda: _config(tmp_path))
+    monkeypatch.setattr(
+        "maniac.cli.listing.discovery.enumerate_installations",
+        lambda on_start=None, on_scan=None, on_found=None: (
+            on_start and on_start(0),
+            [],
+        )[-1],
+    )
+    renders = 0
+
+    def unexpected_render(*args: object, **kwargs: object) -> None:
+        nonlocal renders
+        renders += 1
+
+    monkeypatch.setattr("maniac.cli.listing._render_list", unexpected_render)
+
+    result = runner.invoke(app, ["list"])
+
+    assert result.exit_code == 0
+    assert renders == 0
+    assert "No tools to report." in result.output
+
+
+def test_cli_streaming_error_keeps_provisional_rows_and_propagates(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    renderables: list[object] = []
+    provider = _FakeProvider()
+
+    class FakeLive:
+        def __init__(self, renderable: object, **kwargs: object) -> None:
+            renderables.append(renderable)
+
+        def start(self) -> None:
+            return None
+
+        def update(self, renderable: object, *, refresh: bool) -> None:
+            renderables.append(renderable)
+
+        def refresh(self) -> None:
+            return None
+
+        def stop(self) -> None:
+            return None
+
+    def enumerate_installations(on_start=None, on_scan=None, on_found=None):
+        assert on_start is not None
+        assert on_found is not None
+        on_start(2)
+        on_found(provider, _installation(binary="alpha"))
+        on_found(provider, _installation(binary="alpha-sub", package="alpha"))
+        raise RuntimeError("discovery failed")
+
+    monkeypatch.setattr(
+        cli_module.console, "_instance", Console(force_terminal=True, no_color=True)
+    )
+    monkeypatch.setattr(cli_module, "Config", lambda: _config(tmp_path))
+    monkeypatch.setattr("maniac.cli.listing.Live", FakeLive)
+    monkeypatch.setattr(
+        "maniac.cli.listing.discovery.enumerate_installations", enumerate_installations
+    )
+
+    result = runner.invoke(app, ["list"])
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, RuntimeError)
+    output = io.StringIO()
+    Console(file=output, force_terminal=True, no_color=True).print(renderables[-1])
+    final = output.getvalue()
+    assert "checking…" in final
+    assert "alpha-sub" in final
+    assert "alpha (2 binaries)" not in final
+
+
+def test_cli_list_explicit_tools_on_a_terminal_render_a_final_table(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(
+        cli_module.console, "_instance", Console(force_terminal=True, no_color=True)
+    )
+    monkeypatch.setattr(cli_module, "Config", lambda: _config(tmp_path))
+    monkeypatch.setattr(
+        "maniac.cli.listing.discovery.find_installation",
+        lambda name, bin_dir=None: (_FakeProvider(), _installation(binary=name)),
+    )
+
+    result = runner.invoke(app, ["list", "gum"])
+
+    assert result.exit_code == 0
+    assert "Manpage Reachability" in result.output
+    assert "gum" in result.output
 
 
 # -- _classify: the four states ----------------------------------------------
@@ -1003,7 +1491,7 @@ def test_cli_list_pipe_emits_exactly_the_filtered_set(
 
     monkeypatch.setattr(
         "maniac.cli.listing.discovery.enumerate_installations",
-        lambda on_start=None, on_scan=None: [
+        lambda on_start=None, on_scan=None, on_found=None: [
             (available_provider, _installation(binary="gum")),
             (missing_provider, _installation(binary="ghost")),
         ],
@@ -1024,7 +1512,7 @@ def test_cli_list_pipe_available_waits_for_upstream_classification(
     source = RepoSource(name="fzf", target="junegunn/fzf", is_local=False)
     monkeypatch.setattr(
         "maniac.cli.listing.discovery.enumerate_installations",
-        lambda on_start=None, on_scan=None: [
+        lambda on_start=None, on_scan=None, on_found=None: [
             (
                 _FakeProvider(source=source),
                 _installation(binary="fzf", version="0.74.3"),
@@ -1376,9 +1864,11 @@ def test_cli_list_tty_shows_table(
     monkeypatch.setattr(cli_module, "Config", lambda: _config(tmp_path))
     monkeypatch.setattr(
         "maniac.cli.listing.discovery.enumerate_installations",
-        lambda on_start=None, on_scan=None: [
-            (_FakeProvider(), _installation(binary="gum"))
-        ],
+        lambda on_start=None, on_scan=None, on_found=None: (
+            on_start and on_start(1),
+            on_found and on_found(_FakeProvider(), _installation(binary="gum")),
+            [(_FakeProvider(), _installation(binary="gum"))],
+        )[-1],
     )
 
     res = runner.invoke(app, ["list"])

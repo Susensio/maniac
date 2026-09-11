@@ -33,9 +33,11 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, replace
 from enum import Enum
 from pathlib import Path
+from time import monotonic
 from typing import TYPE_CHECKING, Annotated, Any
 
 import typer
+from rich.live import Live
 from rich.progress import Progress
 from rich.table import Table
 
@@ -271,37 +273,56 @@ def _probe_upstream(source: RepoSource, inst: "Installation", cfg: Config) -> bo
         return False
 
 
+def _upstream_eligible(
+    rows: list[ToolRow], installations: list["Installation | None"]
+) -> set[int]:
+    """Indexes that need the version-matched remote tier-2 check."""
+    return {
+        index
+        for index, (row, inst) in enumerate(zip(rows, installations, strict=True))
+        if _is_upstream_eligible(row, inst)
+    }
+
+
+def _is_upstream_eligible(row: ToolRow, inst: "Installation | None") -> bool:
+    """Whether one completed local row needs the version-matched remote check."""
+    return (
+        row.state is ActionState.MISSING
+        and row.source is PageSource.NONE
+        and row.upstream is not None
+        and inst is not None
+        and inst.version is not None
+    )
+
+
 def _with_upstream_availability(
     rows: list[ToolRow],
     installations: list["Installation | None"],
     cfg: Config,
     on_row_scan: Callable[[], None] | None,
+    on_upstream_rows: Callable[[list[ToolRow], set[int]], None] | None,
 ) -> list[ToolRow]:
     """Upgrade unresolved rows only when tier 2 accepts a matching page."""
-    eligible = [
-        index
-        for index, (row, inst) in enumerate(zip(rows, installations, strict=True))
-        if (
-            row.state is ActionState.MISSING
-            and row.source is PageSource.NONE
-            and row.upstream is not None
-            and inst is not None
-            and inst.version is not None
-        )
-    ]
-    eligible_set = set(eligible)
+    eligible_set = _upstream_eligible(rows, installations)
+    eligible = list(eligible_set)
 
     for index in range(len(rows)):
         if index not in eligible_set and on_row_scan is not None:
             on_row_scan()
 
-    def apply(index: int, available: bool) -> None:
+    def apply(indexes: list[int], available: bool) -> None:
         if available:
-            rows[index] = replace(
-                rows[index], state=ActionState.AVAILABLE, source=PageSource.UPSTREAM
-            )
+            for index in indexes:
+                rows[index] = replace(
+                    rows[index], state=ActionState.AVAILABLE, source=PageSource.UPSTREAM
+                )
         if on_row_scan is not None:
-            on_row_scan()
+            for _ in indexes:
+                on_row_scan()
+        if on_upstream_rows is not None:
+            # The worker thread owns this mutation; hand renderers an immutable
+            # snapshot only after every duplicate has the shared final result.
+            on_upstream_rows(rows.copy(), set(indexes))
 
     grouped: dict[tuple[str, str, str], list[int]] = {}
     for index in eligible:
@@ -330,16 +351,14 @@ def _with_upstream_availability(
         assert source is not None
         assert inst is not None
         available = _probe_upstream(source, inst, cfg)
-        for index in indexes:
-            apply(index, available)
+        apply(indexes, available)
     elif eligible:
         with ThreadPoolExecutor(max_workers=UPSTREAM_PROBE_WORKERS) as executor:
             futures = {
                 executor.submit(probe, indexes[0]): indexes for indexes in groups
             }
             for future in as_completed(futures):
-                for index in futures[future]:
-                    apply(index, future.result())
+                apply(futures[future], future.result())
 
     return rows
 
@@ -352,6 +371,10 @@ def compute_rows(
     on_discovery_scan: Callable[[], None] | None = None,
     on_row_start: Callable[[int], None] | None = None,
     on_row_scan: Callable[[], None] | None = None,
+    on_skeleton: Callable[[list[ToolRow]], None] | None = None,
+    on_local_row: Callable[[list[ToolRow], int, bool], None] | None = None,
+    on_initial_rows: Callable[[list[ToolRow], set[int]], None] | None = None,
+    on_upstream_rows: Callable[[list[ToolRow], set[int]], None] | None = None,
 ) -> list[ToolRow]:
     """One row per binary: every provider-detected installation, or exactly the named tools.
 
@@ -368,6 +391,13 @@ def compute_rows(
     `discovery.enumerate_installations` (skipped entirely on the `tools`
     path, which never calls it); `on_row_*` wraps this function's own
     per-row `_classify` loop, whichever path runs it.
+
+    `on_skeleton` receives provider-derived rows before local classification.
+    `on_local_row` fills one row and says whether its tier-2 probe is pending.
+    `on_initial_rows` receives the fully local snapshot for compatible callers.
+    `on_upstream_rows` receives one snapshot per deduplicated probe group.
+    They keep terminal renderers out of worker-owned mutable state; callers that
+    omit them retain the original blocking API.
 
     The initial reachability walk remains sequential because `man -w` does
     not map batched results back to queries. Unresolved, versioned rows are
@@ -401,29 +431,91 @@ def compute_rows(
                 )
             )
             installations.append(inst)
-        return _with_upstream_availability(rows, installations, cfg, on_row_scan)
+        if on_initial_rows is not None:
+            on_initial_rows(rows.copy(), _upstream_eligible(rows, installations))
+        return _with_upstream_availability(
+            rows, installations, cfg, on_row_scan, on_upstream_rows
+        )
 
-    installations = discovery.enumerate_installations(
-        on_start=on_discovery_start, on_scan=on_discovery_scan
-    )
-    if on_row_start is not None:
-        on_row_start(len(installations))
-    rows = []
-    installations_by_row: list[Installation | None] = []
-    for provider, inst in installations:
-        state, source = _classify(provider, inst, inst.binary, cfg)
+    rows: list[ToolRow] = []
+
+    def found(provider: Any, inst: Any) -> None:
         rows.append(
             ToolRow(
                 tool=inst.binary,
                 package=inst.package,
                 provider=provider.name,
-                state=state,
-                source=source,
-                upstream=_resolve_upstream(provider, inst, config=cfg),
+                state=ActionState.MISSING,
+                source=PageSource.NONE,
+                upstream=None,
             )
         )
+        assert on_skeleton is not None
+        on_skeleton(rows.copy())
+
+    enumerate_kwargs: dict[str, Any] = {
+        "on_start": on_discovery_start,
+        "on_scan": on_discovery_scan,
+    }
+    if on_skeleton is not None:
+        enumerate_kwargs["on_found"] = found
+    installations = discovery.enumerate_installations(**enumerate_kwargs)
+    if on_skeleton is None:
+        rows = [
+            ToolRow(
+                tool=inst.binary,
+                package=inst.package,
+                provider=provider.name,
+                state=ActionState.MISSING,
+                source=PageSource.NONE,
+                upstream=None,
+            )
+            for provider, inst in installations
+        ]
+    else:
+        # Discovery may report claims as it finds them, but returns the
+        # canonical alphabetized inventory after its walk. Keep early frames
+        # responsive, then restore that stable order before local results can
+        # turn the skeleton into the completed table.
+        canonical_rows = [
+            ToolRow(
+                tool=inst.binary,
+                package=inst.package,
+                provider=provider.name,
+                state=ActionState.MISSING,
+                source=PageSource.NONE,
+                upstream=None,
+            )
+            for provider, inst in installations
+        ]
+        if rows != canonical_rows:
+            rows = canonical_rows
+            on_skeleton(rows.copy())
+    if on_row_start is not None:
+        on_row_start(len(installations))
+    installations_by_row: list[Installation | None] = []
+    for index, (provider, inst) in enumerate(installations):
+        state, source = _classify(provider, inst, inst.binary, cfg)
+        rows[index] = ToolRow(
+            tool=inst.binary,
+            package=inst.package,
+            provider=provider.name,
+            state=state,
+            source=source,
+            upstream=_resolve_upstream(provider, inst, config=cfg),
+        )
         installations_by_row.append(inst)
-    return _with_upstream_availability(rows, installations_by_row, cfg, on_row_scan)
+        if on_local_row is not None:
+            on_local_row(
+                rows.copy(),
+                index,
+                _is_upstream_eligible(rows[index], inst),
+            )
+    if on_initial_rows is not None:
+        on_initial_rows(rows.copy(), _upstream_eligible(rows, installations_by_row))
+    return _with_upstream_availability(
+        rows, installations_by_row, cfg, on_row_scan, on_upstream_rows
+    )
 
 
 def _bare_names(rows: list[ToolRow]) -> list[str]:
@@ -450,7 +542,9 @@ def _upstream_key(upstream: RepoSource | None) -> tuple[str, bool] | None:
     return (upstream.target, upstream.is_local)
 
 
-def _grouped_for_display(rows: list[ToolRow]) -> list[tuple[str, ToolRow]]:
+def _grouped_for_display(
+    rows: list[ToolRow], *, pending: set[str] | None = None
+) -> list[tuple[str, ToolRow]]:
     """Collapse binaries sharing one (provider, package, state, source, upstream) into one row.
 
     A solo group's label is its one tool's name, unchanged. A group of
@@ -472,8 +566,11 @@ def _grouped_for_display(rows: list[ToolRow]) -> list[tuple[str, ToolRow]]:
     package split across two states can still render two rows a reader
     cannot tell apart by label alone (`docs/BACKLOG.md`).
     """
-    groups: dict[tuple[str, str, ActionState, PageSource, Any], list[ToolRow]] = {}
-    order: list[tuple[str, str, ActionState, PageSource, Any]] = []
+    pending = pending or set()
+    groups: dict[
+        tuple[str, str, ActionState, PageSource, Any, bool], list[ToolRow]
+    ] = {}
+    order: list[tuple[str, str, ActionState, PageSource, Any, bool]] = []
     for row in rows:
         key = (
             row.provider,
@@ -481,6 +578,7 @@ def _grouped_for_display(rows: list[ToolRow]) -> list[tuple[str, ToolRow]]:
             row.state,
             row.source,
             _upstream_key(row.upstream),
+            row.tool in pending,
         )
         if key not in groups:
             order.append(key)
@@ -545,6 +643,45 @@ def _filter_rows(
     ]
 
 
+def _list_table(rows: list[ToolRow]) -> Table:
+    """Build the ordinary, completed list table."""
+    table = Table(title="Manpage Reachability")
+    table.add_column("Tool", style="cyan")
+    table.add_column("State")
+    table.add_column("Source")
+    table.add_column("Upstream")
+
+    for label, row in _grouped_for_display(rows):
+        state = (
+            f"[{_STATE_COLOR[row.state]}]{row.state.value}[/{_STATE_COLOR[row.state]}]"
+        )
+        table.add_row(label, state, row.source.value, _upstream_cell(row.upstream))
+    return table
+
+
+def _streaming_table(rows: list[ToolRow], pending: set[int]) -> Any:
+    """One stable row per binary while facts arrive; grouping waits for completion."""
+    from rich.text import Text
+
+    if not rows:
+        return Text("Discovering tools…", style="dim")
+    table = Table(title="Manpage Reachability")
+    table.add_column("Tool", style="cyan")
+    table.add_column("State")
+    table.add_column("Source")
+    table.add_column("Upstream")
+    for index, row in enumerate(rows):
+        state = (
+            "[dim]checking…[/dim]"
+            if index in pending
+            else (
+                f"[{_STATE_COLOR[row.state]}]{row.state.value}[/{_STATE_COLOR[row.state]}]"
+            )
+        )
+        table.add_row(row.tool, state, row.source.value, _upstream_cell(row.upstream))
+    return table
+
+
 def _render_list(
     target_console: Any, rows: list[ToolRow], *, names: bool = False
 ) -> None:
@@ -567,21 +704,65 @@ def _render_list(
         target_console.print("[yellow]No tools to report.[/yellow]")
         return
 
-    table = Table(title="Manpage Reachability")
-    table.add_column("Tool", style="cyan")
-    table.add_column("State")
-    table.add_column("Source")
-    table.add_column("Upstream")
+    target_console.print(_list_table(rows))
 
-    for label, row in _grouped_for_display(rows):
-        table.add_row(
-            label,
-            f"[{_STATE_COLOR[row.state]}]{row.state.value}[/{_STATE_COLOR[row.state]}]",
-            row.source.value,
-            _upstream_cell(row.upstream),
+
+class _StreamingList:
+    """One Live table that replaces discovery progress after local facts exist."""
+
+    def __init__(self, target_console: Any, reporter: Any) -> None:
+        self._console = target_console
+        self._reporter = reporter
+        self._live: Live | None = None
+        self._pending: set[int] = set()
+        self._rows: list[ToolRow] = []
+        self._last_refresh = 0.0
+
+    def discovering(self) -> None:
+        self._reporter.stop()
+        self._live = Live(
+            _streaming_table([], set()),
+            console=getattr(self._console, "_instance", self._console),
+            auto_refresh=False,
         )
+        self._live.start()
 
-    target_console.print(table)
+    def skeleton(self, rows: list[ToolRow]) -> None:
+        self._rows = rows
+        self._pending = set(range(len(rows)))
+        self._publish()
+
+    def local(self, rows: list[ToolRow], index: int, upstream_pending: bool) -> None:
+        self._rows = rows
+        if not upstream_pending:
+            self._pending.discard(index)
+        self._publish()
+
+    def upstream(self, rows: list[ToolRow], indexes: set[int]) -> None:
+        self._rows = rows
+        self._pending.difference_update(indexes)
+        self._publish()
+
+    def _publish(self) -> None:
+        if self._live is None:
+            return
+        self._live.update(_streaming_table(self._rows, self._pending), refresh=False)
+        if monotonic() - self._last_refresh >= 0.25:
+            self._live.refresh()
+            self._last_refresh = monotonic()
+
+    def stop(self, *, completed: bool = True) -> None:
+        if self._live is not None:
+            if completed:
+                # `Live.stop()` performs its own last refresh. Replace the provisional
+                # frame first, but leave that one final repaint to Rich.
+                final = (
+                    _list_table(self._rows)
+                    if self._rows
+                    else "[yellow]No tools to report.[/yellow]"
+                )
+                self._live.update(final, refresh=False)
+            self._live.stop()
 
 
 @app.command(name="list")
@@ -625,20 +806,42 @@ def list_tools(
 ) -> None:
     """Report each binary's manpage reachability: ok, outdated, available, or missing."""
     interactive = not names and console.is_terminal
+    # A filter selects final-state membership, so a provisional row could lie
+    # by appearing or disappearing. Keep those calls blocking; the unfiltered
+    # terminal inventory is the path that streams in place.
+    streaming = (
+        interactive and not tools and not any((outdated, available, missing, managed))
+    )
     reporter = _ProgressReporter(console) if interactive else None
+    renderer = _StreamingList(console, reporter) if streaming and reporter else None
+
+    def discovery_start(total: int) -> None:
+        if reporter is not None:
+            reporter.on_phase_start(total)
+        if renderer is not None:
+            renderer.discovering()
+
+    completed = False
     try:
         rows = compute_rows(
             tools,
             config=get_config(ctx),
-            on_discovery_start=reporter.on_phase_start if reporter else None,
+            on_discovery_start=discovery_start if interactive else None,
             on_discovery_scan=reporter.on_scan if reporter else None,
             on_row_start=reporter.on_phase_start if reporter else None,
             on_row_scan=reporter.on_scan if reporter else None,
+            on_skeleton=renderer.skeleton if renderer else None,
+            on_local_row=renderer.local if renderer else None,
+            on_upstream_rows=renderer.upstream if renderer else None,
         )
+        completed = True
     finally:
+        if renderer is not None:
+            renderer.stop(completed=completed)
         if reporter is not None:
             reporter.stop()
     rows = _filter_rows(
         rows, outdated=outdated, available=available, missing=missing, managed=managed
     )
-    _render_list(console, rows, names=names)
+    if not streaming:
+        _render_list(console, rows, names=names)
