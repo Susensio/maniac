@@ -1,16 +1,29 @@
 """Repository fetching and documentation extraction."""
 
+import json
 import os
+import re
 import shutil
 import subprocess
+import tarfile
 from collections.abc import Iterator
+from fnmatch import fnmatch
+from hashlib import sha256
+from io import BytesIO
 from pathlib import Path
+from urllib.error import URLError
+from urllib.request import Request, urlopen
 
 from ..config import Config
 from ..logging import logger
 from ..models import DocFile, RepoSource
+from .manpages import (
+    REPO_MANPAGE_DIRS,
+    is_help2man_content,
+    manpage_documents,
+    read_manpage_source,
+)
 from .manpages import find_repo_manpage as _find_repo_manpage
-from .manpages import is_help2man_content, manpage_documents, read_manpage_source
 
 DOC_EXTENSIONS = {".md", ".markdown", ".rst", ".1", ".txt"}
 DOC_DIRS = {
@@ -65,6 +78,10 @@ IGNORE_FILE_PATTERNS = {
 
 MAX_TOTAL_DOC_CHARS = 75_000
 TRUNCATION_MARKER = "\n\n[... truncated ...]"
+_RELEASE_ARCHIVE_LIMIT = 10 * 1024 * 1024
+_MAN_ASSET_TOKEN = re.compile(
+    r"(?:^|[-_.])man(?:page|pages)?(?:[-_.]|$)", re.IGNORECASE
+)
 
 
 def fetch_and_extract_docs(
@@ -184,10 +201,18 @@ def discover_repo_manpage(
     """
     cfg = config or Config()
     cache_dir_path = Path(cache_dir) if cache_dir is not None else cfg.cache_dir
-    repo_dir = resolve_repo_dir(source, cache_dir_path, cfg, version=version)
-    if repo_dir is None:
-        return None
-    page = _find_repo_manpage(repo_dir, binary_name)
+    if source.is_local:
+        if source.local_path is None:
+            return None
+        page = _find_repo_manpage(source.local_path, binary_name)
+    else:
+        page = _discover_remote_manpage(
+            source, binary_name, cache_dir_path, cfg, version
+        )
+    if page is None:
+        page = _discover_github_release_manpage(
+            source, binary_name, cache_dir_path, cfg, version
+        )
     if page is None:
         return None
     try:
@@ -205,6 +230,274 @@ def discover_repo_manpage(
         )
         return None
     return page
+
+
+def _discover_remote_manpage(
+    source: RepoSource,
+    binary_name: str,
+    cache_dir: Path,
+    cfg: Config,
+    version: str | None,
+) -> Path | None:
+    """Find one page from a bare, filtered object cache; never make a worktree."""
+    clone_url = source.clone_url
+    if clone_url is None:
+        return None
+    ref_name = "default"
+    fetch_ref = "HEAD"
+    if version is not None:
+        tag = _find_matching_tag(clone_url, version, cfg.timeout_git)
+        if tag is None:
+            return None
+        ref_name = tag
+        fetch_ref = f"refs/tags/{tag}"
+    repo = _bare_cache_dir(cache_dir, clone_url)
+    ref = _fetch_bare_ref(repo, clone_url, ref_name, fetch_ref, cfg)
+    if ref is None:
+        return None
+    paths = _git_stdout(
+        ["git", "-C", str(repo), "ls-tree", "-r", "--name-only", ref], cfg
+    )
+    if paths is None:
+        return None
+    for path in _matching_manpage_paths(paths.splitlines(), binary_name):
+        content = _git_bytes(["git", "-C", str(repo), "show", f"{ref}:{path}"], cfg)
+        if content is None:
+            continue
+        cached = _materialize_page(cache_dir, source, ref_name, path, content)
+        if _valid_page(cached, binary_name):
+            return cached
+    return None
+
+
+def _bare_cache_dir(cache_dir: Path, clone_url: str) -> Path:
+    digest = sha256(clone_url.encode()).hexdigest()[:16]
+    return cache_dir / "git" / f"{digest}.git"
+
+
+def _fetch_bare_ref(
+    repo: Path, clone_url: str, ref_name: str, fetch_ref: str, cfg: Config
+) -> str | None:
+    ref = f"refs/maniac/{sha256(ref_name.encode()).hexdigest()[:16]}"
+    if not repo.exists():
+        repo.parent.mkdir(parents=True, exist_ok=True)
+        if _git_stdout(["git", "init", "--bare", str(repo)], cfg) is None:
+            return None
+        if (
+            _git_stdout(
+                ["git", "-C", str(repo), "remote", "add", "origin", clone_url], cfg
+            )
+            is None
+        ):
+            return None
+    remote = _git_stdout(["git", "-C", str(repo), "remote", "get-url", "origin"], cfg)
+    if remote is None or remote.strip() != clone_url:
+        return None
+    if _git_stdout(["git", "-C", str(repo), "rev-parse", "--verify", ref], cfg) is None:
+        fetched = _git_stdout(
+            [
+                "git",
+                "-C",
+                str(repo),
+                "fetch",
+                "--depth",
+                "1",
+                "--filter=blob:none",
+                "origin",
+                f"{fetch_ref}:{ref}",
+            ],
+            cfg,
+        )
+        if fetched is None:
+            return None
+    return ref
+
+
+def _git_stdout(cmd: list[str], cfg: Config) -> str | None:
+    try:
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=cfg.timeout_git, check=False
+        )
+    except (OSError, subprocess.SubprocessError) as error:
+        logger.debug("Git command failed", command=cmd[1], error=str(error))
+        return None
+    return result.stdout if result.returncode == 0 else None
+
+
+def _git_bytes(cmd: list[str], cfg: Config) -> bytes | None:
+    try:
+        result = subprocess.run(
+            cmd, capture_output=True, timeout=cfg.timeout_git, check=False
+        )
+    except (OSError, subprocess.SubprocessError) as error:
+        logger.debug("Git command failed", command=cmd[1], error=str(error))
+        return None
+    return result.stdout if result.returncode == 0 else None
+
+
+def _matching_manpage_paths(
+    paths: Iterator[str] | list[str], binary_name: str
+) -> Iterator[str]:
+    exact = [
+        f"{binary_name}.[1-9]{suffix}" for suffix in ("", ".gz", ".bz2", ".xz", ".zst")
+    ]
+    nested = [
+        f"{binary_name}-*.[1-9]{suffix}"
+        for suffix in ("", ".gz", ".bz2", ".xz", ".zst")
+    ]
+    candidates = sorted(path for path in paths if _path_can_be_repo_manpage(path))
+    for patterns in (exact, nested):
+        for path in candidates:
+            if any(fnmatch(Path(path).name, pattern) for pattern in patterns):
+                yield path
+
+
+def _path_can_be_repo_manpage(path: str) -> bool:
+    parts = tuple(part.lower() for part in Path(path).parts)
+    return len(parts) == 1 or any(
+        parts[: len(prefix)] == prefix for prefix in REPO_MANPAGE_DIRS
+    )
+
+
+def _materialize_page(
+    cache_dir: Path, source: RepoSource, ref: str, original_path: str, content: bytes
+) -> Path:
+    suffixes = "".join(Path(original_path).suffixes)
+    key = sha256(f"{source.target}\0{ref}\0{original_path}".encode()).hexdigest()
+    destination = cache_dir / "manpages" / f"{key}{suffixes}"
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if not destination.exists():
+        destination.write_bytes(content)
+    return destination
+
+
+def _discover_github_release_manpage(
+    source: RepoSource,
+    binary_name: str,
+    cache_dir: Path,
+    cfg: Config,
+    version: str | None,
+) -> Path | None:
+    if version is None or source.target.count("/") != 1:
+        return None
+    clone_url = source.clone_url
+    if clone_url is None:
+        return None
+    tag = _find_matching_tag(clone_url, version, cfg.timeout_git)
+    if tag is None:
+        return None
+    metadata = _download_cached(
+        f"https://api.github.com/repos/{source.target}/releases/tags/{tag}",
+        cache_dir,
+        cfg,
+    )
+    if metadata is None:
+        return None
+    try:
+        assets = json.loads(metadata).get("assets", [])
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(assets, list):
+        return None
+    for asset in assets:
+        if not isinstance(asset, dict) or not isinstance(
+            asset.get("browser_download_url"), str
+        ):
+            continue
+        name = asset.get("name")
+        if not isinstance(name, str):
+            continue
+        direct = any(_matching_manpage_paths([name], binary_name))
+        archive_candidate = _is_release_archive(name) and (
+            _MAN_ASSET_TOKEN.search(name) is not None
+            or (
+                isinstance(asset.get("size"), int)
+                and asset["size"] <= _RELEASE_ARCHIVE_LIMIT
+            )
+        )
+        if not direct and not archive_candidate:
+            continue
+        content = _download_cached(asset["browser_download_url"], cache_dir, cfg)
+        if content is None:
+            continue
+        if direct:
+            page = _materialize_page(cache_dir, source, tag, name, content)
+            if _valid_page(page, binary_name):
+                return page
+            continue
+        try:
+            page = _manpage_from_release_archive(
+                content, source, binary_name, cache_dir, tag
+            )
+        except (OSError, tarfile.TarError):
+            continue
+        if page is not None:
+            return page
+    return None
+
+
+def _is_release_archive(name: str) -> bool:
+    return name.lower().endswith((".tar", ".tar.gz", ".tgz", ".tar.bz2", ".tar.xz"))
+
+
+def _download_cached(url: str, cache_dir: Path, cfg: Config) -> bytes | None:
+    destination = cache_dir / "releases" / sha256(url.encode()).hexdigest()
+    try:
+        return destination.read_bytes()
+    except OSError:
+        pass
+    content = _download(url, cfg)
+    if content is None:
+        return None
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_bytes(content)
+    return content
+
+
+def _manpage_from_release_archive(
+    archive: bytes, source: RepoSource, binary_name: str, cache_dir: Path, tag: str
+) -> Path | None:
+    with tarfile.open(fileobj=BytesIO(archive), mode="r:*") as tar:
+        for member in sorted(tar.getmembers(), key=lambda item: item.name):
+            if not member.isfile() or not _release_path_can_be_manpage(member.name):
+                continue
+            if not any(_matching_manpage_paths([member.name], binary_name)):
+                continue
+            extracted = tar.extractfile(member)
+            if extracted is None:
+                continue
+            page = _materialize_page(
+                cache_dir, source, tag, member.name, extracted.read()
+            )
+            if _valid_page(page, binary_name):
+                return page
+    return None
+
+
+def _release_path_can_be_manpage(path: str) -> bool:
+    parts = Path(path).parts
+    return _path_can_be_repo_manpage(path) or (
+        len(parts) > 1 and _path_can_be_repo_manpage(str(Path(*parts[1:])))
+    )
+
+
+def _download(url: str, cfg: Config) -> bytes | None:
+    try:
+        with urlopen(
+            Request(url, headers={"User-Agent": "maniac"}), timeout=cfg.timeout_git
+        ) as response:
+            return response.read()
+    except (OSError, URLError) as error:
+        logger.debug("Download failed", url=url, error=str(error))
+        return None
+
+
+def _valid_page(page: Path, binary_name: str) -> bool:
+    try:
+        content = read_manpage_source(page)
+    except (OSError, UnicodeError):
+        return False
+    return not is_help2man_content(content) and manpage_documents(content, binary_name)
 
 
 def _tag_candidates(version: str) -> tuple[str, str]:
@@ -275,7 +568,9 @@ def _clone_repository(
 ) -> bool:
     """Clone a shallow repository into dest_dir, at `ref` (a tag or branch) if given."""
     logger.info("Cloning repository", url=clone_url, dest=str(dest_dir), ref=ref)
-    cmd = ["git", "clone", "--depth", "1"]
+    # Synthesis only needs root documentation initially.  Sparse clone keeps
+    # hostile fixture paths out of the filesystem entirely.
+    cmd = ["git", "clone", "--depth", "1", "--filter=blob:none", "--sparse"]
     if ref is not None:
         cmd += ["--branch", ref]
     cmd += [clone_url, str(dest_dir)]

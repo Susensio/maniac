@@ -1,7 +1,6 @@
 """Tests for `list` (ADR-0018): decisions only, no Rich-output scraping."""
 
 import io
-import subprocess
 import threading
 import time
 from pathlib import Path
@@ -247,29 +246,19 @@ def test_compute_rows_upgrades_a_versioned_cached_repository_page(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     cfg = _config(tmp_path)
-    cached_dir = cfg.cache_dir / "fzf@v0.74.3" / "man" / "man1"
+    cached_dir = cfg.cache_dir / "manpages"
     cached_dir.mkdir(parents=True)
-    (cached_dir / "fzf.1").write_text(".TH FZF 1\n", encoding="utf-8")
+    page = cached_dir / "fzf.1"
+    page.write_text(".TH FZF 1\n", encoding="utf-8")
     source = RepoSource(name="fzf", target="junegunn/fzf", is_local=False)
-    assert source.clone_url is not None
-    subprocess.run(["git", "init", "-q", str(cached_dir.parents[1])], check=True)
-    subprocess.run(
-        [
-            "git",
-            "-C",
-            str(cached_dir.parents[1]),
-            "remote",
-            "add",
-            "origin",
-            source.clone_url,
-        ],
-        check=True,
-    )
     provider = _FakeProvider(source=source)
     inst = _installation(binary="fzf", version="0.74.3")
     monkeypatch.setattr(
         "maniac.cli.listing.discovery.enumerate_installations",
         lambda on_start=None, on_scan=None: [(provider, inst)],
+    )
+    monkeypatch.setattr(
+        "maniac.cli.listing.discover_repo_manpage", lambda *args, **kwargs: page
     )
 
     rows = compute_rows(config=cfg)

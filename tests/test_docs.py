@@ -181,31 +181,45 @@ def test_discover_repo_manpage_rejects_a_page_naming_a_different_binary(
     assert discover_repo_manpage(source, "tool") is None
 
 
-def test_discover_repo_manpage_clones_and_reuses_cache(
+def test_discover_repo_manpage_uses_a_bare_cache_without_clone_or_checkout(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    from maniac.sources import docs as docs_module
 
-    clone_calls = 0
+    calls: list[list[str]] = []
+    fetched = False
 
-    def fake_clone(
-        clone_url: str, dest_dir: Path, cfg: object, **kwargs: object
-    ) -> bool:
-        nonlocal clone_calls
-        clone_calls += 1
-        _init_cached_repo(dest_dir, clone_url)
-        (dest_dir / "doc").mkdir()
-        (dest_dir / "doc" / "tool.1").write_text(".TH TOOL 1\n", encoding="utf-8")
-        return True
+    def fake_run(cmd: list[str], **kwargs: Any) -> subprocess.CompletedProcess:
+        nonlocal fetched
+        calls.append(cmd)
+        if "rev-parse" in cmd:
+            return subprocess.CompletedProcess(cmd, 0 if fetched else 1, stdout="ref\n")
+        if "fetch" in cmd:
+            fetched = True
+            return subprocess.CompletedProcess(cmd, 0, stdout="")
+        if "ls-tree" in cmd:
+            return subprocess.CompletedProcess(
+                cmd,
+                0,
+                stdout="tests/" + "x" * 300 + "/fixture\nman/tool.1\n",
+            )
+        if "show" in cmd:
+            return subprocess.CompletedProcess(cmd, 0, stdout=b".TH TOOL 1\n")
+        if "remote" in cmd and "get-url" in cmd:
+            return subprocess.CompletedProcess(
+                cmd, 0, stdout="https://github.com/owner/tool.git\n"
+            )
+        return subprocess.CompletedProcess(cmd, 0, stdout="")
 
-    monkeypatch.setattr(docs_module, "_clone_repository", fake_clone)
+    monkeypatch.setattr(subprocess, "run", fake_run)
     source = RepoSource(name="tool", target="owner/tool", is_local=False)
 
     manpage = discover_repo_manpage(source, "tool", cache_dir=tmp_path)
-    assert manpage == tmp_path / "tool" / "doc" / "tool.1"
-
+    assert manpage is not None
+    assert manpage.read_text(encoding="utf-8") == ".TH TOOL 1\n"
     discover_repo_manpage(source, "tool", cache_dir=tmp_path)
-    assert clone_calls == 1
+    assert not any(command[1] in {"clone", "checkout"} for command in calls)
+    assert sum("fetch" in command for command in calls) == 1
+    assert not any(len(path.name) > 255 for path in tmp_path.rglob("*"))
 
 
 def test_discover_repo_manpage_no_match_returns_none(tmp_path: Path) -> None:
@@ -383,7 +397,7 @@ def test_fetch_and_extract_docs_with_version_falls_back_when_unmatched(
     assert [d.rel_path for d in doc_files] == ["README.md"]
 
 
-def test_discover_repo_manpage_with_version_uses_the_tagged_checkout(
+def test_discover_repo_manpage_with_version_fetches_the_exact_tag(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     from maniac.sources import docs as docs_module
@@ -392,20 +406,71 @@ def test_discover_repo_manpage_with_version_uses_the_tagged_checkout(
         docs_module, "_find_matching_tag", lambda url, version, timeout: "v1.2.3"
     )
 
-    def fake_clone(
-        clone_url: str, dest_dir: Path, cfg: object, **kwargs: object
-    ) -> bool:
-        dest_dir.mkdir()
-        (dest_dir / ".git").mkdir()
-        (dest_dir / "tool.1").write_text(".TH TOOL 1\n", encoding="utf-8")
-        return True
+    fetched: list[list[str]] = []
 
-    monkeypatch.setattr(docs_module, "_clone_repository", fake_clone)
+    def fake_fetch(
+        repo: Path, clone_url: str, ref_name: str, fetch_ref: str, cfg: object
+    ) -> str:
+        fetched.append([ref_name, fetch_ref])
+        return "refs/maniac/tag"
+
+    monkeypatch.setattr(docs_module, "_fetch_bare_ref", fake_fetch)
+    monkeypatch.setattr(docs_module, "_git_stdout", lambda *args: "tool.1\n")
+    monkeypatch.setattr(docs_module, "_git_bytes", lambda *args: b".TH TOOL 1\n")
     source = RepoSource(name="tool", target="owner/tool", is_local=False)
 
     manpage = discover_repo_manpage(source, "tool", cache_dir=tmp_path, version="1.2.3")
 
-    assert manpage == tmp_path / "tool@v1.2.3" / "tool.1"
+    assert manpage is not None
+    assert fetched == [["v1.2.3", "refs/tags/v1.2.3"]]
+
+
+def test_github_release_assets_accept_only_actual_matching_manpage(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from maniac.sources import docs as docs_module
+
+    def archive(members: dict[str, bytes]) -> bytes:
+        import io
+        import tarfile
+
+        output = io.BytesIO()
+        with tarfile.open(fileobj=output, mode="w:gz") as tar:
+            for name, content in members.items():
+                info = tarfile.TarInfo(name)
+                info.size = len(content)
+                tar.addfile(info, io.BytesIO(content))
+        return output.getvalue()
+
+    def fake_download(url: str, cfg: object) -> bytes:
+        if url.startswith("https://api.github.com/"):
+            return b'{"assets": [{"name": "completions-0.23.5.tar.gz", "size": 5, "browser_download_url": "https://example.test/completions-0.23.5.tar.gz"}, {"name": "man-0.23.5.tar.gz", "size": 5, "browser_download_url": "https://example.test/man-0.23.5.tar.gz"}]}'
+        if "completions" in url:
+            return archive({"completions/eza.fish": b"complete -c eza"})
+        return archive({"man/eza.1": b".TH EZA 1\n"})
+
+    monkeypatch.setattr(docs_module, "_download", fake_download)
+    monkeypatch.setattr(docs_module, "_discover_remote_manpage", lambda *args: None)
+    monkeypatch.setattr(docs_module, "_find_matching_tag", lambda *args: "v0.23.5")
+    source = RepoSource(name="eza", target="eza-community/eza", is_local=False)
+
+    page = discover_repo_manpage(source, "eza", cache_dir=tmp_path, version="0.23.5")
+    assert page is not None
+    assert page.read_text(encoding="utf-8") == ".TH EZA 1\n"
+
+
+def test_malformed_release_asset_degrades_to_missing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from maniac.sources import docs as docs_module
+
+    monkeypatch.setattr(docs_module, "_download", lambda *args: b"not a tar archive")
+    monkeypatch.setattr(docs_module, "_discover_remote_manpage", lambda *args: None)
+    monkeypatch.setattr(docs_module, "_find_matching_tag", lambda *args: "v1.0")
+    source = RepoSource(name="tool", target="owner/tool", is_local=False)
+    assert (
+        discover_repo_manpage(source, "tool", cache_dir=tmp_path, version="1.0") is None
+    )
 
 
 @pytest.mark.parametrize("tag", ["v1.2.3", "1.2.3"])
