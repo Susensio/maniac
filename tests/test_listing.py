@@ -512,6 +512,50 @@ def test_compute_rows_starts_upstream_before_slow_local_work_finishes(
     assert all(row.source is PageSource.UPSTREAM for row in result)
 
 
+def test_compute_rows_ticks_while_a_slow_future_leaves_a_quiet_gap(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    source = RepoSource(name="tool", target="owner/tool", is_local=False)
+    provider = _FakeProvider(source=source)
+    installations = [
+        (provider, _installation(binary="fast")),
+        (provider, _installation(binary="slow")),
+    ]
+    monkeypatch.setattr(
+        "maniac.cli.listing.discovery.enumerate_installations",
+        lambda on_start=None, on_scan=None: installations,
+    )
+    release_slow = threading.Event()
+    idle = threading.Event()
+
+    def classify(
+        provider: object,
+        inst: Installation,
+        tool: str,
+        cfg: Config,
+        entries: object,
+    ) -> tuple[ActionState, PageSource, RepoSource]:
+        if tool == "slow":
+            assert release_slow.wait(timeout=2)
+        return ActionState.MISSING, PageSource.NONE, source
+
+    monkeypatch.setattr("maniac.cli.listing._classify_and_resolve", classify)
+    monkeypatch.setattr(
+        "maniac.cli.listing.discover_repo_manpage",
+        lambda *args, **kwargs: Path("/page"),
+    )
+    worker = threading.Thread(
+        target=lambda: compute_rows(config=_config(tmp_path), on_idle=idle.set)
+    )
+
+    worker.start()
+    assert idle.wait(timeout=1)
+    release_slow.set()
+    worker.join(timeout=2)
+
+    assert not worker.is_alive()
+
+
 def test_compute_rows_deduplicates_identical_upstream_binary_probes(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -827,6 +871,46 @@ def test_streaming_list_publishes_slow_updates_at_refresh_cadence(
 
     assert refreshes == 3
     assert updates == 2
+
+
+def test_streaming_list_idle_flushes_a_quiet_dirty_frame(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    updates = 0
+
+    class FakeLive:
+        def __init__(self, renderable: object, **kwargs: object) -> None:
+            return None
+
+        def start(self) -> None:
+            return None
+
+        def update(self, renderable: object, *, refresh: bool) -> None:
+            nonlocal updates
+            assert not refresh
+            updates += 1
+
+        def refresh(self) -> None:
+            return None
+
+        def stop(self) -> None:
+            return None
+
+    class FakeReporter:
+        def stop(self) -> None:
+            return None
+
+    clock = iter((0.0, 0.01, 0.25))
+    monkeypatch.setattr("maniac.cli.listing.Live", FakeLive)
+    monkeypatch.setattr("maniac.cli.listing.monotonic", lambda: next(clock))
+    rows = [ToolRow("tool", "tool", "fake", ActionState.MISSING, PageSource.NONE, None)]
+    renderer = _StreamingList(Console(file=io.StringIO()), FakeReporter())
+
+    renderer.skeleton(rows)
+    renderer.local(rows, 0, True)
+    renderer.idle()
+
+    assert updates == 1
 
 
 def test_streaming_list_keeps_fixed_binary_rows_at_completion(

@@ -343,6 +343,7 @@ def compute_rows(
     on_local_row: Callable[[list[ToolRow], int, bool], None] | None = None,
     on_initial_rows: Callable[[list[ToolRow], set[int]], None] | None = None,
     on_upstream_rows: Callable[[list[ToolRow], set[int]], None] | None = None,
+    on_idle: Callable[[], None] | None = None,
 ) -> list[ToolRow]:
     """One row per binary: every provider-detected installation, or exactly the named tools.
 
@@ -365,6 +366,7 @@ def compute_rows(
     `on_local_row` fills one row and says whether its tier-2 probe is pending.
     `on_initial_rows` receives the fully local snapshot for compatible callers.
     `on_upstream_rows` receives one snapshot per deduplicated probe group.
+    `on_idle` runs on the coordinator while worker futures remain pending.
     They keep terminal renderers out of worker-owned mutable state; callers that
     omit them retain the original blocking API.
 
@@ -468,8 +470,14 @@ def compute_rows(
 
         while local_pending or probe_pending:
             done, _ = wait(
-                [*local_pending, *probe_pending], return_when=FIRST_COMPLETED
+                [*local_pending, *probe_pending],
+                timeout=0.25,
+                return_when=FIRST_COMPLETED,
             )
+            if not done:
+                if on_idle is not None:
+                    on_idle()
+                continue
             # Resolve local futures before completed probes. A duplicate that
             # became ready in the same turn joins the single-flight group.
             launches: list[tuple[tuple[str, str, str], RepoSource, Installation]] = []
@@ -799,6 +807,10 @@ class _StreamingList:
         self._dirty = True
         self._publish(final=not self._pending)
 
+    def idle(self) -> None:
+        """Flush a throttled frame while the coordinator waits on remote work."""
+        self._publish()
+
     def _publish(self, *, final: bool = False) -> None:
         if self._live is None or not self._dirty:
             return
@@ -900,6 +912,7 @@ def list_tools(
             on_skeleton=renderer.skeleton if renderer else None,
             on_local_row=renderer.local if renderer else None,
             on_upstream_rows=renderer.upstream if renderer else None,
+            on_idle=renderer.idle if renderer else None,
         )
         completed = True
     finally:
