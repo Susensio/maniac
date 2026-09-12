@@ -6,6 +6,7 @@ The default unfiltered TTY view now completes provider enumeration, builds one a
 When that table is taller than the terminal, asynchronous rendering is cropped to an alternate-screen viewport and the complete final table is printed once after returning to the normal screen.
 Remote-dependent states remain `checking` until their entire deduplicated probe group is finalized atomically.
 Filtered, `--names`, and non-terminal output remain final-only so selection and pipelines stay correct.
+The State width is derived from every state label plus `checking…`; Tool and Upstream are capped at 24 columns with ellipsis, and neither final nor streaming tables expand Upstream to fill the terminal.
 
 Cargo metadata parsing and pipx home discovery are cached for the life of the process rather than repeated for every executable candidate.
 Candidate paths are routed only to providers whose install layout can claim them, with the ordered full registry retained for ambiguous paths.
@@ -17,7 +18,12 @@ After `1ceab84`, an empty-cache real `maniac list` completes in 22.40 seconds an
 Before the later pipeline work, two warm TTY profiles took 21.00 and 24.47 seconds after imports; Rich publication accumulated 15.17 and 16.50 seconds because every result rebuilt the table, even when no refresh was due.
 After routing, overlap, render debouncing and definitive-miss caching, a non-terminal run that populated negative entries took 18.17 seconds and its immediate warm repeat took 9.28 seconds.
 On the fully integrated implementation, two warm 120-by-16 TTY runs took 4.76 and 6.04 seconds, and a warm non-terminal run took 6.09 seconds.
+After the provenance and compact-column work, an isolated warm 100-by-24 TTY run took 5.08 seconds and entered/exited the alternate screen exactly once.
 The remaining profile is dominated by overlapping local/provider work rather than Rich publication: Mise install-root scans, UV editable-source resolution, and npm package metadata resolution.
+
+Skipping `/bin`, `/sbin`, `/usr/bin`, and `/usr/sbin` entirely measured the unsafe upper bound at 5.12 to 3.87 seconds for warm row computation, about 1.25 seconds or 24%, while returning the same 71 rows on this machine.
+That shortcut was not retained because it loses first-PATH-entry shadowing and misses system-directory symlinks into managed installs.
+A safe experiment kept the names and symlinks but skipped provider routing for 2,089 ordinary system files; isolated enumeration measured 0.551 seconds against 0.547 seconds for the old path, so the complexity produced no measurable gain and was removed.
 
 A live 71-row inventory contains no system-package-owned installation rows, because MANIAC has no apt, pacman, or RPM provider.
 It still records names from system PATH directories to preserve first-PATH-entry shadowing, but provider routing does not read those binaries or query their packages.
