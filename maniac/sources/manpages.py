@@ -9,6 +9,7 @@ import os
 import re
 import subprocess
 from collections.abc import Callable, Iterator
+from functools import cache
 from pathlib import Path
 from typing import TextIO
 
@@ -150,9 +151,15 @@ def find_install_root_manpages(root: Path, binary_name: str) -> list[Path]:
     patterns = exact_patterns + subcommand_patterns
     return sorted(
         path
-        for path in _iter_install_root_manpage_files(root)
+        for path in _install_root_manpage_files(root.resolve())
         if any(fnmatch.fnmatch(path.name, pattern) for pattern in patterns)
     )
+
+
+@cache
+def _install_root_manpage_files(root: Path) -> tuple[Path, ...]:
+    """Bounded install-root manpage inventory, cached for one CLI process."""
+    return tuple(_iter_install_root_manpage_files(root))
 
 
 def _manpage_patterns(binary_name: str) -> tuple[list[str], list[str]]:

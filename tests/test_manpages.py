@@ -1,6 +1,7 @@
 import gzip
 from pathlib import Path
 
+import pytest
 import zstandard
 
 from maniac.sources import manpages
@@ -13,6 +14,11 @@ from maniac.sources.manpages import (
     read_manpage_source,
     select_primary_manpage,
 )
+
+
+@pytest.fixture(autouse=True)
+def _clear_install_root_manpage_cache() -> None:
+    manpages._install_root_manpage_files.cache_clear()
 
 
 def test_is_help2man_manpage_detects_gzip_page(tmp_path: Path) -> None:
@@ -209,6 +215,56 @@ def test_find_install_root_manpages_prunes_irrelevant_trees(
     # Bounded by the real tree (root, lib, share, share/man, share/man/man1),
     # not by the 50-level irrelevant tree below `lib/site-packages/`.
     assert len(visited) < 10
+
+
+def test_find_install_root_manpages_reuses_one_root_inventory_for_siblings(
+    tmp_path: Path, monkeypatch
+) -> None:
+    man1_dir = tmp_path / "share" / "man" / "man1"
+    man1_dir.mkdir(parents=True)
+    alpha = man1_dir / "alpha.1"
+    beta = man1_dir / "beta.1"
+    alpha.touch()
+    beta.touch()
+
+    walks = 0
+    real_walk = manpages.os.walk
+
+    def counting_walk(top, *args, **kwargs):
+        nonlocal walks
+        walks += 1
+        yield from real_walk(top, *args, **kwargs)
+
+    monkeypatch.setattr(manpages.os, "walk", counting_walk)
+
+    assert find_install_root_manpages(tmp_path, "alpha") == [alpha]
+    assert find_install_root_manpages(tmp_path, "beta") == [beta]
+    assert walks == 1
+
+
+def test_find_install_root_manpages_keeps_separate_root_inventories(
+    tmp_path: Path, monkeypatch
+) -> None:
+    first_root = tmp_path / "first"
+    second_root = tmp_path / "second"
+    for root in (first_root, second_root):
+        page = root / "share" / "man" / "man1" / "tool.1"
+        page.parent.mkdir(parents=True)
+        page.touch()
+
+    walks = 0
+    real_walk = manpages.os.walk
+
+    def counting_walk(top, *args, **kwargs):
+        nonlocal walks
+        walks += 1
+        yield from real_walk(top, *args, **kwargs)
+
+    monkeypatch.setattr(manpages.os, "walk", counting_walk)
+
+    assert find_install_root_manpages(first_root, "tool")
+    assert find_install_root_manpages(second_root, "tool")
+    assert walks == 2
 
 
 def test_find_installed_manpage_path_returns_first_hit(
