@@ -14,6 +14,7 @@ from maniac.sources.docs import (
     format_docs_section,
     resolve_repo_dir,
 )
+from maniac.sources.documentation import documentation_source
 
 
 def _init_cached_repo(path: Path, clone_url: str) -> None:
@@ -77,6 +78,20 @@ def test_fetch_and_extract_docs_local(tmp_path: Path) -> None:
     assert doc_files[0].rel_path == "README.md"
     assert doc_files[0].content == "# Local Project"
     assert matched is False
+
+
+def test_documentation_source_redirects_only_the_exact_tmux_build_repository() -> None:
+    tmux_distribution = RepoSource(
+        name="tmux", target="tmux/tmux-builds", is_local=False
+    )
+    unrelated_distribution = RepoSource(
+        name="foo", target="owner/foo-builds", is_local=False
+    )
+
+    assert documentation_source(tmux_distribution) == RepoSource(
+        name="tmux", target="tmux/tmux", is_local=False
+    )
+    assert documentation_source(unrelated_distribution) is unrelated_distribution
 
 
 def test_fetch_and_extract_docs_includes_github_wiki(

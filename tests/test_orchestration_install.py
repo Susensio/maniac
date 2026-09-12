@@ -114,6 +114,37 @@ def test_run_install_falls_through_to_repository_when_no_install_root_page(
     assert "1.2.3" in outcome.detail
 
 
+def test_run_install_uses_the_exact_tmux_documentation_repository(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    provider = _FakeProvider(
+        source=RepoSource(name="tmux", target="tmux/tmux-builds", is_local=False)
+    )
+    inst = _installation(version="3.7b", binary="tmux")
+    page = tmp_path / "tmux.1"
+    page.write_text(".TH TMUX 1\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "maniac.orchestration.install.discovery.find_installation",
+        lambda name, bin_dir=None: (provider, inst),
+    )
+    observed: list[RepoSource] = []
+
+    def discover(source: RepoSource, *args: object, **kwargs: object) -> list[Path]:
+        observed.append(source)
+        return [page]
+
+    monkeypatch.setattr("maniac.orchestration.install.discover_repo_manpages", discover)
+    monkeypatch.setattr(
+        "maniac.orchestration.install.install_manpage",
+        lambda *args, **kwargs: Path("/installed/tmux.1"),
+    )
+
+    outcome = run_install("tmux", no_generate=True)
+
+    assert outcome.tier is Tier.REPOSITORY
+    assert observed == [RepoSource(name="tmux", target="tmux/tmux", is_local=False)]
+
+
 def test_run_install_tier2_rejects_a_page_naming_a_different_binary(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

@@ -20,6 +20,7 @@ from ..manifest import Tier
 from ..models import Installation, PipelineResult
 from ..sources import discovery
 from ..sources.docs import discover_repo_manpages
+from ..sources.documentation import documentation_source
 from ..sources.manpages import (
     manpage_documents,
     read_manpage_source,
@@ -205,6 +206,7 @@ def _try_repository(
     source = provider.resolve_source(inst, config=cfg)
     if source is None:
         return None
+    source = documentation_source(source)
 
     pages = discover_repo_manpages(
         source, inst.binary, cache_dir=cache_dir_path, config=cfg, version=inst.version

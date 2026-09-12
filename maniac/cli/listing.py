@@ -49,6 +49,7 @@ from ..models import RepoSource
 from ..sources import discovery
 from ..sources.crawler import get_version
 from ..sources.docs import discover_repo_manpage
+from ..sources.documentation import documentation_source
 from ..sources.manpages import (
     _opener_for,
     find_installed_manpage_path,
@@ -259,7 +260,8 @@ def _resolve_upstream(
     """Resolve `inst`'s upstream repository."""
     if provider is None or inst is None:
         return None
-    return provider.resolve_source(inst, config=config)
+    source = provider.resolve_source(inst, config=config)
+    return documentation_source(source) if source is not None else None
 
 
 def _probe_upstream(source: RepoSource, inst: "Installation", cfg: Config) -> bool:

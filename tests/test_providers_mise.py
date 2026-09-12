@@ -279,6 +279,40 @@ def test_resolve_source_treats_github_backend_the_same_as_aqua(
     )
 
 
+def test_resolve_source_keeps_tmux_build_repository_as_distribution_provenance(
+    tmp_path: Path,
+) -> None:
+    bin_path = _make_mise_install(tmp_path, "tmux", "3.7b", "tmux")
+    (bin_path.resolve().parents[2] / ".mise.backend.toml").write_text(
+        'full = "aqua:tmux/tmux-builds"\n', encoding="utf-8"
+    )
+    inst = mise.MiseProvider().detect(bin_path)
+    assert inst is not None
+
+    source = mise.MiseProvider().resolve_source(inst, config=Config())
+
+    assert source == RepoSource(
+        name="tmux",
+        target="tmux/tmux-builds",
+        is_local=False,
+    )
+
+
+def test_resolve_source_does_not_redirect_an_unrelated_builds_repository(
+    tmp_path: Path,
+) -> None:
+    bin_path = _make_mise_install(tmp_path, "foo", "1.0", "foo")
+    (bin_path.resolve().parents[2] / ".mise.backend.toml").write_text(
+        'full = "aqua:owner/foo-builds"\n', encoding="utf-8"
+    )
+    inst = mise.MiseProvider().detect(bin_path)
+    assert inst is not None
+
+    source = mise.MiseProvider().resolve_source(inst, config=Config())
+
+    assert source == RepoSource(name="foo", target="owner/foo-builds", is_local=False)
+
+
 def test_resolve_source_gives_up_when_the_composed_npm_package_json_is_missing(
     tmp_path: Path,
 ) -> None:

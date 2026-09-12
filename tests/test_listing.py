@@ -272,6 +272,31 @@ def test_compute_rows_upgrades_a_versioned_cached_repository_page(
     assert rows[0].upstream is source
 
 
+def test_compute_rows_uses_the_exact_tmux_documentation_repository(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    distribution_source = RepoSource(
+        name="tmux", target="tmux/tmux-builds", is_local=False
+    )
+    provider = _FakeProvider(source=distribution_source)
+    inst = _installation(binary="tmux", version="3.7b")
+    monkeypatch.setattr(
+        "maniac.cli.listing.discovery.enumerate_installations",
+        lambda on_start=None, on_scan=None: [(provider, inst)],
+    )
+    observed: list[RepoSource] = []
+
+    def discover(source: RepoSource, *args: object, **kwargs: object) -> None:
+        observed.append(source)
+
+    monkeypatch.setattr("maniac.cli.listing.discover_repo_manpage", discover)
+
+    rows = compute_rows(config=_config(tmp_path))
+
+    assert observed == [RepoSource(name="tmux", target="tmux/tmux", is_local=False)]
+    assert rows[0].upstream == observed[0]
+
+
 def test_compute_rows_keeps_an_offline_upstream_row_missing(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
