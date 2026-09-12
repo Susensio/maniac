@@ -19,9 +19,11 @@ After routing, overlap, render debouncing and definitive-miss caching, a non-ter
 On the fully integrated implementation, two warm 120-by-16 TTY runs took 4.76 and 6.04 seconds, and a warm non-terminal run took 6.09 seconds.
 The remaining profile is dominated by overlapping local/provider work rather than Rich publication: Mise install-root scans, UV editable-source resolution, and npm package metadata resolution.
 
-A live 71-row inventory currently contains four `system` page sources (`pydoc3`, `python3-config`, `tldr`, and `yadm`) but no system-package-owned installation rows, because MANIAC has no apt, pacman, or RPM provider.
-`system` describes where `man` resolved a page, not who owns the binary; for example, the mise Python 3.14 commands currently resolve Debian Python 3.12 pages.
-The same rule currently reports mise tealdeer 1.9.0 as `ok` from Debian's tealdeer 1.6.1 page; the required provenance/state decision is recorded in `docs/BACKLOG.md` rather than hidden as a completed result.
+A live 71-row inventory contains no system-package-owned installation rows, because MANIAC has no apt, pacman, or RPM provider.
+It still records names from system PATH directories to preserve first-PATH-entry shadowing, but provider routing does not read those binaries or query their packages.
+Package provenance runs only when a provider-managed row resolves an external page.
+Debian ownership and versions are cached per process; a proven match reads `ok`, a proven mismatch reads `outdated`, and unsupported or ambiguous evidence reads `unverified`.
+The live Mise tealdeer 1.9.0 binary now reads `outdated` against Debian's tealdeer 1.6.1 page, while the unresolved Python and yadm cases read `unverified`.
 
 The legacy Mise npm layout for `bash-language-server` now resolves its explicit `package.json` repository to `bash-lsp/bash-language-server` even without `.mise.backend.toml`.
 
@@ -29,4 +31,7 @@ The live eza probe reports `available` / `upstream` and independently caches `ez
 
 The development system still has no installed `fzf.1` in either MANIAC's data directory or mise's install root. `maniac list fzf` correctly reports `available` / `upstream` from version-matched cached Git objects without a repository worktree.
 
-`tmux` also has no installed manpage. Its current `tmux/tmux-builds` mis-resolution, empty-stdout help handling, and insufficient synthesis-input guard are recorded as separate open defects in `docs/BACKLOG.md`.
+Mise correctly retains `tmux/tmux-builds` as the binary-distribution provenance for tmux.
+Every documentation consumer maps that exact repository to `tmux/tmux` through packaged `defaults.toml`; no repository-name heuristic or Mise `extra_assets` field is consulted.
+The mapping is used before list/install manpage probes, `source docs`, and tier-3 documentation extraction.
+Tmux's empty-stdout help handling and the insufficient synthesis-input guard remain separate open defects in `docs/BACKLOG.md`.

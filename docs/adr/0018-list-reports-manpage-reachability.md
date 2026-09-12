@@ -1,6 +1,6 @@
 # ADR-0018: Rename status to list and report manpage reachability instead of MANIAC's action history
 
-Status: Accepted
+Status: Superseded by [ADR-0026](0026-verify-external-page-freshness.md)
 Date: 2026-09-09
 
 ## Context
