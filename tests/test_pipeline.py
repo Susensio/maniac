@@ -92,6 +92,34 @@ def test_run_pipeline_dry_run(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -
     assert result.prompt_path.is_relative_to(tmp_path)
 
 
+def test_run_pipeline_fetches_docs_from_the_canonical_repository(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    raw_source = RepoSource(name="tmux", target="tmux/tmux-builds", is_local=False)
+    monkeypatch.setattr(
+        "maniac.orchestration.pipeline.find_subcommands",
+        lambda cmd, **kwargs: {"> tmux --help": "Usage: tmux"},
+    )
+    monkeypatch.setattr(
+        "maniac.orchestration.pipeline.discover_repo",
+        lambda *args, **kwargs: raw_source,
+    )
+    observed: list[RepoSource] = []
+    monkeypatch.setattr(
+        "maniac.orchestration.pipeline.fetch_and_extract_docs",
+        lambda source, cache_dir, **kwargs: (
+            observed.append(source)
+            or ([DocFile(rel_path="README.md", content="# Tmux")], False)
+        ),
+    )
+
+    result = run_pipeline(tool_name="tmux", output_dir=tmp_path, dry_run=True)
+
+    assert raw_source.target == "tmux/tmux-builds"
+    assert observed == [RepoSource(name="tmux", target="tmux/tmux", is_local=False)]
+    assert result.repo_source == observed[0]
+
+
 def test_run_pipeline_uses_custom_bin_dir(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

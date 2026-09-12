@@ -46,6 +46,7 @@ def docs(
     """Discover repository and extract documentation files for a tool."""
     from ..sources.discovery import discover_repo
     from ..sources.docs import fetch_and_extract_docs
+    from ..sources.documentation import documentation_source
 
     try:
         cfg = get_config(ctx)
@@ -56,6 +57,7 @@ def docs(
                 f"[yellow]No installation-derived source found for '{tool}'.[/yellow]"
             )
             return
+        source = documentation_source(source, cfg.documentation_repository_overrides)
         console.print(
             f"[bold green]Discovered repository source:[/bold green] {source.target} (local={source.is_local})"
         )

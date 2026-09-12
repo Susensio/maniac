@@ -14,6 +14,7 @@ from ..models import PipelineResult
 from ..sources.crawler import find_subcommands, format_help_block, get_version
 from ..sources.discovery import discover_repo, find_installation
 from ..sources.docs import fetch_and_extract_docs, format_docs_section
+from ..sources.documentation import documentation_source
 
 
 def run_pipeline(
@@ -52,6 +53,8 @@ def run_pipeline(
         if bin_dir is not None
         else discover_repo(tool_name, config=cfg)
     )
+    if source is not None:
+        source = documentation_source(source, cfg.documentation_repository_overrides)
     # Resolved separately from `source` above: shares `find_installation`'s
     # own bin-path resolution rather than `source`'s, since only the
     # `Installation` carries the version tier-3 extraction needs to match a

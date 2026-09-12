@@ -175,23 +175,25 @@ def test_cli_source_crawl(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_cli_source_docs(monkeypatch: pytest.MonkeyPatch) -> None:
+    raw_source = RepoSource(name="tmux", target="tmux/tmux-builds", is_local=False)
     monkeypatch.setattr(
         "maniac.sources.discovery.discover_repo",
-        lambda tool, **kwargs: RepoSource(
-            name=tool, target="test/tool", is_local=False
-        ),
+        lambda tool, **kwargs: raw_source,
     )
+    observed: list[RepoSource] = []
     monkeypatch.setattr(
         "maniac.sources.docs.fetch_and_extract_docs",
         lambda source, cache_dir, **kwargs: (
-            [DocFile(rel_path="README.md", content="Content")],
-            False,
+            observed.append(source)
+            or ([DocFile(rel_path="README.md", content="Content")], False)
         ),
     )
     result = runner.invoke(app, ["source", "docs", "mytool"])
     assert result.exit_code == 0
     assert "Discovered repository source" in result.output
     assert "README.md" in result.output
+    assert raw_source.target == "tmux/tmux-builds"
+    assert observed == [RepoSource(name="tmux", target="tmux/tmux", is_local=False)]
 
 
 def test_cli_install_dry_run(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
