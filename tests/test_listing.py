@@ -22,6 +22,7 @@ from maniac.cli.listing import (
     _classify,
     _filter_rows,
     _grouped_for_display,
+    _list_table,
     _ProgressReporter,
     _render_list,
     _resolve_upstream,
@@ -1239,13 +1240,73 @@ def test_streaming_table_keeps_column_geometry_for_long_upstreams() -> None:
         for column in resolved_columns
     ]
     assert checking_columns[0].width == len("long-tool-name")
-    assert checking_columns[1].width == len("checking…")
+    assert checking_columns[1].width == len(ActionState.UNVERIFIED.value)
     assert checking_columns[2].width == len("upstream")
-    assert checking_columns[3].ratio == 1
+    assert checking_columns[3].width == 24
+    assert not checking.expand
 
     output = io.StringIO()
     Console(file=output, force_terminal=True, no_color=True, width=60).print(resolved)
     assert "…" in output.getvalue()
+
+
+def test_streaming_table_renders_unverified_without_truncation() -> None:
+    rows = [
+        ToolRow(
+            "tool",
+            "tool",
+            "fake",
+            ActionState.UNVERIFIED,
+            PageSource.SYSTEM,
+            None,
+        )
+    ]
+
+    table = _streaming_table(rows, set())
+    output = io.StringIO()
+    Console(file=output, force_terminal=True, no_color=True, width=80).print(table)
+
+    assert table.columns[1].width == len(ActionState.UNVERIFIED.value)
+    assert "unverified" in output.getvalue()
+    assert "unverifi…" not in output.getvalue()
+
+
+def test_list_tables_cap_upstream_width_and_keep_ellipsis_stable() -> None:
+    row = ToolRow(
+        "tool",
+        "tool",
+        "fake",
+        ActionState.AVAILABLE,
+        PageSource.UPSTREAM,
+        RepoSource(
+            name="tool",
+            target="owner/" + "very-long-upstream-name-" * 8,
+            is_local=False,
+        ),
+    )
+    tables = [_streaming_table([row], set()), _list_table([row])]
+
+    for table in tables:
+        assert not table.expand
+        assert table.columns[3].width == 24
+
+    renders = []
+    for width in (80, 100):
+        output = io.StringIO()
+        Console(
+            file=output,
+            force_terminal=True,
+            legacy_windows=True,
+            no_color=True,
+            width=width,
+        ).print(tables[0])
+        renders.append(output.getvalue())
+
+    assert all("owner/very-long-upstrea…" in render for render in renders)
+    assert all(
+        len(next(line for line in render.splitlines() if line.startswith("┌"))) < 80
+        for render in renders
+    )
 
 
 def test_streaming_list_keeps_provisional_rows_when_computation_fails(

@@ -136,8 +136,12 @@ class PageSource(Enum):
     NONE = ""
 
 
-_STREAMING_STATE_WIDTH = len("checking…")
+_STATE_COLUMN_WIDTH = max(
+    len("checking…"), *(len(state.value) for state in ActionState)
+)
 _STREAMING_SOURCE_WIDTH = max(len(source.value) for source in PageSource)
+_TOOL_COLUMN_MAX_WIDTH = 24
+_UPSTREAM_COLUMN_WIDTH = 24
 
 
 LOCAL_CLASSIFY_WORKERS = 8
@@ -676,10 +680,21 @@ def _filter_rows(
 def _list_table(rows: list[ToolRow]) -> Table:
     """Build the ordinary, completed list table."""
     table = Table(title="Manpage Reachability")
-    table.add_column("Tool", style="cyan")
-    table.add_column("State")
-    table.add_column("Source")
-    table.add_column("Upstream")
+    table.add_column(
+        "Tool",
+        style="cyan",
+        max_width=_TOOL_COLUMN_MAX_WIDTH,
+        no_wrap=True,
+        overflow="ellipsis",
+    )
+    table.add_column("State", width=_STATE_COLUMN_WIDTH, no_wrap=True)
+    table.add_column("Source", width=_STREAMING_SOURCE_WIDTH, no_wrap=True)
+    table.add_column(
+        "Upstream",
+        width=_UPSTREAM_COLUMN_WIDTH,
+        no_wrap=True,
+        overflow="ellipsis",
+    )
 
     for label, row in _grouped_for_display(rows):
         state = (
@@ -698,14 +713,16 @@ def _streaming_table(
     if not rows:
         return Text("No tools to report.", style="yellow")
     visible_rows = rows if maximum_rows is None else rows[:maximum_rows]
-    tool_width = max(len("Tool"), *(len(row.tool) for row in rows))
-    table = Table(title="Manpage Reachability", expand=True)
+    tool_width = min(
+        _TOOL_COLUMN_MAX_WIDTH, max(len("Tool"), *(len(row.tool) for row in rows))
+    )
+    table = Table(title="Manpage Reachability")
     table.add_column(
         "Tool", style="cyan", width=tool_width, no_wrap=True, overflow="ellipsis"
     )
     table.add_column(
         "State",
-        width=_STREAMING_STATE_WIDTH,
+        width=_STATE_COLUMN_WIDTH,
         no_wrap=True,
         overflow="ellipsis",
     )
@@ -715,7 +732,12 @@ def _streaming_table(
         no_wrap=True,
         overflow="ellipsis",
     )
-    table.add_column("Upstream", ratio=1, no_wrap=True, overflow="ellipsis")
+    table.add_column(
+        "Upstream",
+        width=_UPSTREAM_COLUMN_WIDTH,
+        no_wrap=True,
+        overflow="ellipsis",
+    )
     for index, row in enumerate(visible_rows):
         state = (
             "[dim]checking…[/dim]"
@@ -875,7 +897,8 @@ def list_tools(
     outdated: Annotated[
         bool,
         typer.Option(
-            "--outdated", help="Only rows whose page MANIAC owns and is stale."
+            "--outdated",
+            help="Only rows positively proven to document another version.",
         ),
     ] = False,
     unverified: Annotated[
