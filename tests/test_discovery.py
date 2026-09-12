@@ -1,6 +1,8 @@
 import io
 import subprocess
 import tarfile
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Self
 from urllib.request import Request
@@ -418,6 +420,53 @@ def test_mise_registry_download_sends_user_agent(monkeypatch, tmp_path: Path) ->
     assert observed_timeout == 10
     assert observed_request is not None
     assert observed_request.get_header("User-agent") == "maniac/0.1"
+
+
+def test_mise_registry_cold_load_is_single_flight_per_cache_path(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    archive = _compressed_mise_registry(
+        {"registry/ripgrep.toml": b'backends = ["github:BurntSushi/ripgrep"]\n'}
+    )
+    download_started = threading.Event()
+    release_download = threading.Event()
+    calls = 0
+    calls_lock = threading.Lock()
+
+    class Response:
+        def __enter__(self) -> Self:
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return archive
+
+    def fake_urlopen(request: Request, timeout: int) -> Response:
+        nonlocal calls
+        with calls_lock:
+            calls += 1
+        download_started.set()
+        assert release_download.wait(timeout=2)
+        return Response()
+
+    monkeypatch.setattr(discovery, "urlopen", fake_urlopen)
+    cache_path = tmp_path / "mise-registry.tar.zst"
+    _load_mise_registry.cache_clear()
+    try:
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            first = executor.submit(_load_mise_registry, cache_path)
+            assert download_started.wait(timeout=2)
+            rest = [executor.submit(_load_mise_registry, cache_path) for _ in range(7)]
+            release_download.set()
+            registries = [first.result(), *(future.result() for future in rest)]
+
+        assert calls == 1
+        assert registries == [{"ripgrep": "BurntSushi/ripgrep"}] * 8
+        assert not list(tmp_path.glob("*.tmp"))
+    finally:
+        _load_mise_registry.cache_clear()
 
 
 def test_query_mise_registry_uses_the_bound_config_cache_dir(

@@ -4,9 +4,10 @@ import io
 import os
 import re
 import tarfile
+import tempfile
+import threading
 import tomllib
 from collections.abc import Callable
-from functools import cache
 from pathlib import Path
 from time import time
 from typing import TYPE_CHECKING
@@ -25,6 +26,37 @@ if TYPE_CHECKING:
 
 MISE_REGISTRY_URL = "https://mise.jdx.dev/registry/latest.tar.zst"
 MISE_REGISTRY_TTL_SECONDS = 3_600
+
+
+class _MiseRegistryLoader:
+    """Process-local, per-cache-path single-flight registry loader."""
+
+    def __init__(self) -> None:
+        self._cache: dict[Path, dict[str, str]] = {}
+        self._locks: dict[Path, threading.Lock] = {}
+        self._guard = threading.Lock()
+
+    def __call__(self, cache_path: Path) -> dict[str, str]:
+        with self._guard:
+            cached = self._cache.get(cache_path)
+            if cached is not None:
+                return cached
+            lock = self._locks.setdefault(cache_path, threading.Lock())
+
+        with lock:
+            with self._guard:
+                cached = self._cache.get(cache_path)
+                if cached is not None:
+                    return cached
+
+            registry = _load_mise_registry_uncached(cache_path)
+            with self._guard:
+                self._cache[cache_path] = registry
+            return registry
+
+    def cache_clear(self) -> None:
+        with self._guard:
+            self._cache.clear()
 
 
 def resolve_bin_path(binary_name: str, bin_dir: str | Path | None) -> Path | None:
@@ -238,8 +270,7 @@ def _query_mise_registry(tool: str, *, config: Config) -> str | None:
     return _load_mise_registry(_mise_registry_cache_path(config)).get(tool)
 
 
-@cache
-def _load_mise_registry(cache_path: Path) -> dict[str, str]:
+def _load_mise_registry_uncached(cache_path: Path) -> dict[str, str]:
     """Load short names, aliases, and bins from Mise's cached registry archive."""
     archive = _read_mise_registry_archive(cache_path)
     if archive is None:
@@ -258,6 +289,9 @@ def _load_mise_registry(cache_path: Path) -> dict[str, str]:
         return {}
 
 
+_load_mise_registry = _MiseRegistryLoader()
+
+
 def _read_mise_registry_archive(cache_path: Path) -> bytes | None:
     """Read the fresh archive or download it once for the local cache."""
     try:
@@ -274,9 +308,20 @@ def _read_mise_registry_archive(cache_path: Path) -> bytes | None:
         with urlopen(request, timeout=10) as response:
             archive = response.read()
         cache_path.parent.mkdir(parents=True, exist_ok=True)
-        temporary_path = cache_path.with_suffix(".tmp")
-        temporary_path.write_bytes(archive)
-        temporary_path.replace(cache_path)
+        temporary_path: Path | None = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                dir=cache_path.parent,
+                prefix=f".{cache_path.name}.",
+                suffix=".tmp",
+                delete=False,
+            ) as file:
+                file.write(archive)
+                temporary_path = Path(file.name)
+            temporary_path.replace(cache_path)
+        finally:
+            if temporary_path is not None:
+                temporary_path.unlink(missing_ok=True)
         return archive
     except (OSError, URLError) as e:
         logger.debug("Unable to download Mise registry", error=str(e))
