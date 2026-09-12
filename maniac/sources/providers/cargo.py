@@ -26,10 +26,9 @@ class CargoProvider:
     name = "cargo"
 
     def detect(self, bin_path: Path) -> Installation | None:
-        cargo_home_env = os.environ.get("CARGO_HOME")
-        if not cargo_home_env:
+        cargo_home = _cargo_home(os.environ.get("CARGO_HOME"), os.getcwd())
+        if cargo_home is None:
             return None
-        cargo_home = Path(cargo_home_env).expanduser().resolve()
         cargo_bin = cargo_home / "bin"
         resolved = resolve_cached(bin_path)
         if resolved.parent != cargo_bin:
@@ -57,6 +56,15 @@ class CargoProvider:
 
     def local_docs(self, inst: Installation) -> list[Path]:
         return find_install_root_manpages(inst.root, inst.binary)
+
+
+@cache
+def _cargo_home(cargo_home_env: str | None, cwd: str) -> Path | None:
+    """Normalized Cargo home for one environment and working directory."""
+    if not cargo_home_env:
+        return None
+    home = Path(cargo_home_env).expanduser()
+    return (home if home.is_absolute() else Path(cwd) / home).resolve()
 
 
 def _find_crate(cargo_home: Path, binary_name: str) -> tuple[str, str] | None:

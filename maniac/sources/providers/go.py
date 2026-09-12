@@ -7,6 +7,7 @@ binary's embedded build metadata -- no network, no registry.
 import os
 import shutil
 import subprocess
+from functools import cache
 from pathlib import Path
 
 from ...config import Config
@@ -24,10 +25,14 @@ class GoProvider:
     name = "go"
 
     def detect(self, bin_path: Path) -> Installation | None:
-        gobin = _resolve_gobin()
+        gobin, resolved_gobin = _gobin_paths(
+            os.environ.get("GOBIN"),
+            os.environ.get("GOPATH"),
+            os.environ.get("HOME"),
+        )
         resolved = resolve_cached(bin_path)
         try:
-            if resolved.parent != resolve_cached(gobin):
+            if resolved.parent != resolved_gobin:
                 return None
         except OSError:
             return None
@@ -67,20 +72,27 @@ class GoProvider:
         return find_install_root_manpages(inst.root, inst.binary)
 
 
-def _resolve_gobin() -> Path:
+@cache
+def _gobin_paths(
+    gobin_env: str | None, gopath_env: str | None, home: str | None
+) -> tuple[Path, Path]:
     """`$GOBIN`, then `$GOPATH/bin`, then `~/go/bin` -- go's own resolution order.
 
     `GOPATH` may list several `os.pathsep`-separated directories; `go install`
     only ever uses the first one's `bin`.
     """
-    gobin = os.environ.get("GOBIN")
-    if gobin:
-        return Path(gobin).expanduser()
-    gopath = os.environ.get("GOPATH")
-    base = (
-        Path(gopath.split(os.pathsep)[0]).expanduser() if gopath else Path.home() / "go"
-    )
-    return base / "bin"
+    if gobin_env:
+        gobin = Path(gobin_env).expanduser()
+    else:
+        base = (
+            Path(gopath_env.split(os.pathsep)[0]).expanduser()
+            if gopath_env
+            else Path(home).expanduser() / "go"
+            if home
+            else Path.home() / "go"
+        )
+        gobin = base / "bin"
+    return gobin, resolve_cached(gobin)
 
 
 def _read_module_info(path: Path) -> tuple[str, str, str | None] | None:

@@ -8,9 +8,16 @@ monkeypatching `mise.discovery._resolve_from_mise`.
 import os
 from pathlib import Path
 
+import pytest
+
 from maniac.config import Config
 from maniac.models import RepoSource
 from maniac.sources.providers import go
+
+
+@pytest.fixture(autouse=True)
+def _clear_gobin_paths_cache() -> None:
+    go._gobin_paths.cache_clear()
 
 
 def _make_go_bin(gobin: Path, real_name: str) -> Path:
@@ -84,6 +91,30 @@ def test_detect_uses_only_the_first_gopath_entry(tmp_path, monkeypatch) -> None:
 
     assert inst is not None
     assert inst.root == first / "bin"
+
+
+def test_gobin_paths_are_cached_and_isolated_by_environment_inputs(tmp_path) -> None:
+    first_home = tmp_path / "first-home"
+    second_home = tmp_path / "second-home"
+    first_gopath = tmp_path / "first-gopath"
+    second_gopath = tmp_path / "second-gopath"
+
+    assert go._gobin_paths(None, None, str(first_home))[0] == first_home / "go" / "bin"
+    assert go._gobin_paths(None, None, str(first_home))[0] == first_home / "go" / "bin"
+    assert go._gobin_paths.cache_info().hits == 1
+    assert (
+        go._gobin_paths(None, None, str(second_home))[0] == second_home / "go" / "bin"
+    )
+    assert go._gobin_paths(None, str(first_gopath), str(first_home))[0] == (
+        first_gopath / "bin"
+    )
+    assert go._gobin_paths(None, str(second_gopath), str(first_home))[0] == (
+        second_gopath / "bin"
+    )
+    assert go._gobin_paths(str(tmp_path / "gobin"), None, str(first_home))[0] == (
+        tmp_path / "gobin"
+    )
+    assert go._gobin_paths.cache_info().misses == 5
 
 
 def test_detect_rejects_a_binary_outside_gobin(tmp_path, monkeypatch) -> None:

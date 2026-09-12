@@ -18,6 +18,7 @@ from maniac.sources.providers import cargo
 @pytest.fixture(autouse=True)
 def _clear_cargo_metadata_cache() -> None:
     cargo._crates_by_binary.cache_clear()
+    cargo._cargo_home.cache_clear()
 
 
 def _make_cargo_home(tmp_path: Path, installs: dict[str, list[str]]) -> Path:
@@ -117,6 +118,24 @@ def test_detect_parses_each_cargo_metadata_file_once(tmp_path, monkeypatch) -> N
     assert provider.detect(hexyl) is not None
     assert provider.detect(hexedit) is not None
     assert calls == 1
+
+
+def test_cargo_home_is_cached_and_isolated_by_environment_input(tmp_path) -> None:
+    first = tmp_path / "first-cargo"
+    second = tmp_path / "second-cargo"
+    other_cwd = tmp_path / "other-cwd"
+
+    assert cargo._cargo_home(str(first), str(tmp_path)) == first.resolve()
+    assert cargo._cargo_home(str(first), str(tmp_path)) == first.resolve()
+    assert cargo._cargo_home.cache_info().hits == 1
+    assert cargo._cargo_home(str(second), str(tmp_path)) == second.resolve()
+    assert cargo._cargo_home("relative-cargo", str(tmp_path)) == (
+        tmp_path / "relative-cargo"
+    )
+    assert cargo._cargo_home("relative-cargo", str(other_cwd)) == (
+        other_cwd / "relative-cargo"
+    )
+    assert cargo._cargo_home.cache_info().misses == 4
 
 
 def test_detect_returns_none_without_cargo_home_set(tmp_path, monkeypatch) -> None:
