@@ -35,6 +35,10 @@ class MiseProvider:
 
     name = "mise"
 
+    def can_detect(self, real_path: Path) -> bool:
+        """Recognise mise's versioned installation layout."""
+        return _INSTALLS_MARKER in str(real_path)
+
     def detect(self, bin_path: Path) -> Installation | None:
         resolved = resolve_cached(bin_path)
         if _INSTALLS_MARKER not in str(resolved):

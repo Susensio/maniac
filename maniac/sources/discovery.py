@@ -145,7 +145,7 @@ def _detect_via_registry(bin_path: Path) -> "tuple[Provider, Installation] | Non
     """Loop over registered providers (ADR-0015) for the one that claims this path."""
     from .providers import registry  # deferred: providers import this module themselves
 
-    for provider in registry:
+    for provider in registry.candidates_for(bin_path):
         inst = provider.detect(bin_path)
         if inst is not None:
             return provider, inst

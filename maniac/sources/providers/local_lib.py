@@ -21,6 +21,10 @@ class LocalLibProvider:
 
     name = "local_lib"
 
+    def can_detect(self, real_path: Path) -> bool:
+        """Recognise the only path layout this provider's detector accepts."""
+        return _LIB_MARKER in str(real_path)
+
     def detect(self, bin_path: Path) -> Installation | None:
         resolved = resolve_cached(bin_path)
         if _LIB_MARKER not in str(resolved):

@@ -27,6 +27,10 @@ class HomebrewProvider:
 
     name = "homebrew"
 
+    def can_detect(self, real_path: Path) -> bool:
+        """Recognise Homebrew's Cellar layout without calling brew."""
+        return _CELLAR_MARKER in str(real_path)
+
     def detect(self, bin_path: Path) -> Installation | None:
         resolved = resolve_cached(bin_path)
         resolved_str = str(resolved)

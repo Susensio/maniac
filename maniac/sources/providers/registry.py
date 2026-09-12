@@ -1,8 +1,14 @@
-"""Ordered registry of providers: registration plus iteration, nothing else."""
+"""Ordered provider registry and conservative path routing."""
 
 from collections.abc import Iterator
+from pathlib import Path
 
+from ..pathcache import resolve_cached
 from .base import Provider
+
+_SYSTEM_BIN_DIRS = frozenset(
+    {Path("/bin"), Path("/sbin"), Path("/usr/bin"), Path("/usr/sbin")}
+)
 
 
 class ProviderRegistry:
@@ -24,6 +30,37 @@ class ProviderRegistry:
 
     def __len__(self) -> int:
         return len(self._providers)
+
+    def candidates_for(self, bin_path: Path) -> Iterator[Provider]:
+        """Yield providers worth probing for one PATH candidate.
+
+        A provider may cheaply recognise its own documented install layout
+        after the path is resolved.  Those direct routes are exhaustive for
+        the built-in providers, so the remaining built-ins need not repeat
+        their metadata checks.  A path with no direct route remains
+        deliberately conservative: custom/manual locations get the original
+        registry walk.  Standard system bin directories are the one explicit
+        exception; none of the provider layouts can claim them unless it
+        already supplied a direct route.
+        """
+        real_path = resolve_cached(bin_path)
+        candidates: list[Provider] = []
+        has_direct_route = False
+        for provider in self:
+            route = getattr(provider, "can_detect", None)
+            if route is None:
+                candidates.append(provider)
+            elif route(real_path):
+                candidates.append(provider)
+                has_direct_route = True
+
+        if has_direct_route:
+            yield from candidates
+            return
+        if real_path.parent in _SYSTEM_BIN_DIRS:
+            yield from candidates
+            return
+        yield from self
 
 
 # The one registry the rest of the codebase composes providers through.

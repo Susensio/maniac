@@ -25,6 +25,11 @@ class CargoProvider:
 
     name = "cargo"
 
+    def can_detect(self, real_path: Path) -> bool:
+        """Recognise Cargo's configured executable directory before parsing metadata."""
+        cargo_home = _cargo_home(os.environ.get("CARGO_HOME"), os.getcwd())
+        return cargo_home is not None and real_path.parent == cargo_home / "bin"
+
     def detect(self, bin_path: Path) -> Installation | None:
         cargo_home = _cargo_home(os.environ.get("CARGO_HOME"), os.getcwd())
         if cargo_home is None:

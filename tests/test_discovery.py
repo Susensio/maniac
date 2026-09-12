@@ -277,6 +277,27 @@ def test_enumerate_installations_reports_claims_before_the_walk_finishes(
     assert found == [inst.binary for _, inst in result]
 
 
+def test_enumerate_installations_calls_back_once_per_claim_and_sorts_the_result(
+    monkeypatch, tmp_path: Path
+) -> None:
+    for name in ("zulu", "alpha"):
+        (tmp_path / name).touch(mode=0o755)
+    monkeypatch.setattr(discovery.loginpath, "login_path", lambda: str(tmp_path))
+    monkeypatch.setattr(
+        discovery,
+        "_detect_via_registry",
+        lambda path: ("fake-provider", _fake_installation(path.name)),
+    )
+    found: list[str] = []
+
+    result = enumerate_installations(
+        on_found=lambda provider, inst: found.append(inst.binary)
+    )
+
+    assert sorted(found) == ["alpha", "zulu"]
+    assert [inst.binary for _, inst in result] == ["alpha", "zulu"]
+
+
 def test_resolve_from_mise_checks_all_local_config_before_registry(
     monkeypatch, tmp_path: Path
 ) -> None:

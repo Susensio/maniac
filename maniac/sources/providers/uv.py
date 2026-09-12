@@ -20,6 +20,10 @@ class UvProvider:
 
     name = "uv"
 
+    def can_detect(self, real_path: Path) -> bool:
+        """Recognise uv's documented per-tool venv layout."""
+        return _TOOLS_MARKER in str(real_path)
+
     def detect(self, bin_path: Path) -> Installation | None:
         resolved = resolve_cached(bin_path)
         resolved_str = str(resolved)

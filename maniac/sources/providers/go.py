@@ -24,6 +24,15 @@ class GoProvider:
 
     name = "go"
 
+    def can_detect(self, real_path: Path) -> bool:
+        """Recognise Go's configured executable directory before spawning Go."""
+        _gobin, resolved_gobin = _gobin_paths(
+            os.environ.get("GOBIN"),
+            os.environ.get("GOPATH"),
+            os.environ.get("HOME"),
+        )
+        return real_path.parent == resolved_gobin
+
     def detect(self, bin_path: Path) -> Installation | None:
         gobin, resolved_gobin = _gobin_paths(
             os.environ.get("GOBIN"),

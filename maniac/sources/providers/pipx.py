@@ -21,6 +21,18 @@ class PipxProvider:
 
     name = "pipx"
 
+    def can_detect(self, real_path: Path) -> bool:
+        """Recognise one of pipx's configured venv roots without metadata I/O."""
+        real_path_str = str(real_path)
+        return any(
+            f"{home}/venvs/" in real_path_str
+            for home in _pipx_home_candidates(
+                os.environ.get("PIPX_HOME"),
+                os.environ.get("XDG_DATA_HOME"),
+                str(Path.home()),
+            )
+        )
+
     def detect(self, bin_path: Path) -> Installation | None:
         resolved = resolve_cached(bin_path)
         resolved_str = str(resolved)
