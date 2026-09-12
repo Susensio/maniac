@@ -109,11 +109,7 @@ def test_compute_rows_no_args_walks_providers_not_the_manpath(
     inst = _installation(root=tmp_path)
     monkeypatch.setattr(
         "maniac.cli.listing.discovery.enumerate_installations",
-        lambda on_start=None, on_scan=None, on_found=None: [
-            (on_found(provider, inst), (provider, inst))[1]
-            if on_found is not None
-            else (provider, inst)
-        ],
+        lambda on_start=None, on_scan=None: [(provider, inst)],
     )
 
     rows = compute_rows(config=_config(tmp_path))
@@ -263,11 +259,7 @@ def test_compute_rows_upgrades_a_versioned_cached_repository_page(
     inst = _installation(binary="fzf", version="0.74.3")
     monkeypatch.setattr(
         "maniac.cli.listing.discovery.enumerate_installations",
-        lambda on_start=None, on_scan=None, on_found=None: [
-            (on_found(provider, inst), (provider, inst))[1]
-            if on_found is not None
-            else (provider, inst)
-        ],
+        lambda on_start=None, on_scan=None: [(provider, inst)],
     )
     monkeypatch.setattr(
         "maniac.cli.listing.discover_repo_manpage", lambda *args, **kwargs: page
@@ -619,11 +611,7 @@ def test_streaming_list_renders_checking_before_a_blocked_probe_finishes(
     inst = _installation()
     monkeypatch.setattr(
         "maniac.cli.listing.discovery.enumerate_installations",
-        lambda on_start=None, on_scan=None, on_found=None: [
-            (on_found(provider, inst), (provider, inst))[1]
-            if on_found is not None
-            else (provider, inst)
-        ],
+        lambda on_start=None, on_scan=None: [(provider, inst)],
     )
     probe_started = threading.Event()
     release_probe = threading.Event()
@@ -703,7 +691,7 @@ def test_streaming_skeleton_waits_for_complete_enumeration(
     skeleton_seen = threading.Event()
     release_enumeration = threading.Event()
 
-    def enumerate_installations(on_start=None, on_scan=None, on_found=None):
+    def enumerate_installations(on_start=None, on_scan=None):
         assert release_enumeration.wait(timeout=2)
         return [(provider, inst)]
 
@@ -731,7 +719,7 @@ def test_compute_rows_emits_one_sorted_complete_skeleton(
     alpha = _installation(binary="alpha")
     beta = _installation(binary="beta")
 
-    def enumerate_installations(on_start=None, on_scan=None, on_found=None):
+    def enumerate_installations(on_start=None, on_scan=None):
         return [(provider, beta), (provider, alpha)]
 
     monkeypatch.setattr(
@@ -758,7 +746,7 @@ def test_compute_rows_streaming_local_callbacks_handle_multiple_partial_rows(
         (_FakeProvider(source=source), _installation(binary="second")),
     ]
 
-    def enumerate_installations(on_start=None, on_scan=None, on_found=None):
+    def enumerate_installations(on_start=None, on_scan=None):
         return installations
 
     monkeypatch.setattr(
@@ -1322,7 +1310,7 @@ def test_cli_streaming_leaves_live_table_as_the_only_final_render(
     monkeypatch.setattr(cli_module, "Config", lambda: _config(tmp_path))
     monkeypatch.setattr(
         "maniac.cli.listing.discovery.enumerate_installations",
-        lambda on_start=None, on_scan=None, on_found=None: (
+        lambda on_start=None, on_scan=None: (
             on_start and on_start(0),
             [],
         )[-1],
@@ -1340,6 +1328,82 @@ def test_cli_streaming_leaves_live_table_as_the_only_final_render(
     assert result.exit_code == 0
     assert renders == 0
     assert "No tools to report." in result.output
+
+
+def test_cli_streaming_stops_row_progress_after_the_skeleton(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The live table, not an invisible progress task, owns row-phase feedback."""
+    captured: dict[str, object] = {}
+
+    class FakeReporter:
+        def __init__(self, target_console: Console) -> None:
+            return None
+
+        def on_phase_start(self, total: int) -> None:
+            return None
+
+        def on_scan(self) -> None:
+            return None
+
+        def stop(self) -> None:
+            return None
+
+    def rows(*args: object, **kwargs: Any) -> list[ToolRow]:
+        captured.update(kwargs)
+        return []
+
+    monkeypatch.setattr(
+        cli_module.console, "_instance", Console(force_terminal=True, no_color=True)
+    )
+    monkeypatch.setattr(cli_module, "Config", lambda: _config(tmp_path))
+    monkeypatch.setattr("maniac.cli.listing._ProgressReporter", FakeReporter)
+    monkeypatch.setattr("maniac.cli.listing.compute_rows", rows)
+
+    result = runner.invoke(app, ["list"])
+
+    assert result.exit_code == 0
+    assert callable(captured["on_discovery_start"])
+    assert callable(captured["on_discovery_scan"])
+    assert captured["on_row_start"] is None
+    assert captured["on_row_scan"] is None
+
+
+def test_cli_blocking_terminal_list_keeps_combined_row_progress(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Explicit tool selection remains blocking and retains its combined bar."""
+    captured: dict[str, object] = {}
+
+    class FakeReporter:
+        def __init__(self, target_console: Console) -> None:
+            return None
+
+        def on_phase_start(self, total: int) -> None:
+            return None
+
+        def on_scan(self) -> None:
+            return None
+
+        def stop(self) -> None:
+            return None
+
+    def rows(*args: object, **kwargs: Any) -> list[ToolRow]:
+        captured.update(kwargs)
+        return []
+
+    monkeypatch.setattr(
+        cli_module.console, "_instance", Console(force_terminal=True, no_color=True)
+    )
+    monkeypatch.setattr(cli_module, "Config", lambda: _config(tmp_path))
+    monkeypatch.setattr("maniac.cli.listing._ProgressReporter", FakeReporter)
+    monkeypatch.setattr("maniac.cli.listing.compute_rows", rows)
+
+    result = runner.invoke(app, ["list", "gum"])
+
+    assert result.exit_code == 0
+    assert callable(captured["on_row_start"])
+    assert callable(captured["on_row_scan"])
 
 
 def test_cli_streaming_error_keeps_provisional_rows_and_propagates(
@@ -1364,7 +1428,7 @@ def test_cli_streaming_error_keeps_provisional_rows_and_propagates(
         def stop(self) -> None:
             return None
 
-    def enumerate_installations(on_start=None, on_scan=None, on_found=None):
+    def enumerate_installations(on_start=None, on_scan=None):
         assert on_start is not None
         on_start(2)
         return [
@@ -2010,7 +2074,7 @@ def test_cli_list_pipe_emits_exactly_the_filtered_set(
 
     monkeypatch.setattr(
         "maniac.cli.listing.discovery.enumerate_installations",
-        lambda on_start=None, on_scan=None, on_found=None: [
+        lambda on_start=None, on_scan=None: [
             (available_provider, _installation(binary="gum")),
             (missing_provider, _installation(binary="ghost")),
         ],
@@ -2031,7 +2095,7 @@ def test_cli_list_pipe_available_waits_for_upstream_classification(
     source = RepoSource(name="fzf", target="junegunn/fzf", is_local=False)
     monkeypatch.setattr(
         "maniac.cli.listing.discovery.enumerate_installations",
-        lambda on_start=None, on_scan=None, on_found=None: [
+        lambda on_start=None, on_scan=None: [
             (
                 _FakeProvider(source=source),
                 _installation(binary="fzf", version="0.74.3"),
@@ -2383,9 +2447,8 @@ def test_cli_list_tty_shows_table(
     monkeypatch.setattr(cli_module, "Config", lambda: _config(tmp_path))
     monkeypatch.setattr(
         "maniac.cli.listing.discovery.enumerate_installations",
-        lambda on_start=None, on_scan=None, on_found=None: (
+        lambda on_start=None, on_scan=None: (
             on_start and on_start(1),
-            on_found and on_found(_FakeProvider(), _installation(binary="gum")),
             [(_FakeProvider(), _installation(binary="gum"))],
         )[-1],
     )

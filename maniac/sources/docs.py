@@ -218,12 +218,12 @@ def discover_repo_manpage(
     config: Config | None = None,
     version: str | None = None,
 ) -> Path | None:
-    """Return a hand-authored manpage for ``binary_name`` shipped in ``source``'s repository.
+    """Return a hand-authored page discovered for ``binary_name`` from ``source``.
 
-    Resolves (and clones, if needed and not already cached) the same repository
-    directory ``fetch_and_extract_docs`` uses, then looks for a manpage MANIAC
-    can install as-is instead of generating one. With `version`, resolves the
-    git tag naming it (ADR-0016 tier 2) rather than the default branch.
+    Remote repository checks use cached bare, filtered Git objects and materialize
+    only the selected page; GitHub sources also inspect bounded release artifacts.
+    With `version`, the Git tree and release tag must name that exact version
+    (ADR-0016 tier 2), rather than the default branch.
     """
     pages = discover_repo_manpages(
         source,

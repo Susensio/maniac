@@ -64,13 +64,12 @@ if TYPE_CHECKING:
 
 
 class _ProgressReporter:
-    """One combined progress bar across `list`'s two phases.
+    """Progress bar for blocking interactive `list` calls.
 
-    `discovery.enumerate_installations`'s `$PATH` walk and the per-row
-    reachability loop both report into this through
-    `on_phase_start`/`on_scan`, sharing one task and one combined total so
-    the user sees a single bar for the whole command rather than a sequence
-    of two. `transient=True` clears it before the final table prints.
+    Discovery and per-row reachability report through `on_phase_start` and
+    `on_scan`, sharing one task and combined total. Streaming calls stop it
+    once the table skeleton is ready and do not send later row callbacks.
+    `transient=True` clears it before a final table prints.
     """
 
     def __init__(self, target_console: Any) -> None:
@@ -287,17 +286,6 @@ def _probe_upstream(source: RepoSource, inst: "Installation", cfg: Config) -> bo
         return False
 
 
-def _upstream_eligible(
-    rows: list[ToolRow], installations: list["Installation | None"]
-) -> set[int]:
-    """Indexes that need the version-matched remote tier-2 check."""
-    return {
-        index
-        for index, (row, inst) in enumerate(zip(rows, installations, strict=True))
-        if _is_upstream_eligible(row, inst)
-    }
-
-
 def _is_upstream_eligible(row: ToolRow, inst: "Installation | None") -> bool:
     """Whether one completed local row needs the version-matched remote check."""
     return (
@@ -353,7 +341,7 @@ def compute_rows(
     (`MISSING`, unless `man` or the manifest says otherwise) rather than
     nothing, per ADR-0013.
 
-    The nine `on_*` callbacks, all `None` by default, are purely additive
+    The eight `on_*` callbacks, all `None` by default, are purely additive
     instrumentation for a caller with a console in scope (the CLI command);
     every other caller, including tests, omits them and sees no behaviour
     change. `on_discovery_*` passes straight through to
@@ -907,8 +895,12 @@ def list_tools(
             config=get_config(ctx),
             on_discovery_start=discovery_start if interactive else None,
             on_discovery_scan=reporter.on_scan if reporter else None,
-            on_row_start=reporter.on_phase_start if reporter else None,
-            on_row_scan=reporter.on_scan if reporter else None,
+            # The skeleton stops the streaming progress display. Do not keep
+            # updating its hidden task while the table owns feedback.
+            on_row_start=reporter.on_phase_start
+            if reporter and not streaming
+            else None,
+            on_row_scan=reporter.on_scan if reporter and not streaming else None,
             on_skeleton=renderer.skeleton if renderer else None,
             on_local_row=renderer.local if renderer else None,
             on_upstream_rows=renderer.upstream if renderer else None,
