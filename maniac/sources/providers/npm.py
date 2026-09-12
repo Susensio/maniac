@@ -46,7 +46,7 @@ class NpmProvider:
             real_path=resolved,
             provider=self.name,
             package=package,
-            version=_read_package_json(root).get("version"),
+            version=read_package_json(root).get("version"),
             root=root,
         )
 
@@ -54,7 +54,7 @@ class NpmProvider:
         self, inst: Installation, *, config: Config
     ) -> RepoSource | None:
         repo = _repo_from_repository_field(
-            _read_package_json(inst.root).get("repository")
+            read_package_json(inst.root).get("repository")
         )
         return (
             RepoSource(name=inst.binary, target=repo, is_local=False) if repo else None
@@ -64,7 +64,7 @@ class NpmProvider:
         return find_install_root_manpages(inst.root, inst.binary)
 
 
-def _read_package_json(root: Path) -> dict:
+def read_package_json(root: Path) -> dict:
     path = root / "package.json"
     try:
         data = json.loads(path.read_text(encoding="utf-8"))

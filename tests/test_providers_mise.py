@@ -113,6 +113,129 @@ def test_resolve_source_returns_none_when_mise_registry_has_nothing(
     assert provider.resolve_source(inst, config=Config()) is None
 
 
+def test_resolve_source_uses_one_npm_package_when_no_backend_or_registry_source(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Legacy installs use package layout, not their install directory name."""
+    bin_path = _make_mise_install(
+        tmp_path, "custom-language-server", "5.6.0", "bash-language-server"
+    )
+    root = bin_path.resolve().parents[1]
+    package_dir = root / "lib" / "node_modules" / "bash-language-server"
+    package_dir.mkdir(parents=True)
+    (package_dir / "package.json").write_text(
+        '{"name": "bash-language-server", "version": "5.6.0", '
+        '"repository": {"type": "git", '
+        '"url": "https://github.com/bash-lsp/bash-language-server"}}',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(mise.discovery, "_resolve_from_mise", lambda *a, **k: None)
+    inst = mise.MiseProvider().detect(bin_path)
+    assert inst is not None
+
+    source = mise.MiseProvider().resolve_source(inst, config=Config())
+
+    assert source == RepoSource(
+        name="bash-language-server",
+        target="bash-lsp/bash-language-server",
+        is_local=False,
+    )
+
+
+def test_resolve_source_supports_root_node_modules_npm_layout(
+    tmp_path: Path, monkeypatch
+) -> None:
+    bin_path = _make_mise_install(tmp_path, "custom-tool", "1.0", "custom-tool")
+    root = bin_path.resolve().parents[1]
+    package_dir = root / "node_modules" / "tool-package"
+    package_dir.mkdir(parents=True)
+    (package_dir / "package.json").write_text(
+        '{"name": "tool-package", "repository": "github:owner/tool-package"}',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(mise.discovery, "_resolve_from_mise", lambda *a, **k: None)
+    inst = mise.MiseProvider().detect(bin_path)
+    assert inst is not None
+
+    source = mise.MiseProvider().resolve_source(inst, config=Config())
+
+    assert source == RepoSource(
+        name="custom-tool", target="owner/tool-package", is_local=False
+    )
+
+
+def test_resolve_source_prefers_npm_package_metadata_to_mise_inference(
+    tmp_path: Path, monkeypatch
+) -> None:
+    bin_path = _make_mise_install(tmp_path, "custom-tool", "1.0", "custom-tool")
+    root = bin_path.resolve().parents[1]
+    package_dir = root / "node_modules" / "tool-package"
+    package_dir.mkdir(parents=True)
+    (package_dir / "package.json").write_text(
+        '{"name": "tool-package", "repository": "github:package/repository"}',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        mise.discovery, "_resolve_from_mise", lambda *a, **k: "inferred/repository"
+    )
+    inst = mise.MiseProvider().detect(bin_path)
+    assert inst is not None
+
+    source = mise.MiseProvider().resolve_source(inst, config=Config())
+
+    assert source == RepoSource(
+        name="custom-tool", target="package/repository", is_local=False
+    )
+
+
+def test_resolve_source_refuses_ambiguous_npm_package_layout(
+    tmp_path: Path, monkeypatch
+) -> None:
+    bin_path = _make_mise_install(tmp_path, "custom-tool", "1.0", "custom-tool")
+    root = bin_path.resolve().parents[1]
+    for package in ("first", "second"):
+        package_dir = root / "node_modules" / package
+        package_dir.mkdir(parents=True)
+        (package_dir / "package.json").write_text(
+            f'{{"name": "{package}", "repository": "github:owner/{package}"}}',
+            encoding="utf-8",
+        )
+    monkeypatch.setattr(mise.discovery, "_resolve_from_mise", lambda *a, **k: None)
+    inst = mise.MiseProvider().detect(bin_path)
+    assert inst is not None
+
+    assert mise.MiseProvider().resolve_source(inst, config=Config()) is None
+
+
+def test_resolve_source_prefers_backend_record_to_npm_layout(
+    tmp_path: Path, monkeypatch
+) -> None:
+    bin_path = _make_mise_install(tmp_path, "custom-tool", "1.0", "custom-tool")
+    root = bin_path.resolve().parents[1]
+    (root.parent / ".mise.backend.toml").write_text(
+        'full = "aqua:record/repository"\n', encoding="utf-8"
+    )
+    package_dir = root / "node_modules" / "other-package"
+    package_dir.mkdir(parents=True)
+    (package_dir / "package.json").write_text(
+        '{"name": "other-package", "repository": "github:layout/repository"}',
+        encoding="utf-8",
+    )
+
+    def fail_if_called(*args: object, **kwargs: object) -> None:
+        raise AssertionError("registry fallback must not run when the record exists")
+
+    monkeypatch.setattr(mise.discovery, "_resolve_from_mise", fail_if_called)
+    inst = mise.MiseProvider().detect(bin_path)
+    assert inst is not None
+
+    source = mise.MiseProvider().resolve_source(inst, config=Config())
+
+    assert source == RepoSource(
+        name="custom-tool", target="record/repository", is_local=False
+    )
+
+
 def test_resolve_source_reads_the_backend_record_before_the_registry(
     tmp_path: Path, monkeypatch
 ) -> None:

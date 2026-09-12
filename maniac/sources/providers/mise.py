@@ -10,6 +10,7 @@ from .. import discovery
 from ..manpages import find_install_root_manpages
 from ..pathcache import resolve_cached
 from .base import Provider
+from .npm import read_package_json
 from .registry import registry
 
 _INSTALLS_MARKER = "/.local/share/mise/installs/"
@@ -66,10 +67,9 @@ class MiseProvider:
     def resolve_source(
         self, inst: Installation, *, config: Config, offline: bool = False
     ) -> RepoSource | None:
-        """`offline`, used by `maniac list` (ADR-0018), skips only the mise-registry
-        network fallback inside `discovery._resolve_from_mise` -- the parent
-        delegation and `.mise.backend.toml` read below are pure filesystem
-        already, so neither branch needs it.
+        """`offline` skips only the mise-registry network fallback inside
+        `discovery._resolve_from_mise` -- backend and npm-layout resolution are
+        pure filesystem reads, so neither branch needs it.
         """
         if inst.parent is not None:
             provider = _find_provider(inst.parent.provider)
@@ -86,6 +86,14 @@ class MiseProvider:
                 if repo
                 else None
             )
+        parent = _build_npm_parent_from_layout(inst)
+        if parent is not None:
+            provider = _find_provider(parent.provider)
+            source = (
+                provider.resolve_source(parent, config=config) if provider else None
+            )
+            if source:
+                return source
         repo = discovery._resolve_from_mise(
             inst.package, inst.binary, config=config, offline=offline
         )
@@ -157,6 +165,65 @@ def _build_parent(bin_path: Path, real_path: Path, root: Path) -> Installation |
         version=None,
         root=build_root(root, package),
     )
+
+
+def _build_npm_parent_from_layout(inst: Installation) -> Installation | None:
+    """Compose one npm package found under a backend-record-free Mise root.
+
+    Legacy Mise installs do not always retain `.mise.backend.toml`.  A single
+    package with an explicit `package.json` name is enough evidence to delegate
+    to npm; more than one is ambiguous and none is not an npm installation.
+    """
+    candidates = [
+        candidate
+        for modules_root in (
+            inst.root / "node_modules",
+            inst.root / "lib" / "node_modules",
+        )
+        for candidate in _npm_package_candidates(modules_root)
+    ]
+    if len(candidates) != 1:
+        return None
+    package, root = candidates[0]
+    return Installation(
+        binary=inst.binary,
+        bin_path=inst.bin_path,
+        real_path=inst.real_path,
+        provider="npm",
+        package=package,
+        version=read_package_json(root).get("version"),
+        root=root,
+    )
+
+
+def _npm_package_candidates(modules_root: Path) -> list[tuple[str, Path]]:
+    """`(package name, root)` pairs with an explicit matching package name."""
+    try:
+        entries = list(modules_root.iterdir())
+    except OSError:
+        return []
+    candidates: list[Path] = []
+    for entry in entries:
+        if not entry.is_dir():
+            continue
+        if entry.name.startswith("@"):
+            try:
+                candidates.extend(child for child in entry.iterdir() if child.is_dir())
+            except OSError:
+                continue
+        else:
+            candidates.append(entry)
+    result: list[tuple[str, Path]] = []
+    for candidate in candidates:
+        expected_name = (
+            f"{candidate.parent.name}/{candidate.name}"
+            if candidate.parent.name.startswith("@")
+            else candidate.name
+        )
+        name = read_package_json(candidate).get("name")
+        if name == expected_name:
+            result.append((name, candidate))
+    return result
 
 
 def _find_provider(name: str) -> Provider | None:
