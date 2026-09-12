@@ -1,5 +1,8 @@
 import gzip
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Barrier
+from time import sleep
 
 import pytest
 import zstandard
@@ -18,7 +21,7 @@ from maniac.sources.manpages import (
 
 @pytest.fixture(autouse=True)
 def _clear_install_root_manpage_cache() -> None:
-    manpages._install_root_manpage_files.cache_clear()
+    manpages._clear_install_root_manpage_file_cache()
 
 
 def test_is_help2man_manpage_detects_gzip_page(tmp_path: Path) -> None:
@@ -265,6 +268,42 @@ def test_find_install_root_manpages_keeps_separate_root_inventories(
     assert find_install_root_manpages(first_root, "tool")
     assert find_install_root_manpages(second_root, "tool")
     assert walks == 2
+
+
+def test_find_install_root_manpages_single_flights_concurrent_siblings(
+    tmp_path: Path, monkeypatch
+) -> None:
+    man1_dir = tmp_path / "share" / "man" / "man1"
+    man1_dir.mkdir(parents=True)
+    names = [f"tool{index}" for index in range(8)]
+    pages = {name: man1_dir / f"{name}.1" for name in names}
+    for page in pages.values():
+        page.touch()
+
+    walks = 0
+    real_walk = manpages.os.walk
+
+    def counting_walk(top, *args, **kwargs):
+        nonlocal walks
+        walks += 1
+        # Keep the first scan active while every worker reaches the same root.
+        sleep(0.05)
+        yield from real_walk(top, *args, **kwargs)
+
+    monkeypatch.setattr(manpages.os, "walk", counting_walk)
+    ready = Barrier(len(names) + 1)
+
+    def find(name: str) -> list[Path]:
+        ready.wait()
+        return find_install_root_manpages(tmp_path, name)
+
+    with ThreadPoolExecutor(max_workers=len(names)) as executor:
+        futures = [executor.submit(find, name) for name in names]
+        ready.wait()
+        found = [future.result() for future in futures]
+
+    assert found == [[pages[name]] for name in names]
+    assert walks == 1
 
 
 def test_find_installed_manpage_path_returns_first_hit(

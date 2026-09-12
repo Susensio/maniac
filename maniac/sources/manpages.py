@@ -9,8 +9,8 @@ import os
 import re
 import subprocess
 from collections.abc import Callable, Iterator
-from functools import cache
 from pathlib import Path
+from threading import Lock
 from typing import TextIO
 
 import zstandard
@@ -156,10 +156,33 @@ def find_install_root_manpages(root: Path, binary_name: str) -> list[Path]:
     )
 
 
-@cache
+_install_root_manpage_file_cache: dict[Path, tuple[Path, ...]] = {}
+_install_root_manpage_locks: dict[Path, Lock] = {}
+_install_root_manpage_cache_lock = Lock()
+
+
 def _install_root_manpage_files(root: Path) -> tuple[Path, ...]:
-    """Bounded install-root manpage inventory, cached for one CLI process."""
-    return tuple(_iter_install_root_manpage_files(root))
+    """Bounded install-root inventory, cached and single-flight per CLI process."""
+    with _install_root_manpage_cache_lock:
+        root_lock = _install_root_manpage_locks.setdefault(root, Lock())
+
+    with root_lock:
+        with _install_root_manpage_cache_lock:
+            cached = _install_root_manpage_file_cache.get(root)
+        if cached is not None:
+            return cached
+
+        inventory = tuple(_iter_install_root_manpage_files(root))
+        with _install_root_manpage_cache_lock:
+            _install_root_manpage_file_cache[root] = inventory
+        return inventory
+
+
+def _clear_install_root_manpage_file_cache() -> None:
+    """Clear process-local inventory and lock state for isolated tests."""
+    with _install_root_manpage_cache_lock:
+        _install_root_manpage_file_cache.clear()
+        _install_root_manpage_locks.clear()
 
 
 def _manpage_patterns(binary_name: str) -> tuple[list[str], list[str]]:
