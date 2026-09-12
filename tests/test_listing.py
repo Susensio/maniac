@@ -395,6 +395,123 @@ def test_compute_rows_bounds_upstream_probes_and_keeps_row_order(
     assert completions == 12
 
 
+def test_compute_rows_bounds_parallel_local_classification(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`man -w`-backed local work has bounded concurrency, not one-row serial I/O."""
+    installations = [
+        (_FakeProvider(), _installation(binary=f"tool{index}")) for index in range(12)
+    ]
+    monkeypatch.setattr(
+        "maniac.cli.listing.discovery.enumerate_installations",
+        lambda on_start=None, on_scan=None: installations,
+    )
+    active = 0
+    maximum = 0
+    lock = threading.Lock()
+
+    def classify(
+        provider: object,
+        inst: object,
+        tool: str,
+        cfg: Config,
+        entries: object,
+    ) -> tuple[ActionState, PageSource, None]:
+        nonlocal active, maximum
+        with lock:
+            active += 1
+            maximum = max(maximum, active)
+        time.sleep(0.01)
+        with lock:
+            active -= 1
+        return ActionState.OK, PageSource.SYSTEM, None
+
+    monkeypatch.setattr("maniac.cli.listing._classify_and_resolve", classify)
+
+    rows = compute_rows(config=_config(tmp_path))
+
+    assert [row.tool for row in rows] == sorted(f"tool{index}" for index in range(12))
+    assert 1 < maximum <= 8
+
+
+def test_compute_rows_loads_the_manifest_once_per_invocation(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    installations = [
+        (_FakeProvider(), _installation(binary=f"tool{index}")) for index in range(3)
+    ]
+    monkeypatch.setattr(
+        "maniac.cli.listing.discovery.enumerate_installations",
+        lambda on_start=None, on_scan=None: installations,
+    )
+    loads = 0
+
+    def load_once(config: Config) -> dict[str, object]:
+        nonlocal loads
+        loads += 1
+        return {}
+
+    monkeypatch.setattr("maniac.cli.listing.manifest.load", load_once)
+    monkeypatch.setattr(
+        "maniac.cli.listing.manifest.lookup",
+        lambda *args, **kwargs: pytest.fail("bulk list must use its manifest snapshot"),
+    )
+
+    compute_rows(config=_config(tmp_path))
+
+    assert loads == 1
+
+
+def test_compute_rows_starts_upstream_before_slow_local_work_finishes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    source = RepoSource(name="tool", target="owner/tool", is_local=False)
+    provider = _FakeProvider(source=source)
+    installations = [
+        (provider, _installation(binary="fast")),
+        (provider, _installation(binary="slow")),
+    ]
+    monkeypatch.setattr(
+        "maniac.cli.listing.discovery.enumerate_installations",
+        lambda on_start=None, on_scan=None: installations,
+    )
+    slow_started = threading.Event()
+    release_slow = threading.Event()
+    probe_started = threading.Event()
+
+    def classify(
+        provider: object,
+        inst: Installation,
+        tool: str,
+        cfg: Config,
+        entries: object,
+    ) -> tuple[ActionState, PageSource, RepoSource]:
+        if tool == "slow":
+            slow_started.set()
+            assert release_slow.wait(timeout=2)
+        return ActionState.MISSING, PageSource.NONE, source
+
+    def probe(*args: object, **kwargs: object) -> Path:
+        probe_started.set()
+        return Path("/page")
+
+    monkeypatch.setattr("maniac.cli.listing._classify_and_resolve", classify)
+    monkeypatch.setattr("maniac.cli.listing.discover_repo_manpage", probe)
+    result: list[ToolRow] = []
+    worker = threading.Thread(
+        target=lambda: result.extend(compute_rows(config=_config(tmp_path)))
+    )
+
+    worker.start()
+    assert slow_started.wait(timeout=2)
+    assert probe_started.wait(timeout=2)
+    release_slow.set()
+    worker.join(timeout=2)
+
+    assert not worker.is_alive()
+    assert all(row.source is PageSource.UPSTREAM for row in result)
+
+
 def test_compute_rows_deduplicates_identical_upstream_binary_probes(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

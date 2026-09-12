@@ -28,12 +28,13 @@ lookup is cache-first and runs only for unresolved rows with an installed
 version and an installation-derived repository.
 """
 
-from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from collections.abc import Callable, Mapping
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass, replace
 from enum import Enum
 from pathlib import Path
 from time import monotonic
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Annotated, Any
 
 import typer
@@ -135,6 +136,7 @@ _STREAMING_STATE_WIDTH = len("checking…")
 _STREAMING_SOURCE_WIDTH = max(len(source.value) for source in PageSource)
 
 
+LOCAL_CLASSIFY_WORKERS = 8
 UPSTREAM_PROBE_WORKERS = 8
 
 
@@ -185,7 +187,11 @@ def _under_root(path: Path, root: Path) -> bool:
 
 
 def _classify(
-    provider: "Provider | None", inst: "Installation | None", tool: str, cfg: Config
+    provider: "Provider | None",
+    inst: "Installation | None",
+    tool: str,
+    cfg: Config,
+    entries: Mapping[str, manifest.Entry] | None = None,
 ) -> tuple[ActionState, PageSource]:
     """Decide one binary's state and page source by whether `man` resolves it (ADR-0018).
 
@@ -197,7 +203,11 @@ def _classify(
     MANIAC-owned -- ownership requires reachability now, not only a record.
     """
     installed = find_installed_manpage_path("man", tool)
-    entry = manifest.lookup(tool, config=cfg)
+    # A bulk list reads this immutable snapshot once. Keep the lookup fallback
+    # for direct callers and the single-tool classification tests.
+    entry = (
+        entries.get(tool) if entries is not None else manifest.lookup(tool, config=cfg)
+    )
     owned = (
         entry is not None
         and entry.path.exists()
@@ -299,72 +309,26 @@ def _is_upstream_eligible(row: ToolRow, inst: "Installation | None") -> bool:
     )
 
 
-def _with_upstream_availability(
-    rows: list[ToolRow],
-    installations: list["Installation | None"],
+def _classify_and_resolve(
+    provider: "Provider | None",
+    inst: "Installation | None",
+    tool: str,
     cfg: Config,
-    on_row_scan: Callable[[], None] | None,
-    on_upstream_rows: Callable[[list[ToolRow], set[int]], None] | None,
-) -> list[ToolRow]:
-    """Upgrade unresolved rows only when tier 2 accepts a matching page."""
-    eligible_set = _upstream_eligible(rows, installations)
-    eligible = list(eligible_set)
+    entries: Mapping[str, manifest.Entry],
+) -> tuple[ActionState, PageSource, RepoSource | None]:
+    """Classify locally, resolving tier 2 only for a locally missing row."""
+    state, source = _classify(provider, inst, tool, cfg, entries)
+    upstream = (
+        _resolve_upstream(provider, inst, config=cfg)
+        if state is ActionState.MISSING and source is PageSource.NONE
+        else None
+    )
+    return state, source, upstream
 
-    for index in range(len(rows)):
-        if index not in eligible_set and on_row_scan is not None:
-            on_row_scan()
 
-    def apply(indexes: list[int], available: bool) -> None:
-        if available:
-            for index in indexes:
-                rows[index] = replace(
-                    rows[index], state=ActionState.AVAILABLE, source=PageSource.UPSTREAM
-                )
-        if on_row_scan is not None:
-            for _ in indexes:
-                on_row_scan()
-        if on_upstream_rows is not None:
-            # The worker thread owns this mutation; hand renderers an immutable
-            # snapshot only after every duplicate has the shared final result.
-            on_upstream_rows(rows.copy(), set(indexes))
-
-    grouped: dict[tuple[str, str, str], list[int]] = {}
-    for index in eligible:
-        source = rows[index].upstream
-        inst = installations[index]
-        assert source is not None
-        assert inst is not None
-        clone_url = source.clone_url or source.target
-        grouped.setdefault((clone_url, inst.version or "", inst.binary), []).append(
-            index
-        )
-
-    def probe(index: int) -> bool:
-        source = rows[index].upstream
-        inst = installations[index]
-        assert source is not None
-        assert inst is not None
-        return _probe_upstream(source, inst, cfg)
-
-    groups = list(grouped.values())
-    if len(groups) == 1:
-        indexes = groups[0]
-        index = indexes[0]
-        source = rows[index].upstream
-        inst = installations[index]
-        assert source is not None
-        assert inst is not None
-        available = _probe_upstream(source, inst, cfg)
-        apply(indexes, available)
-    elif eligible:
-        with ThreadPoolExecutor(max_workers=UPSTREAM_PROBE_WORKERS) as executor:
-            futures = {
-                executor.submit(probe, indexes[0]): indexes for indexes in groups
-            }
-            for future in as_completed(futures):
-                apply(futures[future], future.result())
-
-    return rows
+def _probe_key(source: RepoSource, inst: "Installation") -> tuple[str, str, str]:
+    """Identity of one version-pinned availability probe."""
+    return (source.clone_url or source.target, inst.version or "", inst.binary)
 
 
 def compute_rows(
@@ -404,92 +368,165 @@ def compute_rows(
     They keep terminal renderers out of worker-owned mutable state; callers that
     omit them retain the original blocking API.
 
-    The initial reachability walk remains sequential because `man -w` does
-    not map batched results back to queries. Unresolved, versioned rows are
-    then probed through tier 2 after their repository identity is resolved;
-    one probe runs directly and many run with bounded concurrency.
+    Local `man -w` queries run through a bounded executor. As each locally
+    unresolved row becomes ready, its version-pinned tier-2 probe enters a
+    separate bounded executor; the coordinator alone mutates rows and calls
+    render callbacks, preserving their stable order and thread affinity.
     """
     cfg = config or Config()
+    # Entries are frozen dataclasses; the proxy prevents a worker from
+    # accidentally changing the single read snapshot while it classifies.
+    entries = MappingProxyType(manifest.load(cfg))
 
     if tools:
         unique_tools = list(dict.fromkeys(tools))
-        if on_row_start is not None:
-            on_row_start(len(unique_tools))
-        rows: list[ToolRow] = []
-        installations: list[Installation | None] = []
+        candidates: list[tuple[Provider | None, Installation | None, str]] = []
         for tool in unique_tools:
             # No `discovery.discover_repo(tool)` fallback when `found` is
-            # None: it shares `find_installation`'s own bin-path resolution
-            # and provider registry lookup verbatim, so it would only
-            # reproduce the same failed detection, never find anything new.
+            # None: it shares `find_installation`'s own bin-path resolution.
             found = discovery.find_installation(tool)
             provider, inst = found if found else (None, None)
-            state, source = _classify(provider, inst, tool, cfg)
-            rows.append(
-                ToolRow(
-                    tool=tool,
-                    package=inst.package if inst else tool,
-                    provider=provider.name if provider else "",
-                    state=state,
-                    source=source,
-                    upstream=_resolve_upstream(provider, inst, config=cfg),
-                )
-            )
-            installations.append(inst)
-        if on_initial_rows is not None:
-            on_initial_rows(rows.copy(), _upstream_eligible(rows, installations))
-        return _with_upstream_availability(
-            rows, installations, cfg, on_row_scan, on_upstream_rows
+            candidates.append((provider, inst, tool))
+    else:
+        enumerate_kwargs: dict[str, Any] = {
+            "on_start": on_discovery_start,
+            "on_scan": on_discovery_scan,
+        }
+        # `enumerate_installations` sorts today, but live row identity must
+        # not depend on that implementation detail.
+        discovered = sorted(
+            discovery.enumerate_installations(**enumerate_kwargs),
+            key=lambda item: item[1].binary,
         )
+        candidates = [(provider, inst, inst.binary) for provider, inst in discovered]
 
-    enumerate_kwargs: dict[str, Any] = {
-        "on_start": on_discovery_start,
-        "on_scan": on_discovery_scan,
-    }
-    # `enumerate_installations` sorts today, but the live table's row identity
-    # must not depend on that implementation detail.
-    installations = sorted(
-        discovery.enumerate_installations(**enumerate_kwargs),
-        key=lambda item: item[1].binary,
-    )
     rows = [
         ToolRow(
-            tool=inst.binary,
-            package=inst.package,
-            provider=provider.name,
+            tool=tool,
+            package=inst.package if inst is not None else tool,
+            provider=provider.name if provider is not None else "",
             state=ActionState.MISSING,
             source=PageSource.NONE,
             upstream=None,
         )
-        for provider, inst in installations
+        for provider, inst, tool in candidates
     ]
-    if on_skeleton is not None:
+    if not tools and on_skeleton is not None:
         on_skeleton(rows.copy())
     if on_row_start is not None:
-        on_row_start(len(installations))
-    installations_by_row: list[Installation | None] = []
-    for index, (provider, inst) in enumerate(installations):
-        state, source = _classify(provider, inst, inst.binary, cfg)
-        rows[index] = ToolRow(
-            tool=inst.binary,
-            package=inst.package,
-            provider=provider.name,
-            state=state,
-            source=source,
-            upstream=_resolve_upstream(provider, inst, config=cfg),
-        )
-        installations_by_row.append(inst)
-        if on_local_row is not None:
-            on_local_row(
-                rows.copy(),
-                index,
-                _is_upstream_eligible(rows[index], inst),
+        on_row_start(len(rows))
+
+    # Keep a local-only snapshot for callers that use the older initial
+    # callback. Upstream completions may legitimately arrive before the last
+    # local `man -w`, but cannot change this snapshot.
+    local_rows = rows.copy()
+    local_pending: dict[Future[tuple[ActionState, PageSource, RepoSource | None]], int]
+    local_pending = {}
+    probe_pending: dict[Future[bool], tuple[str, str, str]] = {}
+    probe_indexes: dict[tuple[str, str, str], list[int]] = {}
+    probe_results: dict[tuple[str, str, str], bool] = {}
+    active_probe_keys: set[tuple[str, str, str]] = set()
+    local_eligible: set[int] = set()
+    initial_sent = False
+
+    def apply_probe(key: tuple[str, str, str], available: bool) -> None:
+        indexes = probe_indexes[key]
+        if available:
+            for index in indexes:
+                rows[index] = replace(
+                    rows[index], state=ActionState.AVAILABLE, source=PageSource.UPSTREAM
+                )
+        if on_row_scan is not None:
+            for _ in indexes:
+                on_row_scan()
+        if on_upstream_rows is not None:
+            # Every known sibling gets its shared result before a renderer sees
+            # a snapshot. The coordinator owns both mutation and callbacks.
+            on_upstream_rows(rows.copy(), set(indexes))
+
+    def apply_completed_probe(index: int, available: bool) -> None:
+        """Apply a completed group to one sibling classified later."""
+        if available:
+            rows[index] = replace(
+                rows[index], state=ActionState.AVAILABLE, source=PageSource.UPSTREAM
             )
-    if on_initial_rows is not None:
-        on_initial_rows(rows.copy(), _upstream_eligible(rows, installations_by_row))
-    return _with_upstream_availability(
-        rows, installations_by_row, cfg, on_row_scan, on_upstream_rows
-    )
+        if on_row_scan is not None:
+            on_row_scan()
+        if on_upstream_rows is not None:
+            on_upstream_rows(rows.copy(), {index})
+
+    with (
+        ThreadPoolExecutor(max_workers=LOCAL_CLASSIFY_WORKERS) as local_executor,
+        ThreadPoolExecutor(max_workers=UPSTREAM_PROBE_WORKERS) as probe_executor,
+    ):
+        for index, (provider, inst, tool) in enumerate(candidates):
+            local_pending[
+                local_executor.submit(
+                    _classify_and_resolve, provider, inst, tool, cfg, entries
+                )
+            ] = index
+
+        while local_pending or probe_pending:
+            done, _ = wait(
+                [*local_pending, *probe_pending], return_when=FIRST_COMPLETED
+            )
+            # Resolve local futures before completed probes. A duplicate that
+            # became ready in the same turn joins the single-flight group.
+            launches: list[tuple[tuple[str, str, str], RepoSource, Installation]] = []
+            for future in sorted(
+                (future for future in done if future in local_pending),
+                key=local_pending.__getitem__,
+            ):
+                index = local_pending.pop(future)
+                state, source, upstream = future.result()
+                provider, inst, tool = candidates[index]
+                row = ToolRow(
+                    tool=tool,
+                    package=inst.package if inst is not None else tool,
+                    provider=provider.name if provider is not None else "",
+                    state=state,
+                    source=source,
+                    upstream=upstream,
+                )
+                rows[index] = row
+                local_rows[index] = row
+                pending_probe = _is_upstream_eligible(row, inst)
+                if pending_probe:
+                    assert upstream is not None
+                    assert inst is not None
+                    key = _probe_key(upstream, inst)
+                    probe_indexes.setdefault(key, []).append(index)
+                    local_eligible.add(index)
+                    if key in probe_results:
+                        apply_completed_probe(index, probe_results[key])
+                        pending_probe = False
+                    elif key not in active_probe_keys:
+                        active_probe_keys.add(key)
+                        launches.append((key, upstream, inst))
+                elif on_row_scan is not None:
+                    on_row_scan()
+                if on_local_row is not None:
+                    on_local_row(rows.copy(), index, pending_probe)
+
+            # The local callback must get one `checking` frame before a fast
+            # cache-backed probe can publish its terminal result.
+            for key, upstream, inst in launches:
+                probe_pending[
+                    probe_executor.submit(_probe_upstream, upstream, inst, cfg)
+                ] = key
+
+            if not local_pending and not initial_sent:
+                if on_initial_rows is not None:
+                    on_initial_rows(local_rows.copy(), local_eligible.copy())
+                initial_sent = True
+
+            for future in [future for future in done if future in probe_pending]:
+                key = probe_pending.pop(future)
+                available = future.result()
+                probe_results[key] = available
+                apply_probe(key, available)
+
+    return rows
 
 
 def _bare_names(rows: list[ToolRow]) -> list[str]:
