@@ -33,6 +33,7 @@ from maniac.config import Config
 from maniac.manifest import Tier
 from maniac.models import Installation, RepoSource
 from maniac.sources import discovery
+from maniac.sources.packages import ExternalPageFreshness
 from maniac.sources.providers import mise as mise_module
 
 runner = CliRunner()
@@ -1591,13 +1592,13 @@ def test_classify_source_is_vendor_when_resolved_page_sits_under_it(
     )
     inst = _installation(root=root)
 
-    assert _classify(None, inst, "tool", cfg) == (
+    assert _classify(_FakeProvider(), inst, "tool", cfg) == (
         ActionState.OK,
         PageSource.VENDOR,
     )
 
 
-def test_classify_source_is_system_when_resolved_page_is_unowned_and_outside_root(
+def test_classify_source_is_unverified_when_resolved_page_is_external(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     cfg = _config(tmp_path)
@@ -1606,9 +1607,16 @@ def test_classify_source_is_system_when_resolved_page_is_unowned_and_outside_roo
         "maniac.cli.listing.find_installed_manpage_path",
         lambda man_bin, tool_name: installed,
     )
+    monkeypatch.setattr(
+        "maniac.cli.listing.verify_external_page",
+        lambda page, **kwargs: ExternalPageFreshness.UNVERIFIED,
+    )
     inst = _installation(root=tmp_path / "install_root")
 
-    assert _classify(None, inst, "tool", cfg) == (ActionState.OK, PageSource.SYSTEM)
+    assert _classify(_FakeProvider(), inst, "tool", cfg) == (
+        ActionState.UNVERIFIED,
+        PageSource.SYSTEM,
+    )
 
 
 # -- _classify: same-page matching (compression, symlink) -------------------
@@ -1865,19 +1873,56 @@ def test_classify_no_subprocess_for_unowned_or_versionless_row(
     )
 
 
-def test_classify_ok_when_page_is_unowned_even_with_a_version_mismatch_in_hand(
+def test_classify_unverified_when_external_page_has_no_provenance(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """`outdated` requires ownership too, not only a version fact somewhere."""
+    """External pages need package-backed evidence before claiming freshness."""
     cfg = _config(tmp_path)
     installed = tmp_path / "usr" / "man1" / "tool.1"
     monkeypatch.setattr(
         "maniac.cli.listing.find_installed_manpage_path",
         lambda man_bin, tool_name: installed,
     )
+    monkeypatch.setattr(
+        "maniac.cli.listing.verify_external_page",
+        lambda page, **kwargs: ExternalPageFreshness.UNVERIFIED,
+    )
     inst = _installation(version="2.0.0")
 
-    assert _classify(None, inst, "tool", cfg) == (ActionState.OK, PageSource.SYSTEM)
+    assert _classify(_FakeProvider(), inst, "tool", cfg) == (
+        ActionState.UNVERIFIED,
+        PageSource.SYSTEM,
+    )
+
+
+@pytest.mark.parametrize(
+    ("freshness", "state"),
+    [
+        (ExternalPageFreshness.MATCH, ActionState.OK),
+        (ExternalPageFreshness.MISMATCH, ActionState.OUTDATED),
+    ],
+)
+def test_classify_uses_proven_external_package_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    freshness: ExternalPageFreshness,
+    state: ActionState,
+) -> None:
+    cfg = _config(tmp_path)
+    installed = tmp_path / "usr" / "share" / "man" / "man1" / "tool.1"
+    monkeypatch.setattr(
+        "maniac.cli.listing.find_installed_manpage_path",
+        lambda man_bin, tool_name: installed,
+    )
+    monkeypatch.setattr(
+        "maniac.cli.listing.verify_external_page",
+        lambda page, **kwargs: freshness,
+    )
+
+    assert _classify(_FakeProvider(), _installation(), "tool", cfg) == (
+        state,
+        PageSource.SYSTEM,
+    )
 
 
 # -- _classify: reversal of ADR-0016's manifest-only rule --------------------
@@ -2066,6 +2111,24 @@ def test_filter_rows_unions_within_the_state_axis() -> None:
     assert [row.tool for row in filtered] == ["avail", "miss"]
 
 
+def test_filter_rows_selects_unverified_rows() -> None:
+    rows = [
+        _row("unproven", ActionState.UNVERIFIED, PageSource.SYSTEM),
+        _row("current", ActionState.OK, PageSource.SYSTEM),
+    ]
+
+    filtered = _filter_rows(
+        rows,
+        outdated=False,
+        unverified=True,
+        available=False,
+        missing=False,
+        managed=False,
+    )
+
+    assert [row.tool for row in filtered] == ["unproven"]
+
+
 def test_filter_rows_intersects_across_axes() -> None:
     rows = [
         _row("stale-managed", ActionState.OUTDATED, PageSource.MANIAC),
@@ -2108,6 +2171,33 @@ def test_cli_list_pipe_emits_exactly_the_filtered_set(
     res = runner.invoke(app, ["list", "--available"])
     assert res.exit_code == 0
     assert res.output == "gum\n"
+
+
+def test_cli_list_pipe_unverified_emits_exactly_the_filtered_set(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(
+        cli_module.console, "_instance", Console(force_terminal=False, no_color=True)
+    )
+    monkeypatch.setattr(cli_module, "Config", lambda: _config(tmp_path))
+    page = tmp_path / "usr" / "share" / "man" / "man1" / "tool.1"
+    monkeypatch.setattr(
+        "maniac.cli.listing.find_installed_manpage_path",
+        lambda man_bin, tool_name: page,
+    )
+    monkeypatch.setattr(
+        "maniac.cli.listing.verify_external_page",
+        lambda page, **kwargs: ExternalPageFreshness.UNVERIFIED,
+    )
+    monkeypatch.setattr(
+        "maniac.cli.listing.discovery.enumerate_installations",
+        lambda on_start=None, on_scan=None: [(_FakeProvider(), _installation())],
+    )
+
+    res = runner.invoke(app, ["list", "--unverified"])
+
+    assert res.exit_code == 0
+    assert res.output == "tool\n"
 
 
 def test_cli_list_pipe_available_waits_for_upstream_classification(
@@ -2301,6 +2391,14 @@ def test_render_list_colors_the_state_column_per_category() -> None:
                 upstream=None,
             ),
             ToolRow(
+                tool="unproven",
+                package="unproven",
+                provider="mise",
+                state=ActionState.UNVERIFIED,
+                source=PageSource.SYSTEM,
+                upstream=None,
+            ),
+            ToolRow(
                 tool="gum",
                 package="gum",
                 provider="mise",
@@ -2331,6 +2429,7 @@ def test_render_list_colors_the_state_column_per_category() -> None:
     assert "\x1b[33mavailable\x1b[0m" in output
     assert "\x1b[31mmissing\x1b[0m" in output
     assert "\x1b[32mok\x1b[0m" in output
+    assert "\x1b[33munverified\x1b[0m" in output
     assert "\x1b[33moutdated\x1b[0m" in output
 
 

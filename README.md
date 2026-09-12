@@ -137,7 +137,7 @@ man howdoi
 
 ### 2. Find Tools MANIAC Can Act On
 
-`list` reports four states by checking manpage reachability: *ok* (a page resolves, nothing suggests it is stale), *outdated* (MANIAC installed it but the version no longer matches), *available* (nothing resolves, but a page can be had without LLM synthesis), *missing* (nothing resolves and no free page is known).
+`list` reports five states by checking manpage reachability: *ok* (a page resolves and local evidence says it is current), *unverified* (an external page resolves but its package/version match cannot be proven), *outdated* (positive evidence says a page documents another version), *available* (nothing resolves, but a page can be had without LLM synthesis), *missing* (nothing resolves and no free page is known). Use `--unverified`, `--outdated`, `--available`, or `--missing` to select a state.
 The table carries four columns: Tool, State, Source, and Upstream.
 With no arguments, it reports every tool in your `$PATH`:
 

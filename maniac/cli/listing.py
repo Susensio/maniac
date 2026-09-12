@@ -1,9 +1,10 @@
-"""`list`: report each binary's manpage reachability, per ADR-0018's action ladder.
+"""`list`: report each binary's manpage reachability, per ADR-0026's action ladder.
 
 | state    | means                                                             |
 |----------|--------------------------------------------------------------------|
-| ok       | a page resolves through `man` now, from any source, and looks fresh |
-| outdated | a page resolves, MANIAC installed it, and its recorded version no longer matches the installed binary |
+| ok       | a page resolves through `man` now and is current by local evidence |
+| unverified | an external page resolves but its matching package cannot be proven |
+| outdated | a page resolves, and positive evidence says it documents another version |
 | available| nothing resolves, but a page can be had without an LLM             |
 | missing  | nothing resolves and no free page is known                         |
 
@@ -17,7 +18,7 @@ the unit stays a binary a provider detected, since that is still what
 bounds what a bulk install could act on -- but each row's *state* is now a
 reachability fact, checked against `man` directly.
 
-`--outdated`/`--available`/`--missing` filters the State axis; `--managed`
+`--unverified`/`--outdated`/`--available`/`--missing` filters the State axis; `--managed`
 filters the Source axis to `PageSource.MANIAC`. Filters union within an
 axis and intersect across axes; no flags means no filtering. There is no
 `--ok`, deliberately (ADR-0018): it would select exactly the rows needing
@@ -55,6 +56,7 @@ from ..sources.manpages import (
     find_installed_manpage_path,
     select_primary_manpage,
 )
+from ..sources.packages import ExternalPageFreshness, verify_external_page
 from ..sources.pathcache import resolve_cached
 from . import app, console, get_config
 from .render import _repo_cell
@@ -99,9 +101,10 @@ class _ProgressReporter:
 
 
 class ActionState(Enum):
-    """The action-ladder state a binary's manpage reachability puts it in (ADR-0018)."""
+    """The action-ladder state a binary's manpage reachability puts it in (ADR-0026)."""
 
     OK = "ok"
+    UNVERIFIED = "unverified"
     OUTDATED = "outdated"
     AVAILABLE = "available"
     MISSING = "missing"
@@ -111,6 +114,7 @@ class ActionState(Enum):
 # needs a free reinstall or install, red needs an LLM.
 _STATE_COLOR: dict[ActionState, str] = {
     ActionState.OK: "green",
+    ActionState.UNVERIFIED: "yellow",
     ActionState.OUTDATED: "yellow",
     ActionState.AVAILABLE: "yellow",
     ActionState.MISSING: "red",
@@ -193,7 +197,7 @@ def _classify(
     cfg: Config,
     entries: Mapping[str, manifest.Entry] | None = None,
 ) -> tuple[ActionState, PageSource]:
-    """Decide one binary's state and page source by whether `man` resolves it (ADR-0018).
+    """Decide one binary's state and page source by whether `man` resolves it (ADR-0026).
 
     Reverses `status`'s prior rule of consulting the manifest alone: `man
     -w` is checked first, and the manifest is consulted only to tell a
@@ -245,7 +249,18 @@ def _classify(
             and current_version is not None
             and entry.version != current_version
         )
-        return (ActionState.OUTDATED if outdated else ActionState.OK, source)
+        if owned:
+            return (ActionState.OUTDATED if outdated else ActionState.OK, source)
+        if provider is not None and inst is not None and source is PageSource.SYSTEM:
+            freshness = verify_external_page(
+                installed, package=inst.package, version=inst.version
+            )
+            if freshness is ExternalPageFreshness.MATCH:
+                return (ActionState.OK, source)
+            if freshness is ExternalPageFreshness.MISMATCH:
+                return (ActionState.OUTDATED, source)
+            return (ActionState.UNVERIFIED, source)
+        return (ActionState.OK, source)
 
     if provider is not None and inst is not None:
         page = select_primary_manpage(provider.local_docs(inst), inst.binary)
@@ -619,6 +634,7 @@ def _filter_rows(
     rows: list[ToolRow],
     *,
     outdated: bool,
+    unverified: bool = False,
     available: bool,
     missing: bool,
     managed: bool,
@@ -635,6 +651,7 @@ def _filter_rows(
         state
         for state, flag in (
             (ActionState.OUTDATED, outdated),
+            (ActionState.UNVERIFIED, unverified),
             (ActionState.AVAILABLE, available),
             (ActionState.MISSING, missing),
         )
@@ -857,6 +874,13 @@ def list_tools(
             "--outdated", help="Only rows whose page MANIAC owns and is stale."
         ),
     ] = False,
+    unverified: Annotated[
+        bool,
+        typer.Option(
+            "--unverified",
+            help="Only rows whose external page cannot be proven current.",
+        ),
+    ] = False,
     available: Annotated[
         bool,
         typer.Option(
@@ -874,13 +898,15 @@ def list_tools(
         ),
     ] = False,
 ) -> None:
-    """Report each binary's manpage reachability: ok, outdated, available, or missing."""
+    """Report each binary's manpage reachability states."""
     interactive = not names and console.is_terminal
     # A filter selects final-state membership, so a provisional row could lie
     # by appearing or disappearing. Keep those calls blocking; the unfiltered
     # terminal inventory is the path that streams in place.
     streaming = (
-        interactive and not tools and not any((outdated, available, missing, managed))
+        interactive
+        and not tools
+        and not any((outdated, unverified, available, missing, managed))
     )
     reporter = _ProgressReporter(console) if interactive else None
     renderer = _StreamingList(console, reporter) if streaming and reporter else None
@@ -915,7 +941,12 @@ def list_tools(
         if reporter is not None:
             reporter.stop()
     rows = _filter_rows(
-        rows, outdated=outdated, available=available, missing=missing, managed=managed
+        rows,
+        outdated=outdated,
+        unverified=unverified,
+        available=available,
+        missing=missing,
+        managed=managed,
     )
     if normal_final:
         # Alt-screen Live deliberately disappears on success; leave one complete,
