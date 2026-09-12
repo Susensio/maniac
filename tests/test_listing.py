@@ -4,10 +4,12 @@ import io
 import threading
 import time
 from pathlib import Path
+from typing import Any
 from urllib.error import URLError
 
 import pytest
 from rich.console import Console
+from rich.live_render import LiveRender
 from typer.testing import CliRunner
 
 import maniac.cli as cli_module
@@ -663,12 +665,14 @@ def test_streaming_list_keeps_fixed_binary_rows_at_completion(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     renderables: list[object] = []
+    live_options: list[dict[str, object]] = []
     refreshes = 0
     stopped = 0
 
     class FakeLive:
         def __init__(self, renderable: object, **kwargs: object) -> None:
             renderables.append(renderable)
+            live_options.append(kwargs)
 
         def start(self) -> None:
             self.refresh()
@@ -721,6 +725,192 @@ def test_streaming_list_keeps_fixed_binary_rows_at_completion(
         assert frame.index("alpha") < frame.index("alpha-sub") < frame.index("beta")
     assert refreshes == 2
     assert stopped == 1
+    assert len(live_options) == 1
+    assert live_options[0]["screen"] is False
+    assert live_options[0]["vertical_overflow"] == "ellipsis"
+
+
+def test_streaming_list_crops_tall_live_frames_in_an_alternate_screen(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Rich must not repaint a table taller than its normal-screen viewport."""
+    frames: list[int] = []
+    options: list[dict[str, object]] = []
+
+    class FakeLive:
+        def __init__(self, renderable: object, **kwargs: object) -> None:
+            self.renderable: Any = renderable
+            self.screen = kwargs["screen"]
+            self.vertical_overflow: Any = kwargs["vertical_overflow"]
+            options.append(kwargs)
+
+        def start(self) -> None:
+            self.refresh()
+
+        def update(self, renderable: object, *, refresh: bool) -> None:
+            self.renderable = renderable
+
+        def refresh(self) -> None:
+            renderable = LiveRender(
+                self.renderable, vertical_overflow=self.vertical_overflow
+            )
+            frames.append(len(console.render_lines(renderable, console.options)))
+
+        def stop(self) -> None:
+            # Rich's stop path changes the overflow mode, but an alternate screen
+            # does not refresh afterwards (the detail that prevents a tall frame).
+            self.vertical_overflow = "visible"
+            if not self.screen:
+                self.refresh()
+
+    class FakeReporter:
+        def stop(self) -> None:
+            return None
+
+    console = Console(file=io.StringIO(), force_terminal=True, no_color=True, height=6)
+    monkeypatch.setattr("maniac.cli.listing.Live", FakeLive)
+    rows = [
+        ToolRow(name, name, "fake", ActionState.MISSING, PageSource.NONE, None)
+        for name in ("alpha", "beta", "gamma")
+    ]
+    renderer = _StreamingList(console, FakeReporter())
+
+    renderer.skeleton(rows)
+    renderer.local(rows, 0, False)
+    assert renderer.stop(completed=True)
+
+    assert len(options) == 1
+    assert options[0]["screen"] is True
+    assert options[0]["vertical_overflow"] == "crop"
+    assert frames
+    assert all(height <= console.size.height for height in frames)
+
+
+def test_cli_tall_streaming_prints_one_complete_table_after_alt_screen(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    output = io.StringIO()
+    target_console = Console(
+        file=output, force_terminal=True, no_color=True, height=6, width=80
+    )
+    rows = [
+        ToolRow(name, name, "fake", ActionState.MISSING, PageSource.NONE, None)
+        for name in ("alpha", "beta", "gamma")
+    ]
+    live_options: list[dict[str, object]] = []
+
+    class FakeLive:
+        def __init__(self, renderable: object, **kwargs: object) -> None:
+            live_options.append(kwargs)
+
+        def start(self) -> None:
+            return None
+
+        def update(self, renderable: object, *, refresh: bool) -> None:
+            return None
+
+        def refresh(self) -> None:
+            return None
+
+        def stop(self) -> None:
+            return None
+
+    class FakeReporter:
+        def __init__(self, target_console: Console) -> None:
+            return None
+
+        def on_phase_start(self, total: int) -> None:
+            return None
+
+        def on_scan(self) -> None:
+            return None
+
+        def stop(self) -> None:
+            return None
+
+    def finished_rows(*args: object, **kwargs: Any) -> list[ToolRow]:
+        kwargs["on_skeleton"](rows)
+        for index in range(len(rows)):
+            kwargs["on_local_row"](rows, index, False)
+        return rows
+
+    monkeypatch.setattr(cli_module.console, "_instance", target_console)
+    monkeypatch.setattr(cli_module, "Config", lambda: _config(tmp_path))
+    monkeypatch.setattr("maniac.cli.listing.Live", FakeLive)
+    monkeypatch.setattr("maniac.cli.listing._ProgressReporter", FakeReporter)
+    monkeypatch.setattr("maniac.cli.listing.compute_rows", finished_rows)
+
+    result = runner.invoke(app, ["list"])
+
+    assert result.exit_code == 0
+    assert len(live_options) == 1
+    assert live_options[0]["screen"] is True
+    assert live_options[0]["vertical_overflow"] == "crop"
+    final = output.getvalue()
+    assert final.count("Manpage Reachability") == 1
+    assert "checking…" not in final
+    assert final.index("alpha") < final.index("beta") < final.index("gamma")
+
+
+def test_cli_tall_streaming_error_leaves_no_incomplete_normal_screen_table(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    output = io.StringIO()
+    target_console = Console(
+        file=output, force_terminal=True, no_color=True, height=6, width=80
+    )
+    rows = [
+        ToolRow(name, name, "fake", ActionState.MISSING, PageSource.NONE, None)
+        for name in ("alpha", "beta", "gamma")
+    ]
+    stopped = 0
+
+    class FakeLive:
+        def __init__(self, renderable: object, **kwargs: object) -> None:
+            assert kwargs["screen"] is True
+
+        def start(self) -> None:
+            return None
+
+        def update(self, renderable: object, *, refresh: bool) -> None:
+            return None
+
+        def refresh(self) -> None:
+            return None
+
+        def stop(self) -> None:
+            nonlocal stopped
+            stopped += 1
+
+    class FakeReporter:
+        def __init__(self, target_console: Console) -> None:
+            return None
+
+        def on_phase_start(self, total: int) -> None:
+            return None
+
+        def on_scan(self) -> None:
+            return None
+
+        def stop(self) -> None:
+            return None
+
+    def failed_rows(*args: object, **kwargs: Any) -> list[ToolRow]:
+        kwargs["on_skeleton"](rows)
+        raise RuntimeError("probe failed")
+
+    monkeypatch.setattr(cli_module.console, "_instance", target_console)
+    monkeypatch.setattr(cli_module, "Config", lambda: _config(tmp_path))
+    monkeypatch.setattr("maniac.cli.listing.Live", FakeLive)
+    monkeypatch.setattr("maniac.cli.listing._ProgressReporter", FakeReporter)
+    monkeypatch.setattr("maniac.cli.listing.compute_rows", failed_rows)
+
+    result = runner.invoke(app, ["list"])
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, RuntimeError)
+    assert stopped == 1
+    assert output.getvalue() == ""
 
 
 def test_streaming_table_keeps_column_geometry_for_long_upstreams() -> None:

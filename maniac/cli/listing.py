@@ -704,13 +704,26 @@ class _StreamingList:
         self._pending: set[int] = set()
         self._rows: list[ToolRow] = []
         self._last_refresh = 0.0
+        self._alternate_screen = False
+
+    def _needs_alternate_screen(self, rows: list[ToolRow]) -> bool:
+        """Whether the complete fixed-row table cannot fit in this viewport."""
+        rich_console = getattr(self._console, "_instance", self._console)
+        table = _streaming_table(rows, set(range(len(rows))))
+        return (
+            len(rich_console.render_lines(table, rich_console.options))
+            > rich_console.size.height
+        )
 
     def skeleton(self, rows: list[ToolRow]) -> None:
         self._reporter.stop()
+        self._alternate_screen = self._needs_alternate_screen(rows)
         self._live = Live(
             _streaming_table(rows, set(range(len(rows)))),
             console=getattr(self._console, "_instance", self._console),
             auto_refresh=False,
+            screen=self._alternate_screen,
+            vertical_overflow="crop" if self._alternate_screen else "ellipsis",
         )
         self._live.start()
         self._rows = rows
@@ -740,11 +753,15 @@ class _StreamingList:
             self._live.refresh()
             self._last_refresh = monotonic()
 
-    def stop(self) -> None:
+    def stop(self, *, completed: bool = True) -> bool:
+        """Stop Live and say whether a completed table belongs on the normal screen."""
         if self._live is not None:
-            # Keep the completed table's binary rows in their original slots. `Live.stop`
-            # performs the one final repaint, so there is no separate grouped frame.
+            if not completed and not self._alternate_screen:
+                # Rich otherwise persists its final (and incomplete) frame on failure.
+                self._live.transient = True
             self._live.stop()
+            self._live = None
+        return completed and self._alternate_screen
 
 
 @app.command(name="list")
@@ -801,6 +818,8 @@ def list_tools(
         if reporter is not None:
             reporter.on_phase_start(total)
 
+    completed = False
+    normal_final = False
     try:
         rows = compute_rows(
             tools,
@@ -813,13 +832,18 @@ def list_tools(
             on_local_row=renderer.local if renderer else None,
             on_upstream_rows=renderer.upstream if renderer else None,
         )
+        completed = True
     finally:
         if renderer is not None:
-            renderer.stop()
+            normal_final = renderer.stop(completed=completed)
         if reporter is not None:
             reporter.stop()
     rows = _filter_rows(
         rows, outdated=outdated, available=available, missing=missing, managed=managed
     )
-    if not streaming:
+    if normal_final:
+        # Alt-screen Live deliberately disappears on success; leave one complete,
+        # fixed-row table in the normal scrollback instead.
+        console.print(_streaming_table(rows, set()))
+    elif not streaming:
         _render_list(console, rows, names=names)
