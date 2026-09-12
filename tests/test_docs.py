@@ -88,10 +88,14 @@ def test_documentation_source_redirects_only_the_exact_tmux_build_repository() -
         name="foo", target="owner/foo-builds", is_local=False
     )
 
-    assert documentation_source(tmux_distribution) == RepoSource(
+    mapping = Config().documentation_repository_overrides
+
+    assert documentation_source(tmux_distribution, mapping) == RepoSource(
         name="tmux", target="tmux/tmux", is_local=False
     )
-    assert documentation_source(unrelated_distribution) is unrelated_distribution
+    assert (
+        documentation_source(unrelated_distribution, mapping) is unrelated_distribution
+    )
 
 
 def test_fetch_and_extract_docs_includes_github_wiki(

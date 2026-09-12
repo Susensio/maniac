@@ -276,7 +276,11 @@ def _resolve_upstream(
     if provider is None or inst is None:
         return None
     source = provider.resolve_source(inst, config=config)
-    return documentation_source(source) if source is not None else None
+    return (
+        documentation_source(source, config.documentation_repository_overrides)
+        if source is not None
+        else None
+    )
 
 
 def _probe_upstream(source: RepoSource, inst: "Installation", cfg: Config) -> bool:

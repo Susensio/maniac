@@ -206,7 +206,7 @@ def _try_repository(
     source = provider.resolve_source(inst, config=cfg)
     if source is None:
         return None
-    source = documentation_source(source)
+    source = documentation_source(source, cfg.documentation_repository_overrides)
 
     pages = discover_repo_manpages(
         source, inst.binary, cache_dir=cache_dir_path, config=cfg, version=inst.version

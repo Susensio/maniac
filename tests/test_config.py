@@ -99,6 +99,21 @@ def test_config_provider_defaults_are_not_shared_between_instances() -> None:
     assert "test" not in second.provider_defaults
 
 
+def test_config_documentation_repository_overrides_are_not_shared_between_instances() -> (
+    None
+):
+    first = Config()
+    second = Config()
+
+    first.documentation_repository_overrides["owner/distribution"] = "owner/source"
+
+    assert (
+        first.documentation_repository_overrides
+        is not second.documentation_repository_overrides
+    )
+    assert "owner/distribution" not in second.documentation_repository_overrides
+
+
 def test_config_construction_does_not_import_litellm() -> None:
     script = textwrap.dedent(
         """

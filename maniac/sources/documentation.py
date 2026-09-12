@@ -1,18 +1,14 @@
 """Documentation-canonical repository identities."""
 
+from collections.abc import Mapping
 from dataclasses import replace
 
 from ..models import RepoSource
 
-# Distribution repositories can be release-only mirrors.  These exact, reviewed
-# identities keep documentation discovery tied to the project repository without
-# guessing from a repository or binary name.
-_DOCUMENTATION_REPOSITORY_OVERRIDES = {
-    "tmux/tmux-builds": "tmux/tmux",
-}
 
-
-def documentation_source(source: RepoSource) -> RepoSource:
-    """A copy of ``source`` redirected only when its docs repo is explicitly known."""
-    target = _DOCUMENTATION_REPOSITORY_OVERRIDES.get(source.target)
+def documentation_source(
+    source: RepoSource, documentation_repositories: Mapping[str, str]
+) -> RepoSource:
+    """Return ``source`` redirected only by an explicit documentation mapping."""
+    target = documentation_repositories.get(source.target)
     return replace(source, target=target) if target is not None else source

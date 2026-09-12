@@ -52,7 +52,7 @@ def _config_dir() -> Path:
 
 @cache
 def _load_defaults() -> dict[str, Any]:
-    """Read the packaged provider defaults, limits and timeouts."""
+    """Read the packaged application defaults."""
     text = (
         importlib.resources.files("maniac")
         .joinpath("defaults.toml")
@@ -236,6 +236,13 @@ class Config:
     provider_defaults: dict[str, str] = field(
         default_factory=lambda: dict(
             cast(dict[str, str], _load_defaults()["providers"])
+        ),
+        repr=False,
+        kw_only=True,
+    )
+    documentation_repository_overrides: dict[str, str] = field(
+        default_factory=lambda: dict(
+            cast(dict[str, str], _load_defaults()["documentation_repositories"])
         ),
         repr=False,
         kw_only=True,
