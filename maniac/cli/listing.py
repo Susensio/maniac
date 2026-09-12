@@ -23,9 +23,9 @@ axis and intersect across axes; no flags means no filtering. There is no
 `--ok`, deliberately (ADR-0018): it would select exactly the rows needing
 no action.
 
-Repository identity is resolved for every row per ADR-0018. Tier-2 manpage
-lookup is cache-first and runs only for unresolved rows with an installed
-version and an installation-derived repository.
+Repository identity is resolved for rows that remain locally unresolved per
+ADR-0018. Tier-2 manpage lookup is cache-first and runs only for unresolved
+rows with an installed version and an installation-derived repository.
 """
 
 from collections.abc import Callable, Mapping
@@ -353,7 +353,7 @@ def compute_rows(
     (`MISSING`, unless `man` or the manifest says otherwise) rather than
     nothing, per ADR-0013.
 
-    The four `on_*` callbacks, all `None` by default, are purely additive
+    The nine `on_*` callbacks, all `None` by default, are purely additive
     instrumentation for a caller with a console in scope (the CLI command);
     every other caller, including tests, omits them and sees no behaviour
     change. `on_discovery_*` passes straight through to

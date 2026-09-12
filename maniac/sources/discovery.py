@@ -237,11 +237,11 @@ def _resolve_from_mise(
     it detected, never a bare command-line name with no installation behind
     it (ADR-0015's ruling on Stage 2's gap).
 
-    `offline` skips `_query_mise_registry`, the one step here that can reach
-    the network (`_read_mise_registry_archive`'s `urlopen`, on a cache miss
-    or a stale TTL) -- `maniac list` (ADR-0018) sets it to keep that command
-    at zero network I/O; `install` leaves it at the default and may still
-    hit the network.
+    `offline=True` skips `_query_mise_registry`, the one step here that can
+    reach the network (`_read_mise_registry_archive`'s `urlopen`, on a cache
+    miss or a stale TTL). Filesystem configuration and backend resolution are
+    still attempted in either mode; callers that leave it false permit the
+    registry fallback and its cache refresh.
     """
     mise_cfg_dir = config.config_dir / "mise"
     if mise_cfg_dir.exists():
