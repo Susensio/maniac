@@ -513,6 +513,7 @@ def _discover_github_release_manpages_result(
         f"https://api.github.com/repos/{source.target}/releases/tags/{tag}",
         cache_dir,
         cfg,
+        max_age=_NEGATIVE_CACHE_TTL,
     )
     if metadata is None:
         return _ProbeResult([], metadata_definitive)
@@ -579,16 +580,29 @@ def _download_cached(url: str, cache_dir: Path, cfg: Config) -> bytes | None:
 
 
 def _download_cached_result(
-    url: str, cache_dir: Path, cfg: Config
+    url: str, cache_dir: Path, cfg: Config, max_age: int | None = None
 ) -> tuple[bytes | None, bool]:
-    """Return cached bytes alongside whether absence is definitive."""
+    """Return cached bytes alongside whether absence is definitive.
+
+    Release assets are immutable once named by a versioned URL.  GitHub's
+    release metadata can gain assets after publication, so callers may give
+    that response a short revalidation window.
+    """
     destination = cache_dir / "releases" / sha256(url.encode()).hexdigest()
     negative_path = _upstream_cache_path(cache_dir, "downloads", url)
+    freshness_path = _upstream_cache_path(cache_dir, "release-metadata", url)
     with _cache_lock(destination):
         try:
             if destination.stat().st_size <= _RELEASE_ARCHIVE_LIMIT:
-                return destination.read_bytes(), True
-            destination.unlink()
+                freshness = _read_json_cache(freshness_path)
+                created = freshness.get("created") if freshness is not None else None
+                if max_age is None or (
+                    isinstance(created, (int, float))
+                    and time.time() - created < max_age
+                ):
+                    return destination.read_bytes(), True
+            else:
+                destination.unlink()
         except OSError:
             pass
         negative = _read_json_cache(negative_path)
@@ -609,6 +623,8 @@ def _download_cached_result(
             temporary = Path(file.name)
             file.write(content)
         temporary.replace(destination)
+        if max_age is not None:
+            _write_json_cache(freshness_path, {"created": time.time()})
         return content, True
 
 

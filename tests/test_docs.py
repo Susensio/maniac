@@ -433,6 +433,48 @@ def test_expired_definitive_probe_miss_refreshes(
     assert calls == 2
 
 
+def test_release_metadata_revalidates_after_a_definitive_probe_miss_expires(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from maniac.sources import docs as docs_module
+
+    now = 1000.0
+    metadata_calls = 0
+
+    def download(url: str, cfg: object) -> bytes:
+        nonlocal metadata_calls
+        if url.startswith("https://api.github.com/"):
+            metadata_calls += 1
+            if metadata_calls == 1:
+                return b'{"assets": []}'
+            return (
+                b'{"assets": [{"name": "tool.1", '
+                b'"browser_download_url": "https://example.test/tool.1"}]}'
+            )
+        return b".TH TOOL 1\n"
+
+    monkeypatch.setattr(docs_module.time, "time", lambda: now)
+    monkeypatch.setattr(docs_module, "_find_matching_tag", lambda *args: "v1.2.3")
+    monkeypatch.setattr(
+        docs_module,
+        "_discover_remote_manpage_result",
+        lambda *args: docs_module._ProbeResult([], True),
+    )
+    monkeypatch.setattr(docs_module, "_download", download)
+    source = RepoSource(name="tool", target="owner/tool", is_local=False)
+
+    assert discover_repo_manpages(source, "tool", tmp_path, version="1.2.3") == []
+    now += docs_module._NEGATIVE_CACHE_TTL - 1
+    assert discover_repo_manpages(source, "tool", tmp_path, version="1.2.3") == []
+    assert metadata_calls == 1
+
+    now += 2
+    pages = discover_repo_manpages(source, "tool", tmp_path, version="1.2.3")
+
+    assert [page.name for page in pages] == ["tool.1"]
+    assert metadata_calls == 2
+
+
 def test_transient_probe_failure_is_not_cached(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
