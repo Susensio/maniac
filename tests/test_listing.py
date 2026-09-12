@@ -786,6 +786,26 @@ def test_streaming_list_crops_tall_live_frames_in_an_alternate_screen(
     assert all(height <= console.size.height for height in frames)
 
 
+def test_streaming_table_bounds_tall_live_rows_without_rendering_inventory() -> None:
+    rows = [
+        ToolRow(
+            f"tool-{index}",
+            f"tool-{index}",
+            "fake",
+            ActionState.MISSING,
+            PageSource.NONE,
+            None,
+        )
+        for index in range(1000)
+    ]
+
+    table = _streaming_table(rows, set(range(len(rows))), maximum_rows=10)
+
+    assert len(table.rows) == 11
+    assert str(table.columns[0]._cells[-1]) == "… 990 more tools"
+    assert str(table.columns[3]._cells[-1]) == "full table after completion"
+
+
 def test_cli_tall_streaming_prints_one_complete_table_after_alt_screen(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

@@ -633,12 +633,15 @@ def _list_table(rows: list[ToolRow]) -> Table:
     return table
 
 
-def _streaming_table(rows: list[ToolRow], pending: set[int]) -> Any:
-    """One fixed row per binary while local and upstream facts arrive."""
+def _streaming_table(
+    rows: list[ToolRow], pending: set[int], *, maximum_rows: int | None = None
+) -> Any:
+    """One fixed row per binary, or a fixed-height leading slice while it updates."""
     from rich.text import Text
 
     if not rows:
         return Text("No tools to report.", style="yellow")
+    visible_rows = rows if maximum_rows is None else rows[:maximum_rows]
     tool_width = max(len("Tool"), *(len(row.tool) for row in rows))
     table = Table(title="Manpage Reachability", expand=True)
     table.add_column(
@@ -657,7 +660,7 @@ def _streaming_table(rows: list[ToolRow], pending: set[int]) -> Any:
         overflow="ellipsis",
     )
     table.add_column("Upstream", ratio=1, no_wrap=True, overflow="ellipsis")
-    for index, row in enumerate(rows):
+    for index, row in enumerate(visible_rows):
         state = (
             "[dim]checking…[/dim]"
             if index in pending
@@ -666,6 +669,14 @@ def _streaming_table(rows: list[ToolRow], pending: set[int]) -> Any:
             )
         )
         table.add_row(row.tool, state, row.source.value, _upstream_cell(row.upstream))
+    hidden_rows = len(rows) - len(visible_rows)
+    if hidden_rows:
+        table.add_row(
+            Text(f"… {hidden_rows} more tools", style="dim"),
+            Text(""),
+            Text(""),
+            Text("full table after completion", style="dim"),
+        )
     return table
 
 
@@ -705,21 +716,25 @@ class _StreamingList:
         self._rows: list[ToolRow] = []
         self._last_refresh = 0.0
         self._alternate_screen = False
+        self._row_limit: int | None = None
 
-    def _needs_alternate_screen(self, rows: list[ToolRow]) -> bool:
-        """Whether the complete fixed-row table cannot fit in this viewport."""
+    def _live_row_limit(self, rows: list[ToolRow]) -> int | None:
+        """Leading data-row capacity, reserving one row for overflow when needed."""
         rich_console = getattr(self._console, "_instance", self._console)
-        table = _streaming_table(rows, set(range(len(rows))))
-        return (
-            len(rich_console.render_lines(table, rich_console.options))
-            > rich_console.size.height
-        )
+        # A one-line table row has five fixed lines: title, top border, header,
+        # header border, and bottom border. Avoid rendering the whole inventory
+        # just to learn that a tall table does not fit.
+        full_capacity = max(1, rich_console.size.height - 5)
+        if len(rows) <= full_capacity:
+            return None
+        return max(1, full_capacity - 1)
 
     def skeleton(self, rows: list[ToolRow]) -> None:
         self._reporter.stop()
-        self._alternate_screen = self._needs_alternate_screen(rows)
+        self._row_limit = self._live_row_limit(rows)
+        self._alternate_screen = self._row_limit is not None
         self._live = Live(
-            _streaming_table(rows, set(range(len(rows)))),
+            _streaming_table(rows, set(range(len(rows))), maximum_rows=self._row_limit),
             console=getattr(self._console, "_instance", self._console),
             auto_refresh=False,
             screen=self._alternate_screen,
@@ -746,7 +761,14 @@ class _StreamingList:
     def _publish(self) -> None:
         if self._live is None:
             return
-        self._live.update(_streaming_table(self._rows, self._pending), refresh=False)
+        self._live.update(
+            _streaming_table(
+                self._rows,
+                self._pending,
+                maximum_rows=self._row_limit,
+            ),
+            refresh=False,
+        )
         # Completion gets Rich's one refresh in `Live.stop`; refreshing here
         # would repaint the final frame twice in rapid succession.
         if self._pending and monotonic() - self._last_refresh >= 0.25:
