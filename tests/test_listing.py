@@ -633,7 +633,7 @@ def test_streaming_list_renders_checking_before_a_blocked_probe_finishes(
     )
     worker.start()
     assert probe_started.wait(timeout=2)
-    assert len(frames) >= 2
+    assert len(frames) >= 1
     Console(file=buf, force_terminal=True, no_color=True).print(frames[-1])
     initial = buf.getvalue()
     assert "checking…" in initial
@@ -643,7 +643,7 @@ def test_streaming_list_renders_checking_before_a_blocked_probe_finishes(
     worker.join(timeout=2)
     assert not worker.is_alive()
     assert result[0].state is ActionState.AVAILABLE
-    assert len(frames) >= 3
+    assert len(frames) >= 2
     final_buffer = io.StringIO()
     Console(file=final_buffer, force_terminal=True, no_color=True).print(frames[-1])
     final = final_buffer.getvalue()
@@ -738,6 +738,7 @@ def test_streaming_list_throttles_rapid_updates(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     refreshes = 0
+    updates = 0
 
     class FakeLive:
         def __init__(self, renderable: object, **kwargs: object) -> None:
@@ -747,7 +748,9 @@ def test_streaming_list_throttles_rapid_updates(
             self.refresh()
 
         def update(self, renderable: object, *, refresh: bool) -> None:
+            nonlocal updates
             assert not refresh
+            updates += 1
 
         def refresh(self) -> None:
             nonlocal refreshes
@@ -773,9 +776,57 @@ def test_streaming_list_throttles_rapid_updates(
     renderer.local(rows, 1, False)
     renderer.stop()
 
-    # Rich refreshes once at start and once at stop. The immediate callbacks
-    # are coalesced, including the final update immediately before stop.
+    # Rich refreshes once at start and once at stop. The callbacks coalesce
+    # into one final renderable update rather than building one per row.
     assert refreshes == 2
+    assert updates == 1
+
+
+def test_streaming_list_publishes_slow_updates_at_refresh_cadence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    refreshes = 0
+    updates = 0
+
+    class FakeLive:
+        def __init__(self, renderable: object, **kwargs: object) -> None:
+            return None
+
+        def start(self) -> None:
+            self.refresh()
+
+        def update(self, renderable: object, *, refresh: bool) -> None:
+            nonlocal updates
+            assert not refresh
+            updates += 1
+
+        def refresh(self) -> None:
+            nonlocal refreshes
+            refreshes += 1
+
+        def stop(self) -> None:
+            self.refresh()
+
+    class FakeReporter:
+        def stop(self) -> None:
+            return None
+
+    clock = iter((0.0, 0.3, 0.6))
+    monkeypatch.setattr("maniac.cli.listing.Live", FakeLive)
+    monkeypatch.setattr("maniac.cli.listing.monotonic", lambda: next(clock))
+    rows = [
+        ToolRow("first", "first", "fake", ActionState.MISSING, PageSource.NONE, None),
+        ToolRow("last", "last", "fake", ActionState.MISSING, PageSource.NONE, None),
+    ]
+    renderer = _StreamingList(Console(file=io.StringIO()), FakeReporter())
+
+    renderer.skeleton(rows)
+    renderer.local(rows, 0, True)
+    renderer.upstream(rows, {0, 1})
+    renderer.stop()
+
+    assert refreshes == 3
+    assert updates == 2
 
 
 def test_streaming_list_keeps_fixed_binary_rows_at_completion(

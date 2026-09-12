@@ -754,6 +754,7 @@ class _StreamingList:
         self._last_refresh = 0.0
         self._alternate_screen = False
         self._row_limit: int | None = None
+        self._dirty = False
 
     def _live_row_limit(self, rows: list[ToolRow]) -> int | None:
         """Leading data-row capacity, reserving one row for overflow when needed."""
@@ -780,6 +781,7 @@ class _StreamingList:
         self._live.start()
         self._rows = rows
         self._pending = set(range(len(rows)))
+        self._dirty = False
         # Rich renders the initial frame in `start`; defer the first callback
         # refresh so it cannot immediately repaint the same geometry.
         self._last_refresh = monotonic()
@@ -788,15 +790,20 @@ class _StreamingList:
         self._rows = rows
         if not upstream_pending:
             self._pending.discard(index)
-        self._publish()
+        self._dirty = True
+        self._publish(final=not self._pending)
 
     def upstream(self, rows: list[ToolRow], indexes: set[int]) -> None:
         self._rows = rows
         self._pending.difference_update(indexes)
-        self._publish()
+        self._dirty = True
+        self._publish(final=not self._pending)
 
-    def _publish(self) -> None:
-        if self._live is None:
+    def _publish(self, *, final: bool = False) -> None:
+        if self._live is None or not self._dirty:
+            return
+        now = monotonic()
+        if not final and now - self._last_refresh < 0.25:
             return
         self._live.update(
             _streaming_table(
@@ -806,15 +813,18 @@ class _StreamingList:
             ),
             refresh=False,
         )
+        self._dirty = False
         # Completion gets Rich's one refresh in `Live.stop`; refreshing here
         # would repaint the final frame twice in rapid succession.
-        if self._pending and monotonic() - self._last_refresh >= 0.25:
+        if not final:
             self._live.refresh()
-            self._last_refresh = monotonic()
+            self._last_refresh = now
 
     def stop(self, *, completed: bool = True) -> bool:
         """Stop Live and say whether a completed table belongs on the normal screen."""
         if self._live is not None:
+            if completed:
+                self._publish(final=True)
             if not completed and not self._alternate_screen:
                 # Rich otherwise persists its final (and incomplete) frame on failure.
                 self._live.transient = True
