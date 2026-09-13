@@ -1,6 +1,14 @@
 # Implementation State
 
-Implementation in flight: convert MANIAC-managed manpath copies, including existing manifest entries, into durable and safely uninstallable symbolic links under ADR-0028; reduce the listing and release-discovery control-flow complexity without changing behaviour; and remove the `sources.discovery`/`sources.providers` dependency cycle while preserving registration order, `$PATH` precedence, and direct-route filtering.
+No implementation is currently in flight.
+
+ADR-0028 changed every new managed manpath entry into a manifest-tracked symbolic link.
+Generated, repository, and currently unqualified vendor pages materialize durably under MANIAC data storage rather than linking into the disposable cache or a versioned provider root.
+Uninstall preserves replaced, retargeted, and dangling entries, and legacy checksum-matching copies migrate on manifest load.
+The live migration converted the two existing managed pages, `aichat.1` and `ty.1`, to durable links.
+
+`cli.listing.compute_rows` and GitHub release-manpage discovery are now decomposed at their actual coordination boundaries with their observed rendering, callback, ordering, deduplication, and release-validation behavior intact.
+Provider registration and enumeration live in a resolution coordinator without a `discovery`/`providers` cycle.
 
 The default unfiltered TTY view now completes provider enumeration, builds one alphabetically stable per-binary table with every Tool cell populated, then fills State, Source, and Upstream progressively without changing the table shape.
 When that table is taller than the terminal, asynchronous rendering is cropped to an alternate-screen viewport and the complete final table is printed once after returning to the normal screen.
