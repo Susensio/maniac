@@ -1,6 +1,6 @@
 # Implementation State
 
-No implementation is currently in flight.
+Implementation in flight: convert MANIAC-managed manpath copies, including existing manifest entries, into durable and safely uninstallable symbolic links under ADR-0028; reduce the listing and release-discovery control-flow complexity without changing behaviour; and remove the `sources.discovery`/`sources.providers` dependency cycle while preserving registration order, `$PATH` precedence, and direct-route filtering.
 
 The default unfiltered TTY view now completes provider enumeration, builds one alphabetically stable per-binary table with every Tool cell populated, then fills State, Source, and Upstream progressively without changing the table shape.
 When that table is taller than the terminal, asynchronous rendering is cropped to an alternate-screen viewport and the complete final table is printed once after returning to the normal screen.
