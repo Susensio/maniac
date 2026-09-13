@@ -378,6 +378,119 @@ def _probe_key(source: RepoSource, inst: "Installation") -> tuple[str, str, str]
     return (source.clone_url or source.target, inst.version or "", inst.binary)
 
 
+def _build_inventory(
+    tools: list[str] | None,
+    on_discovery_start: Callable[[int], None] | None,
+    on_discovery_scan: Callable[[], None] | None,
+) -> tuple[list[tuple["Provider | None", "Installation | None", str]], bool]:
+    """Return requested or discovered candidates and whether discovery ran."""
+    if tools:
+        candidates = []
+        for tool in dict.fromkeys(tools):
+            # No `discovery.discover_repo(tool)` fallback when `found` is
+            # None: it shares `find_installation`'s own bin-path resolution.
+            found = discovery.find_installation(tool)
+            provider, inst = found if found else (None, None)
+            candidates.append((provider, inst, tool))
+        return candidates, False
+
+    discovered = sorted(
+        discovery.enumerate_installations(
+            on_start=on_discovery_start,
+            on_scan=on_discovery_scan,
+        ),
+        key=lambda item: item[1].binary,
+    )
+    return [(provider, inst, inst.binary) for provider, inst in discovered], True
+
+
+def _initial_rows(
+    candidates: list[tuple["Provider | None", "Installation | None", str]],
+) -> list[ToolRow]:
+    """Build the stable row skeleton before local classification begins."""
+    return [
+        ToolRow(
+            tool=tool,
+            package=inst.package if inst is not None else tool,
+            provider=provider.name if provider is not None else "",
+            state=ActionState.MISSING,
+            source=PageSource.NONE,
+            upstream=None,
+        )
+        for provider, inst, tool in candidates
+    ]
+
+
+def _row_from_local_classification(
+    candidate: tuple["Provider | None", "Installation | None", str],
+    classified: _LocalClassification,
+    upstream: RepoSource | None,
+) -> ToolRow:
+    """Apply local classification and repository identity to one skeleton row."""
+    provider, inst, tool = candidate
+    return ToolRow(
+        tool=tool,
+        package=inst.package if inst is not None else tool,
+        provider=provider.name if provider is not None else "",
+        state=classified.state,
+        source=classified.source,
+        upstream=upstream,
+        managed=classified.managed,
+        page_path=classified.page_path,
+        page_uri=classified.page_uri,
+    )
+
+
+def _with_probe_result(row: ToolRow, page: tuple[Path, str | None] | None) -> ToolRow:
+    """Apply one completed upstream page to an eligible row."""
+    if page is None:
+        return row
+    path, uri = page
+    if row.state is ActionState.MISSING and row.source is PageSource.NONE:
+        return replace(
+            row,
+            state=ActionState.AVAILABLE,
+            source=PageSource.UPSTREAM,
+            page_path=path,
+            page_uri=uri,
+        )
+    if row.source is PageSource.UPSTREAM:
+        return replace(row, page_uri=uri)
+    return row
+
+
+def _apply_probe_result(
+    rows: list[ToolRow],
+    indexes: list[int],
+    page: tuple[Path, str | None] | None,
+    on_row_scan: Callable[[], None] | None,
+    on_upstream_rows: Callable[[list[ToolRow], set[int]], None] | None,
+) -> None:
+    """Publish a completed deduplicated probe group atomically."""
+    for index in indexes:
+        rows[index] = _with_probe_result(rows[index], page)
+    if on_row_scan is not None:
+        for _ in indexes:
+            on_row_scan()
+    if on_upstream_rows is not None:
+        on_upstream_rows(rows.copy(), set(indexes))
+
+
+def _schedule_local_classifications(
+    executor: ThreadPoolExecutor,
+    candidates: list[tuple["Provider | None", "Installation | None", str]],
+    cfg: Config,
+    entries: Mapping[str, manifest.Entry],
+) -> dict[Future[tuple[_LocalClassification, RepoSource | None]], int]:
+    """Submit every independent local classification to the bounded pool."""
+    return {
+        executor.submit(
+            _classify_and_resolve, provider, inst, tool, cfg, entries
+        ): index
+        for index, (provider, inst, tool) in enumerate(candidates)
+    }
+
+
 def compute_rows(
     tools: list[str] | None = None,
     config: Config | None = None,
@@ -427,40 +540,11 @@ def compute_rows(
     # accidentally changing the single read snapshot while it classifies.
     entries = MappingProxyType(manifest.load(cfg))
 
-    if tools:
-        unique_tools = list(dict.fromkeys(tools))
-        candidates: list[tuple[Provider | None, Installation | None, str]] = []
-        for tool in unique_tools:
-            # No `discovery.discover_repo(tool)` fallback when `found` is
-            # None: it shares `find_installation`'s own bin-path resolution.
-            found = discovery.find_installation(tool)
-            provider, inst = found if found else (None, None)
-            candidates.append((provider, inst, tool))
-    else:
-        enumerate_kwargs: dict[str, Any] = {
-            "on_start": on_discovery_start,
-            "on_scan": on_discovery_scan,
-        }
-        # `enumerate_installations` sorts today, but live row identity must
-        # not depend on that implementation detail.
-        discovered = sorted(
-            discovery.enumerate_installations(**enumerate_kwargs),
-            key=lambda item: item[1].binary,
-        )
-        candidates = [(provider, inst, inst.binary) for provider, inst in discovered]
-
-    rows = [
-        ToolRow(
-            tool=tool,
-            package=inst.package if inst is not None else tool,
-            provider=provider.name if provider is not None else "",
-            state=ActionState.MISSING,
-            source=PageSource.NONE,
-            upstream=None,
-        )
-        for provider, inst, tool in candidates
-    ]
-    if not tools and on_skeleton is not None:
+    candidates, discovered = _build_inventory(
+        tools, on_discovery_start, on_discovery_scan
+    )
+    rows = _initial_rows(candidates)
+    if discovered and on_skeleton is not None:
         on_skeleton(rows.copy())
     if on_row_start is not None:
         on_row_start(len(rows))
@@ -470,7 +554,6 @@ def compute_rows(
     # local `man -w`, but cannot change this snapshot.
     local_rows = rows.copy()
     local_pending: dict[Future[tuple[_LocalClassification, RepoSource | None]], int]
-    local_pending = {}
     probe_pending: dict[
         Future[tuple[Path, str | None] | None], tuple[str, str, str]
     ] = {}
@@ -480,56 +563,13 @@ def compute_rows(
     local_eligible: set[int] = set()
     initial_sent = False
 
-    def with_probe_result(
-        row: ToolRow, page: tuple[Path, str | None] | None
-    ) -> ToolRow:
-        if page is None:
-            return row
-        path, uri = page
-        if row.state is ActionState.MISSING and row.source is PageSource.NONE:
-            return replace(
-                row,
-                state=ActionState.AVAILABLE,
-                source=PageSource.UPSTREAM,
-                page_path=path,
-                page_uri=uri,
-            )
-        if row.source is PageSource.UPSTREAM:
-            return replace(row, page_uri=uri)
-        return row
-
-    def apply_probe(
-        key: tuple[str, str, str], page: tuple[Path, str | None] | None
-    ) -> None:
-        indexes = probe_indexes[key]
-        for index in indexes:
-            rows[index] = with_probe_result(rows[index], page)
-        if on_row_scan is not None:
-            for _ in indexes:
-                on_row_scan()
-        if on_upstream_rows is not None:
-            # Every known sibling gets its shared result before a renderer sees
-            # a snapshot. The coordinator owns both mutation and callbacks.
-            on_upstream_rows(rows.copy(), set(indexes))
-
-    def apply_completed_probe(index: int, page: tuple[Path, str | None] | None) -> None:
-        """Apply a completed group to one sibling classified later."""
-        rows[index] = with_probe_result(rows[index], page)
-        if on_row_scan is not None:
-            on_row_scan()
-        if on_upstream_rows is not None:
-            on_upstream_rows(rows.copy(), {index})
-
     with (
         ThreadPoolExecutor(max_workers=LOCAL_CLASSIFY_WORKERS) as local_executor,
         ThreadPoolExecutor(max_workers=UPSTREAM_PROBE_WORKERS) as probe_executor,
     ):
-        for index, (provider, inst, tool) in enumerate(candidates):
-            local_pending[
-                local_executor.submit(
-                    _classify_and_resolve, provider, inst, tool, cfg, entries
-                )
-            ] = index
+        local_pending = _schedule_local_classifications(
+            local_executor, candidates, cfg, entries
+        )
 
         while local_pending or probe_pending:
             done, _ = wait(
@@ -550,17 +590,9 @@ def compute_rows(
             ):
                 index = local_pending.pop(future)
                 classified, upstream = future.result()
-                provider, inst, tool = candidates[index]
-                row = ToolRow(
-                    tool=tool,
-                    package=inst.package if inst is not None else tool,
-                    provider=provider.name if provider is not None else "",
-                    state=classified.state,
-                    source=classified.source,
-                    upstream=upstream,
-                    managed=classified.managed,
-                    page_path=classified.page_path,
-                    page_uri=classified.page_uri,
+                _, inst, _ = candidates[index]
+                row = _row_from_local_classification(
+                    candidates[index], classified, upstream
                 )
                 rows[index] = row
                 local_rows[index] = row
@@ -572,7 +604,13 @@ def compute_rows(
                     probe_indexes.setdefault(key, []).append(index)
                     local_eligible.add(index)
                     if key in probe_results:
-                        apply_completed_probe(index, probe_results[key])
+                        _apply_probe_result(
+                            rows,
+                            [index],
+                            probe_results[key],
+                            on_row_scan,
+                            on_upstream_rows,
+                        )
                         pending_probe = False
                     elif key not in active_probe_keys:
                         active_probe_keys.add(key)
@@ -598,7 +636,9 @@ def compute_rows(
                 key = probe_pending.pop(future)
                 page = future.result()
                 probe_results[key] = page
-                apply_probe(key, page)
+                _apply_probe_result(
+                    rows, probe_indexes[key], page, on_row_scan, on_upstream_rows
+                )
 
     return rows
 

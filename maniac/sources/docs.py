@@ -540,22 +540,53 @@ def _discover_github_release_manpages_result(
     tag: str | None = None,
 ) -> _ProbeResult:
     """Probe GitHub release assets and retain whether the response was complete."""
+    tag_result = _release_tag(source, cache_dir, cfg, version, tag)
+    if isinstance(tag_result, _ProbeResult):
+        return tag_result
+    assets_result = _release_assets(source, cache_dir, cfg, tag_result)
+    if isinstance(assets_result, _ProbeResult):
+        return assets_result
+
+    definitive = True
+    for asset in assets_result:
+        result = _fetch_and_materialize_release_asset(
+            asset, source, binary_name, cache_dir, cfg, tag_result
+        )
+        if result.pages:
+            return result
+        definitive = definitive and result.definitive
+    return _ProbeResult([], definitive)
+
+
+def _release_tag(
+    source: RepoSource,
+    cache_dir: Path,
+    cfg: Config,
+    version: str | None,
+    tag: str | None,
+) -> str | _ProbeResult:
+    """Validate the GitHub source and resolve its version-matched release tag."""
     if version is None or source.target.count("/") != 1:
         return _ProbeResult([], True)
     clone_url = source.clone_url
     if clone_url is None:
         return _ProbeResult([], False)
-    tag = tag or _find_matching_tag_cached(cache_dir, clone_url, version, cfg)
-    if tag is None:
-        return _ProbeResult([], True)
-    metadata, metadata_definitive = _download_cached_result(
+    resolved_tag = tag or _find_matching_tag_cached(cache_dir, clone_url, version, cfg)
+    return resolved_tag if resolved_tag is not None else _ProbeResult([], True)
+
+
+def _release_assets(
+    source: RepoSource, cache_dir: Path, cfg: Config, tag: str
+) -> list[object] | _ProbeResult:
+    """Fetch and validate GitHub release metadata before inspecting assets."""
+    metadata, definitive = _download_cached_result(
         f"https://api.github.com/repos/{source.target}/releases/tags/{tag}",
         cache_dir,
         cfg,
         max_age=_NEGATIVE_CACHE_TTL,
     )
     if metadata is None:
-        return _ProbeResult([], metadata_definitive)
+        return _ProbeResult([], definitive)
     try:
         document = json.loads(metadata)
     except (UnicodeDecodeError, json.JSONDecodeError):
@@ -563,57 +594,52 @@ def _discover_github_release_manpages_result(
     if not isinstance(document, dict):
         return _ProbeResult([], False)
     assets = document.get("assets", [])
-    if not isinstance(assets, list):
+    return assets if isinstance(assets, list) else _ProbeResult([], False)
+
+
+def _fetch_and_materialize_release_asset(
+    asset: object,
+    source: RepoSource,
+    binary_name: str,
+    cache_dir: Path,
+    cfg: Config,
+    tag: str,
+) -> _ProbeResult:
+    """Validate one asset, fetch eligible bytes, then materialize matching pages."""
+    if not isinstance(asset, dict):
         return _ProbeResult([], False)
-    definitive = True
-    for asset in assets:
-        if not isinstance(asset, dict) or not isinstance(
-            asset.get("browser_download_url"), str
-        ):
-            definitive = False
-            continue
-        name = asset.get("name")
-        if not isinstance(name, str):
-            definitive = False
-            continue
-        direct = any(_matching_manpage_paths([name], binary_name))
-        archive_candidate = _is_release_archive(name) and (
-            _MAN_ASSET_TOKEN.search(name) is not None
-            or (
-                isinstance(asset.get("size"), int)
-                and asset["size"] <= _RELEASE_ARCHIVE_CANDIDATE_LIMIT
-            )
+    url = asset.get("browser_download_url")
+    name = asset.get("name")
+    if not isinstance(url, str) or not isinstance(name, str):
+        return _ProbeResult([], False)
+    direct = any(_matching_manpage_paths([name], binary_name))
+    archive_candidate = _is_release_archive(name) and (
+        _MAN_ASSET_TOKEN.search(name) is not None
+        or (
+            isinstance(asset.get("size"), int)
+            and asset["size"] <= _RELEASE_ARCHIVE_CANDIDATE_LIMIT
         )
-        if not direct and not archive_candidate:
-            continue
-        content, asset_definitive = _download_cached_result(
-            asset["browser_download_url"], cache_dir, cfg
+    )
+    if not direct and not archive_candidate:
+        return _ProbeResult([], True)
+    content, definitive = _download_cached_result(url, cache_dir, cfg)
+    if content is None:
+        return _ProbeResult([], definitive)
+    if direct:
+        page = _materialize_page(cache_dir, source, tag, name, content)
+        _record_page_uri(page, url)
+        return (
+            _ProbeResult([page], True)
+            if _valid_page(page, binary_name)
+            else _ProbeResult([], False)
         )
-        if content is None:
-            definitive = definitive and asset_definitive
-            continue
-        if direct:
-            page = _materialize_page(cache_dir, source, tag, name, content)
-            _record_page_uri(page, asset["browser_download_url"])
-            if _valid_page(page, binary_name):
-                return _ProbeResult([page], True)
-            definitive = False
-            continue
-        try:
-            pages = _manpages_from_release_archive(
-                content,
-                source,
-                binary_name,
-                cache_dir,
-                tag,
-                asset["browser_download_url"],
-            )
-        except (OSError, tarfile.TarError):
-            definitive = False
-            continue
-        if pages:
-            return _ProbeResult(pages, True)
-    return _ProbeResult([], definitive)
+    try:
+        pages = _manpages_from_release_archive(
+            content, source, binary_name, cache_dir, tag, url
+        )
+    except (OSError, tarfile.TarError):
+        return _ProbeResult([], False)
+    return _ProbeResult(pages, True)
 
 
 def _is_release_archive(name: str) -> bool:
