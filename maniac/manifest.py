@@ -1,9 +1,8 @@
-"""Track which pages MANIAC installed (ADR-0017).
+"""Track which pages MANIAC installed (ADR-0017, ADR-0028).
 
 The manifest, not a page's own bytes, is what `install`, `uninstall` and
-`status` consult to decide ownership. Tier 1 and tier 2 pages are copied
-verbatim and carry no marker of their own; a provenance header stays on
-tier-3 pages as informational metadata but is never read for this decision.
+`status` consult to decide ownership.  Its recorded target establishes the
+expected manpath link; a provenance header on tier-3 pages is informational.
 """
 
 import hashlib
@@ -15,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from .config import Config
+from .logging import logger
 
 # Unbumped for the `version` field (ADR-0018): a mismatch here empties the
 # whole manifest on load, and an absent `version` already reads None on its
@@ -39,13 +39,16 @@ class Entry:
     up before overwriting, under `Config.backup_dir` -- or None when install
     found the destination empty and took no backup, distinct from "unknown".
     `checksum` is the sha256 hex digest taken from the source file before
-    the copy that installed it -- `shutil.copy2` is byte-identical, so it
-    is also the installed file's digest.
+    the durable target that installed it -- materialization is byte-identical,
+    so it is also the target's digest.
     `version` is the tool version the page documents, None where nothing
     was known to record -- including every entry written before this field
     existed (ADR-0018).
     `source_uri` is the exact upstream file or release asset URI for a
     repository-tier page; older entries and other tiers leave it None.
+    `target` is the expected target of the owned manpath symlink.  It is
+    absent only on entries written before ADR-0028 that migration could not
+    safely convert.
     """
 
     path: Path
@@ -55,6 +58,7 @@ class Entry:
     backup: Path | None = None
     version: str | None = None
     source_uri: str | None = None
+    target: Path | None = None
 
 
 def checksum_of(path: str | Path) -> str:
@@ -79,6 +83,7 @@ def _entry_to_row(entry: Entry) -> dict[str, Any]:
         "backup": str(entry.backup) if entry.backup is not None else None,
         "version": entry.version,
         "source_uri": entry.source_uri,
+        "target": str(entry.target) if entry.target is not None else None,
     }
 
 
@@ -93,6 +98,7 @@ def _row_to_entry(row: Any) -> Entry | None:
     try:
         backup = row["backup"]
         raw_source_uri = row.get("source_uri")
+        raw_target = row.get("target")
         source_uri = (
             raw_source_uri
             if isinstance(raw_source_uri, str)
@@ -109,6 +115,7 @@ def _row_to_entry(row: Any) -> Entry | None:
             # existed (ADR-0018), and that must read as None, not fail to parse.
             version=row.get("version"),
             source_uri=source_uri,
+            target=Path(raw_target) if isinstance(raw_target, str) else None,
         )
     except (KeyError, TypeError, ValueError):
         return None
@@ -203,7 +210,56 @@ def load(config: Config | None = None) -> dict[str, Entry]:
         entry = _row_to_entry(row)
         if entry is not None:
             entries[tool] = entry
+    if _migrate_links(entries, config):
+        _save(path, entries)
     return entries
+
+
+def _migrate_links(entries: dict[str, Entry], config: Config | None) -> bool:
+    """Convert safely recoverable pre-ADR-0028 copies into owned links.
+
+    The installed copy is the only trustworthy bytes source for an older
+    entry.  It is materialized under MANIAC's durable output directory before
+    replacing the manpath path.  A changed, missing, or pre-existing-link
+    entry is deliberately retained: guessing at its provenance could destroy
+    a usable user page.
+    """
+    cfg = config or Config()
+    migrated = False
+    for tool, entry in entries.items():
+        if entry.target is not None:
+            continue
+        path = entry.path
+        if path.is_symlink() or not path.is_file():
+            logger.warning(
+                "Retained unsafe legacy manpage entry", tool=tool, path=str(path)
+            )
+            continue
+        try:
+            if checksum_of(path) != entry.checksum:
+                logger.warning(
+                    "Retained changed legacy manpage entry", tool=tool, path=str(path)
+                )
+                continue
+            target = cfg.output_dir / path.name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            temporary_target = target.with_name(f".{target.name}.tmp")
+            shutil.copy2(path, temporary_target)
+            temporary_target.replace(target)
+            temporary_link = path.with_name(f".{path.name}.maniac.tmp")
+            temporary_link.symlink_to(target)
+            temporary_link.replace(path)
+        except OSError as error:
+            logger.warning(
+                "Retained legacy manpage entry after migration failure",
+                tool=tool,
+                path=str(path),
+                error=str(error),
+            )
+            continue
+        entries[tool] = replace(entry, target=target)
+        migrated = True
+    return migrated
 
 
 def _save(path: Path, entries: dict[str, Entry]) -> None:
@@ -230,8 +286,9 @@ def record(
     *,
     version: str | None = None,
     source_uri: str | None = None,
+    target: Path | None = None,
 ) -> None:
-    """Record `tool`'s installed page. Called before the copy that places it, per ADR-0017."""
+    """Record `tool`'s installed page and its expected manpath-link target."""
     manifest_path = _manifest_path(config)
     entries = load(config)
     entries[tool] = Entry(
@@ -242,6 +299,7 @@ def record(
         backup=backup,
         version=version,
         source_uri=source_uri,
+        target=target,
     )
     _save(manifest_path, entries)
 

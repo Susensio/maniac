@@ -14,6 +14,13 @@ from maniac.installer import (
 from maniac.manifest import Tier
 
 
+@pytest.fixture(autouse=True)
+def _isolated_xdg_paths(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep default Config instances away from a developer's MANIAC state."""
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg-data"))
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "xdg-state"))
+
+
 def test_read_provenance_header(tmp_path: Path) -> None:
     f = tmp_path / "mytool.1"
     header = build_provenance_header(tool_name="mytool", model="Gemini 3.7 Flash")
@@ -48,6 +55,57 @@ def test_install_manpage_clean(tmp_path: Path) -> None:
     assert entry.path == installed
     assert entry.tier is Tier.INSTALL_ROOT
     assert entry.source == str(src_file.parent)
+
+
+def test_install_materializes_source_before_linking(tmp_path: Path) -> None:
+    source = tmp_path / "cache" / "tool.1"
+    source.parent.mkdir()
+    source.write_text(".TH TOOL 1 repository", encoding="utf-8")
+    cfg = Config(
+        man_dir=tmp_path / "man1",
+        output_dir=tmp_path / "durable",
+        manifest_path=tmp_path / "state" / "installed.json",
+    )
+
+    installed = install_manpage(
+        source, "tool", Tier.REPOSITORY, "owner/tool", config=cfg
+    )
+
+    entry = manifest_module.lookup("tool", config=cfg)
+    assert entry is not None and entry.target == cfg.output_dir / "tool.1"
+    assert installed.is_symlink()
+    assert installed.resolve() == entry.target
+    assert entry.target.read_text(encoding="utf-8") == source.read_text(
+        encoding="utf-8"
+    )
+    assert not entry.target.is_relative_to(source.parent)
+
+
+def test_install_root_direct_link_requires_explicit_durable_source(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "provider" / "tool.1"
+    source.parent.mkdir()
+    source.write_text(".TH TOOL 1 vendor", encoding="utf-8")
+    cfg = Config(
+        man_dir=tmp_path / "man1",
+        output_dir=tmp_path / "durable",
+        manifest_path=tmp_path / "state" / "installed.json",
+    )
+
+    installed = install_manpage(
+        source,
+        "tool",
+        Tier.INSTALL_ROOT,
+        str(source.parent),
+        durable_source=True,
+        config=cfg,
+    )
+
+    entry = manifest_module.lookup("tool", config=cfg)
+    assert entry is not None and entry.target == source.absolute()
+    assert installed.resolve() == source
+    assert not cfg.output_dir.exists()
 
 
 def test_install_manpage_maniac_overwrite(tmp_path: Path) -> None:
@@ -485,15 +543,14 @@ def test_uninstall_manpage_force_overrides_checksum_mismatch(tmp_path: Path) -> 
     man_dir.mkdir(parents=True)
 
     installed_file = man_dir / "tool.1"
-    installed_file.write_text(".TH TOOL 1 original", encoding="utf-8")
-    recorded_checksum = manifest_module.checksum_of(installed_file)
-
     cfg = Config(man_dir=man_dir, output_dir=tmp_path / "data_manpages")
-    manifest_module.record(
-        "tool", installed_file, Tier.SYNTHESIS, "model", recorded_checksum, config=cfg
-    )
-
-    installed_file.write_text(".TH TOOL 1 edited by something else", encoding="utf-8")
+    source = tmp_path / "source" / "tool.1"
+    source.parent.mkdir()
+    source.write_text(".TH TOOL 1 original", encoding="utf-8")
+    install_manpage(source, "tool", Tier.SYNTHESIS, "model", config=cfg)
+    entry = manifest_module.lookup("tool", config=cfg)
+    assert entry is not None and entry.target is not None
+    entry.target.write_text(".TH TOOL 1 edited by something else", encoding="utf-8")
 
     result = uninstall_manpage("tool", purge=False, force=True, config=cfg)
 
@@ -502,6 +559,87 @@ def test_uninstall_manpage_force_overrides_checksum_mismatch(tmp_path: Path) -> 
     assert installed_file in result.removed
     assert not installed_file.exists()
     assert manifest_module.lookup("tool", config=cfg) is None
+
+
+def test_uninstall_preserves_retargeted_link_and_backup(tmp_path: Path) -> None:
+    source = tmp_path / "source" / "tool.1"
+    source.parent.mkdir()
+    source.write_text(".TH TOOL 1 maniac", encoding="utf-8")
+    backup = tmp_path / "backups" / "tool.1"
+    backup.parent.mkdir()
+    backup.write_text(".TH TOOL 1 vendor", encoding="utf-8")
+    cfg = Config(
+        man_dir=tmp_path / "man1",
+        output_dir=tmp_path / "durable",
+        backup_dir=backup.parent,
+        manifest_path=tmp_path / "state" / "installed.json",
+    )
+    installed = install_manpage(source, "tool", Tier.SYNTHESIS, "model", config=cfg)
+    entry = manifest_module.lookup("tool", config=cfg)
+    assert entry is not None and entry.target is not None
+    manifest_module.record(
+        "tool",
+        installed,
+        entry.tier,
+        entry.source,
+        entry.checksum,
+        backup=backup,
+        target=entry.target,
+        config=cfg,
+    )
+    replacement = tmp_path / "replacement.1"
+    replacement.write_text(".TH TOOL 1 user", encoding="utf-8")
+    installed.unlink()
+    installed.symlink_to(replacement)
+
+    result = uninstall_manpage("tool", config=cfg)
+
+    assert result.modified_kept == installed
+    assert installed.resolve() == replacement
+    assert backup.exists()
+    assert manifest_module.lookup("tool", config=cfg) is not None
+
+
+def test_uninstall_preserves_replaced_link(tmp_path: Path) -> None:
+    source = tmp_path / "source" / "tool.1"
+    source.parent.mkdir()
+    source.write_text(".TH TOOL 1 maniac", encoding="utf-8")
+    cfg = Config(
+        man_dir=tmp_path / "man1",
+        output_dir=tmp_path / "durable",
+        manifest_path=tmp_path / "state" / "installed.json",
+    )
+    installed = install_manpage(source, "tool", Tier.SYNTHESIS, "model", config=cfg)
+    installed.unlink()
+    installed.write_text(".TH TOOL 1 user replacement", encoding="utf-8")
+
+    result = uninstall_manpage("tool", config=cfg)
+
+    assert result.modified_kept == installed
+    assert installed.read_text(encoding="utf-8") == ".TH TOOL 1 user replacement"
+    assert manifest_module.lookup("tool", config=cfg) is not None
+
+
+def test_uninstall_preserves_dangling_owned_link(tmp_path: Path) -> None:
+    source = tmp_path / "source" / "tool.1"
+    source.parent.mkdir()
+    source.write_text(".TH TOOL 1 maniac", encoding="utf-8")
+    cfg = Config(
+        man_dir=tmp_path / "man1",
+        output_dir=tmp_path / "durable",
+        manifest_path=tmp_path / "state" / "installed.json",
+    )
+    installed = install_manpage(source, "tool", Tier.SYNTHESIS, "model", config=cfg)
+    entry = manifest_module.lookup("tool", config=cfg)
+    assert entry is not None and entry.target is not None
+    entry.target.unlink()
+
+    result = uninstall_manpage("tool", config=cfg)
+
+    assert result.modified_kept == installed
+    assert installed.is_symlink()
+    assert not installed.exists()
+    assert manifest_module.lookup("tool", config=cfg) is not None
 
 
 def test_uninstall_manpage_vanished_entry_is_forgotten(tmp_path: Path) -> None:

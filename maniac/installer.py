@@ -56,9 +56,10 @@ def install_manpage(
     *,
     version: str | None = None,
     source_uri: str | None = None,
+    durable_source: bool = False,
     config: Config | None = None,
 ) -> Path:
-    """Copy compiled roff manpage into man directory with conflict guard and backup.
+    """Link a manpath entry to a durable page with conflict guard and backup.
 
     Ownership of an occupying page is decided by the manifest (ADR-0017),
     never by its bytes: `tool`'s existing entry pointing at this exact
@@ -68,6 +69,8 @@ def install_manpage(
     non-manpage file has no business in a directory `man`/`mandb` scan.
     """
     src = Path(source_file)
+    if durable_source and tier is not Tier.INSTALL_ROOT:
+        raise ValueError("Only install-root pages may link directly to their source")
     checksum = manifest.checksum_of(src)
     cfg = config or Config()
     dest_dir = Path(target_dir).expanduser() if target_dir else cfg.man_dir
@@ -77,9 +80,9 @@ def install_manpage(
 
     backup_path: Path | None = None
     previous_entry: Entry | None = None
-    if dest_file.exists():
+    if _path_exists(dest_file):
         existing = manifest.lookup(tool, config=cfg)
-        owned = existing is not None and existing.path == dest_file
+        owned = existing is not None and _is_expected_link(existing)
         if owned:
             # Reinstalling over our own page: carry the prior backup forward
             # rather than dropping it, or a vendor page backed up on an
@@ -101,22 +104,11 @@ def install_manpage(
                 "Created backup of foreign manpage", backup_file=str(backup_path)
             )
 
-    # Recorded before the copy: a crash between the two leaves a manifest
-    # entry with no file, which `status` can detect, rather than a file on
-    # disk that nothing can ever attribute (ADR-0017).
-    manifest.record(
-        tool,
-        dest_file,
-        tier,
-        source,
-        checksum,
-        backup=backup_path,
-        version=version,
-        source_uri=source_uri,
-        config=cfg,
-    )
     try:
-        shutil.copy2(src, dest_file)
+        target = _durable_target(src, cfg, durable_source=durable_source)
+        temporary_link = dest_file.with_name(f".{dest_file.name}.maniac.tmp")
+        temporary_link.symlink_to(target)
+        temporary_link.replace(dest_file)
     except Exception:
         if previous_entry is not None:
             # A reinstall over our own page failed mid-copy: restore the
@@ -134,13 +126,59 @@ def install_manpage(
                 backup=previous_entry.backup,
                 version=previous_entry.version,
                 source_uri=previous_entry.source_uri,
+                target=previous_entry.target,
                 config=cfg,
             )
         else:
             manifest.forget(tool, config=cfg)
         raise
+    manifest.record(
+        tool,
+        dest_file,
+        tier,
+        source,
+        checksum,
+        backup=backup_path,
+        version=version,
+        source_uri=source_uri,
+        target=target,
+        config=cfg,
+    )
     logger.info("Installed manpage", path=str(dest_file))
     return dest_file
+
+
+def _path_exists(path: Path) -> bool:
+    """Whether a path exists, including a dangling symlink."""
+    return path.exists() or path.is_symlink()
+
+
+def _durable_target(src: Path, cfg: Config, *, durable_source: bool) -> Path:
+    """Return an upgrade-safe target, materializing it before link replacement."""
+    if durable_source:
+        return src.absolute()
+    target = cfg.output_dir / src.name
+    if src.absolute() == target.absolute():
+        return target
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temporary_target = target.with_name(f".{target.name}.tmp")
+    shutil.copy2(src, temporary_target)
+    temporary_target.replace(target)
+    return target
+
+
+def _is_expected_link(entry: Entry) -> bool:
+    """Whether the recorded manpath entry still points to its recorded target."""
+    if entry.target is None or not entry.path.is_symlink() or not entry.target.exists():
+        return False
+    try:
+        link_target = entry.path.readlink()
+    except OSError:
+        return False
+    actual = (
+        link_target if link_target.is_absolute() else entry.path.parent / link_target
+    )
+    return actual.resolve(strict=False) == entry.target.resolve(strict=False)
 
 
 @dataclass
@@ -190,11 +228,16 @@ def uninstall_manpage(
         installed_file = cfg.man_dir / f"{tool_name}.1"
         if installed_file.exists():
             foreign_kept = installed_file
-    elif not entry.path.exists():
+    elif not _path_exists(entry.path):
         manifest.forget(tool_name, config=cfg)
-    elif not force and manifest.checksum_of(entry.path) != entry.checksum:
+    elif (
+        entry.target is None
+        or not _is_expected_link(entry)
+        or (not force and manifest.checksum_of(entry.target) != entry.checksum)
+    ):
         modified_kept = entry.path
     else:
+        target = entry.target
         installed_file = entry.path
         installed_file.unlink()
         logger.info("Removed installed manpage", path=str(installed_file))
@@ -209,9 +252,13 @@ def uninstall_manpage(
             removed_paths.append(installed_file)
         manifest.forget(tool_name, config=cfg)
 
+        if _is_maniac_owned_target(target, cfg) and target.exists():
+            target.unlink()
+            removed_paths.append(target)
+
     # 2. XDG data storage (output_dir / <tool>.1)
     stored_roff = cfg.output_dir / f"{tool_name}.1"
-    if stored_roff.exists():
+    if stored_roff.exists() and (entry is None or stored_roff != entry.target):
         stored_roff.unlink()
         removed_paths.append(stored_roff)
 
@@ -234,6 +281,17 @@ def uninstall_manpage(
     return UninstallResult(
         removed=removed_paths, foreign_kept=foreign_kept, modified_kept=modified_kept
     )
+
+
+def _is_maniac_owned_target(target: Path | None, cfg: Config) -> bool:
+    """Whether `target` belongs to MANIAC's durable output storage."""
+    if target is None:
+        return False
+    try:
+        target.absolute().relative_to(cfg.output_dir.absolute())
+    except ValueError:
+        return False
+    return True
 
 
 def list_installed_manpages(

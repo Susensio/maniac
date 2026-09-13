@@ -1,6 +1,8 @@
 import json
 from pathlib import Path
 
+import pytest
+
 from maniac import manifest
 from maniac.config import Config
 from maniac.generation.compiler import build_provenance_header
@@ -9,6 +11,13 @@ from maniac.manifest import Tier
 
 def _config(tmp_path: Path) -> Config:
     return Config(manifest_path=tmp_path / "state" / "installed.json")
+
+
+@pytest.fixture(autouse=True)
+def _isolated_xdg_paths(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep default Config instances away from a developer's MANIAC state."""
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg-data"))
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "xdg-state"))
 
 
 def test_load_with_no_manifest_and_no_pages_seeds_empty(tmp_path: Path) -> None:
@@ -70,6 +79,25 @@ def test_record_lookup_round_trip_preserves_source_uri(tmp_path: Path) -> None:
     entry = manifest.lookup("tool", config=cfg)
     assert entry is not None
     assert entry.source_uri == uri
+
+
+def test_record_lookup_round_trip_preserves_link_target(tmp_path: Path) -> None:
+    cfg = _config(tmp_path)
+    target = tmp_path / "data" / "tool.1"
+
+    manifest.record(
+        "tool",
+        tmp_path / "man1" / "tool.1",
+        Tier.SYNTHESIS,
+        "model",
+        "abc123",
+        target=target,
+        config=cfg,
+    )
+
+    entry = manifest.lookup("tool", config=cfg)
+    assert entry is not None
+    assert entry.target == target
 
 
 def test_row_missing_version_key_loads_as_none(tmp_path: Path) -> None:
@@ -257,6 +285,66 @@ def test_migration_does_not_recover_headerless_tier1_pages(tmp_path: Path) -> No
 
     cfg = Config(manifest_path=tmp_path / "state" / "installed.json", man_dir=man_dir)
     assert manifest.load(config=cfg) == {}
+
+
+def test_migration_converts_legacy_copy_to_durable_link(tmp_path: Path) -> None:
+    man_dir = tmp_path / "man1"
+    man_dir.mkdir()
+    page = man_dir / "tool.1"
+    page.write_bytes(b"legacy bytes")
+    backup = tmp_path / "backups" / "tool.1"
+    backup.parent.mkdir()
+    backup.write_bytes(b"vendor bytes")
+    cfg = Config(
+        manifest_path=tmp_path / "state" / "installed.json",
+        man_dir=man_dir,
+        output_dir=tmp_path / "data",
+        backup_dir=backup.parent,
+    )
+    manifest.record(
+        "tool",
+        page,
+        Tier.REPOSITORY,
+        "owner/tool",
+        manifest.checksum_of(page),
+        backup=backup,
+        version="1.2.3",
+        source_uri="https://example.test/tool.1",
+        config=cfg,
+    )
+
+    entry = manifest.load(config=cfg)["tool"]
+
+    assert page.is_symlink()
+    assert entry.target == cfg.output_dir / page.name
+    assert page.resolve() == entry.target
+    assert entry.target.read_bytes() == b"legacy bytes"
+    assert entry.backup == backup
+    assert entry.version == "1.2.3"
+    assert entry.source_uri == "https://example.test/tool.1"
+
+
+def test_migration_retains_changed_legacy_copy(tmp_path: Path) -> None:
+    man_dir = tmp_path / "man1"
+    man_dir.mkdir()
+    page = man_dir / "tool.1"
+    page.write_text("original", encoding="utf-8")
+    cfg = Config(
+        manifest_path=tmp_path / "state" / "installed.json",
+        man_dir=man_dir,
+        output_dir=tmp_path / "data",
+    )
+    manifest.record(
+        "tool", page, Tier.SYNTHESIS, "model", manifest.checksum_of(page), config=cfg
+    )
+    page.write_text("user changed", encoding="utf-8")
+
+    entry = manifest.load(config=cfg)["tool"]
+
+    assert not page.is_symlink()
+    assert page.read_text(encoding="utf-8") == "user changed"
+    assert entry.target is None
+    assert not cfg.output_dir.exists()
 
 
 def test_migration_relocates_a_stray_backup_out_of_man_dir(tmp_path: Path) -> None:
