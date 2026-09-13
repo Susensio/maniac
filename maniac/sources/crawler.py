@@ -182,9 +182,9 @@ def get_help(
 ) -> str:
     """Return usable ``--help`` output from stdout or, when needed, stderr.
 
-    A non-zero exit is reported but does not discard a stderr usage block:
-    several CLIs, including tmux, print it there and exit unsuccessfully.
-    Empty output and stderr-only option errors are crawl failures.
+    A non-zero exit is reported but may still contain usage across stdout and
+    stderr. Empty output and option errors without a usage line are crawl
+    failures.
     """
     cfg = config or Config()
     effective_timeout = timeout if timeout is not None else cfg.timeout_help
@@ -199,14 +199,21 @@ def get_help(
                 command=cmd_str,
                 returncode=res.returncode,
             )
-        if stdout:
-            return stdout
-        if stderr:
-            if res.returncode != 0 and not _USAGE_LINE_PATTERN.search(stderr):
+            combined = "\n".join(text for text in (stdout, stderr) if text)
+            if not combined:
+                raise CrawlerError(
+                    f"Command produced no help output: '{cmd_str}' exited with "
+                    f"{res.returncode}."
+                )
+            if not _USAGE_LINE_PATTERN.search(combined):
                 raise CrawlerError(
                     f"Command produced no usable help output: '{cmd_str}' exited "
                     f"with {res.returncode}."
                 )
+            return combined
+        if stdout:
+            return stdout
+        if stderr:
             logger.warning("Using help emitted on stderr", command=cmd_str)
             return stderr
         raise CrawlerError(
