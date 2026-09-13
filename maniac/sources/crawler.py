@@ -29,6 +29,7 @@ _KNOWN_SECTION_NAMES = {
     "examples",
 }
 _SUBCOMMAND_PATTERN = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_.:-]*$")
+_USAGE_LINE_PATTERN = re.compile(r"^\s*usage:", re.IGNORECASE | re.MULTILINE)
 
 
 @dataclass(slots=True)
@@ -181,9 +182,9 @@ def get_help(
 ) -> str:
     """Return usable ``--help`` output from stdout or, when needed, stderr.
 
-    A non-zero exit is reported but does not discard text: several CLIs,
-    including tmux, print their usage to stderr and exit unsuccessfully.
-    Empty output is a crawl failure rather than help text.
+    A non-zero exit is reported but does not discard a stderr usage block:
+    several CLIs, including tmux, print it there and exit unsuccessfully.
+    Empty output and stderr-only option errors are crawl failures.
     """
     cfg = config or Config()
     effective_timeout = timeout if timeout is not None else cfg.timeout_help
@@ -201,6 +202,11 @@ def get_help(
         if stdout:
             return stdout
         if stderr:
+            if res.returncode != 0 and not _USAGE_LINE_PATTERN.search(stderr):
+                raise CrawlerError(
+                    f"Command produced no usable help output: '{cmd_str}' exited "
+                    f"with {res.returncode}."
+                )
             logger.warning("Using help emitted on stderr", command=cmd_str)
             return stderr
         raise CrawlerError(

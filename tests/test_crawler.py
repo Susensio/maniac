@@ -44,6 +44,23 @@ def test_get_help_uses_stderr_when_stdout_is_empty(
     assert get_help(["tmux"]).startswith("usage: tmux")
 
 
+def test_get_help_rejects_stderr_only_option_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_run(*args: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(
+            args=["tool", "--help"],
+            returncode=1,
+            stdout="",
+            stderr="tool: unknown option --help",
+        )
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    with pytest.raises(CrawlerError, match="no usable help output"):
+        get_help(["tool"])
+
+
 @pytest.mark.parametrize("returncode", [0, 1])
 def test_get_help_rejects_empty_output(
     monkeypatch: pytest.MonkeyPatch, returncode: int
