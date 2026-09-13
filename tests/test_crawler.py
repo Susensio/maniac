@@ -105,6 +105,22 @@ def test_get_version_returns_none_on_non_zero_exit() -> None:
     assert get_version(["false"]) is None
 
 
+def test_get_version_accepts_successful_stderr_output(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_run(*args: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(
+            args=["tool", "--version"],
+            returncode=0,
+            stdout="",
+            stderr="tool 1.2.3\n",
+        )
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    assert get_version(["tool"]) == "tool 1.2.3"
+
+
 def test_get_version_returns_none_when_executable_not_found() -> None:
     assert get_version(["nonexistent_binary_xyz_123"]) is None
 

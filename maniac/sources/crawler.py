@@ -237,7 +237,7 @@ def get_version(
         return None
     if res.returncode != 0:
         return None
-    return (res.stdout or "").strip() or None
+    return ((res.stdout or "") + (res.stderr or "")).strip() or None
 
 
 def find_subcommands(
