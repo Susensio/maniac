@@ -28,6 +28,37 @@ def test_get_help_success(monkeypatch: pytest.MonkeyPatch) -> None:
     assert "Usage: git" in out
 
 
+def test_get_help_uses_stderr_when_stdout_is_empty(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_run(*args: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(
+            args=["tmux", "--help"],
+            returncode=1,
+            stdout="",
+            stderr="usage: tmux [-2CDlNuVv] [-c shell-command]",
+        )
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    assert get_help(["tmux"]).startswith("usage: tmux")
+
+
+@pytest.mark.parametrize("returncode", [0, 1])
+def test_get_help_rejects_empty_output(
+    monkeypatch: pytest.MonkeyPatch, returncode: int
+) -> None:
+    def fake_run(*args: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(
+            args=["tool", "--help"], returncode=returncode, stdout="", stderr=""
+        )
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    with pytest.raises(CrawlerError, match="produced no help output"):
+        get_help(["tool"])
+
+
 def test_get_help_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
     def fake_run(*args: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
         raise subprocess.TimeoutExpired(cmd=["git", "--help"], timeout=5)

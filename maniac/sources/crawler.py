@@ -165,8 +165,7 @@ def _run_cli_flag(
     }
     return subprocess.run(
         full_cmd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
+        capture_output=True,
         text=True,
         timeout=timeout,
         errors="replace",
@@ -180,24 +179,33 @@ def get_help(
     timeout: int | None = None,
     config: Config | None = None,
 ) -> str:
-    """Execute command with --help and capture standard output."""
+    """Return usable ``--help`` output from stdout or, when needed, stderr.
+
+    A non-zero exit is reported but does not discard text: several CLIs,
+    including tmux, print their usage to stderr and exit unsuccessfully.
+    Empty output is a crawl failure rather than help text.
+    """
     cfg = config or Config()
     effective_timeout = timeout if timeout is not None else cfg.timeout_help
     cmd_str = " ".join([*cmd, "--help"])
     try:
         res = _run_cli_flag(cmd, "--help", effective_timeout)
-        # BUG: a tool with no `--help` yields "" here and the pipeline treats it as help text.
-        # `tmux --help` writes 0 bytes to stdout, 157 to stderr, and exits 1; this returns "".
-        # Help written to stderr is discarded, and empty-because-refused is indistinguishable
-        # from empty-because-empty. `get_version` below returns None per failure mode (ADR-0020)
-        # and is the shape to copy.
+        stdout = (res.stdout or "").strip()
+        stderr = (res.stderr or "").strip()
         if res.returncode != 0:
-            logger.debug(
-                "Command exited with non-zero code",
+            logger.warning(
+                "Command exited with non-zero code while requesting help",
                 command=cmd_str,
                 returncode=res.returncode,
             )
-        return (res.stdout or "").strip()
+        if stdout:
+            return stdout
+        if stderr:
+            logger.warning("Using help emitted on stderr", command=cmd_str)
+            return stderr
+        raise CrawlerError(
+            f"Command produced no help output: '{cmd_str}' exited with {res.returncode}."
+        )
     except subprocess.TimeoutExpired as e:
         logger.warning("Command timed out", command=cmd_str)
         raise CrawlerError(f"Command timed out: '{cmd_str}'") from e

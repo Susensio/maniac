@@ -139,11 +139,12 @@ def run_install(
         config=cfg,
         bin_dir=bin_dir,
     )
-    detail = (
-        "synthesized from --help + repo docs"
-        if pipeline_result.doc_file_count
-        else "synthesized from --help only"
-    )
+    if pipeline_result.command_count and pipeline_result.doc_file_count:
+        detail = "synthesized from --help + repo docs"
+    elif pipeline_result.doc_file_count:
+        detail = "synthesized from repo docs only"
+    else:
+        detail = "synthesized from --help only"
     return InstallOutcome(
         tool=tool_name,
         tier=Tier.SYNTHESIS,

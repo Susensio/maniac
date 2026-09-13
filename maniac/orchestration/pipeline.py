@@ -3,7 +3,7 @@
 from pathlib import Path
 
 from ..config import Config
-from ..exceptions import GenerationError
+from ..exceptions import CrawlerError, GenerationError
 from ..generation.compiler import compile_to_man
 from ..generation.llm import run_llm_synthesis
 from ..generation.prompts import build_synthesis_prompt, load_system_prompt
@@ -44,7 +44,14 @@ def run_pipeline(
 
     logger.info("Extracting CLI help and subcommands", tool=tool_name)
     executable = Path(bin_dir) / tool_name if bin_dir is not None else tool_name
-    tree = find_subcommands([str(executable)], config=cfg)
+    try:
+        tree = find_subcommands([str(executable)], config=cfg)
+    except CrawlerError as error:
+        # Repository documentation can still be enough to synthesize a page.
+        logger.warning(
+            "CLI help crawl failed; continuing with repository docs", error=str(error)
+        )
+        tree = {}
     help_block = format_help_block(tree)
 
     logger.info("Discovering source and extracting documentation", tool=tool_name)
@@ -76,10 +83,26 @@ def run_pipeline(
     )
     docs_block = format_docs_section(doc_files)
 
-    if len(tree) == 1 and not doc_files:
+    if not help_block and not doc_files:
         raise GenerationError(
-            f"Not enough source material for '{tool_name}': only root --help is "
-            "available, with no subcommands or upstream documentation."
+            f"Not enough source material for '{tool_name}': no usable --help output "
+            "or repository documentation was found."
+        )
+
+    root_help_only = len(tree) == 1 and not doc_files
+    logger.warning(
+        "Synthesis source material found",
+        tool=tool_name,
+        commands=len(tree),
+        subcommands=max(len(tree) - 1, 0),
+        repository=source.target if source is not None else None,
+        repository_docs=len(doc_files),
+        repository_docs_version_matched=version_matched,
+    )
+    if root_help_only:
+        logger.warning(
+            "Limited source material: synthesizing from root --help only",
+            tool=tool_name,
         )
 
     # Save intermediate extracted context

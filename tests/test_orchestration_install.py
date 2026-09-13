@@ -186,6 +186,36 @@ def test_run_install_tier2_rejects_a_page_naming_a_different_binary(
     assert outcome.tier is Tier.SYNTHESIS
 
 
+def test_run_install_reports_repository_docs_only_synthesis(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from maniac.models import PipelineResult
+
+    monkeypatch.setattr(
+        "maniac.orchestration.install.discovery.find_installation",
+        lambda name, bin_dir=None: None,
+    )
+    monkeypatch.setattr(
+        "maniac.orchestration.pipeline.run_pipeline",
+        lambda tool_name, **kwargs: PipelineResult(
+            tool_name=tool_name,
+            repo_source=RepoSource(name=tool_name, target="owner/tool", is_local=False),
+            command_count=0,
+            doc_file_count=1,
+            context_path=None,
+            prompt_path=None,
+            markdown_path=tmp_path / f"{tool_name}.1.md",
+            roff_path=None,
+            installed_path=None,
+            markdown_content="# doc",
+        ),
+    )
+
+    outcome = run_install("tool", generate_only=True)
+
+    assert outcome.detail == "synthesized from repo docs only"
+
+
 def test_run_install_tier2_skipped_without_an_installed_version(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

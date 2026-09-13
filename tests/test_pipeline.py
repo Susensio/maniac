@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from maniac.exceptions import GenerationError
+from maniac.exceptions import CrawlerError, GenerationError
 from maniac.models import DocFile, Installation, RepoSource
 from maniac.orchestration.pipeline import run_pipeline
 
@@ -154,7 +154,7 @@ def test_run_pipeline_uses_custom_bin_dir(
     assert observed == {"command": [str(bin_dir / "testtool")], "bin_dir": bin_dir}
 
 
-def test_run_pipeline_rejects_root_help_without_other_context(
+def test_run_pipeline_synthesizes_from_root_help_only(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     monkeypatch.setattr(
@@ -170,7 +170,96 @@ def test_run_pipeline_rejects_root_help_without_other_context(
         lambda source, cache_dir, **kwargs: ([], False),
     )
 
-    with pytest.raises(GenerationError, match="Not enough source material"):
+    result = run_pipeline(tool_name="testtool", output_dir=tmp_path, dry_run=True)
+
+    assert result.command_count == 1
+    assert result.doc_file_count == 0
+
+
+def test_run_pipeline_reports_synthesis_sources(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    messages: list[tuple[str, dict[str, object]]] = []
+    monkeypatch.setattr(
+        "maniac.orchestration.pipeline.logger.warning",
+        lambda event, **kwargs: messages.append((event, kwargs)),
+    )
+    monkeypatch.setattr(
+        "maniac.orchestration.pipeline.find_subcommands",
+        lambda cmd, **kwargs: {
+            "> testtool --help": "Usage: testtool",
+            "> testtool run --help": "Usage: testtool run",
+        },
+    )
+    monkeypatch.setattr(
+        "maniac.orchestration.pipeline.discover_repo",
+        lambda name, **kwargs: RepoSource(
+            name=name, target="org/testtool", is_local=False
+        ),
+    )
+    monkeypatch.setattr(
+        "maniac.orchestration.pipeline.fetch_and_extract_docs",
+        lambda source, cache_dir, **kwargs: (
+            [DocFile(rel_path="README.md", content="# Test Tool")],
+            True,
+        ),
+    )
+
+    run_pipeline(tool_name="testtool", output_dir=tmp_path, dry_run=True)
+
+    assert (
+        "Synthesis source material found",
+        {
+            "tool": "testtool",
+            "commands": 2,
+            "subcommands": 1,
+            "repository": "org/testtool",
+            "repository_docs": 1,
+            "repository_docs_version_matched": True,
+        },
+    ) in messages
+
+
+def test_run_pipeline_synthesizes_from_repository_docs_without_help(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(
+        "maniac.orchestration.pipeline.find_subcommands",
+        lambda cmd, **kwargs: (_ for _ in ()).throw(CrawlerError("no help")),
+    )
+    monkeypatch.setattr(
+        "maniac.orchestration.pipeline.discover_repo",
+        lambda name, **kwargs: RepoSource(
+            name=name, target="org/testtool", is_local=False
+        ),
+    )
+    monkeypatch.setattr(
+        "maniac.orchestration.pipeline.fetch_and_extract_docs",
+        lambda source, cache_dir, **kwargs: (
+            [DocFile(rel_path="README.md", content="# Test Tool")],
+            True,
+        ),
+    )
+
+    result = run_pipeline(tool_name="testtool", output_dir=tmp_path, dry_run=True)
+
+    assert result.command_count == 0
+    assert result.doc_file_count == 1
+
+
+def test_run_pipeline_rejects_when_no_help_or_repository_docs(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(
+        "maniac.orchestration.pipeline.find_subcommands",
+        lambda cmd, **kwargs: (_ for _ in ()).throw(CrawlerError("no help")),
+    )
+    monkeypatch.setattr(
+        "maniac.orchestration.pipeline.discover_repo",
+        lambda name, **kwargs: None,
+    )
+
+    with pytest.raises(GenerationError, match="no usable --help output"):
         run_pipeline(tool_name="testtool", output_dir=tmp_path, dry_run=True)
 
 
