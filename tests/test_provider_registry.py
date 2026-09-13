@@ -81,14 +81,19 @@ def test_resolution_registry_holds_the_registered_providers() -> None:
 
 def test_legacy_registry_import_bootstraps_the_populated_singleton() -> None:
     code = """
+import sys
+
 from maniac.sources.providers.registry import registry as legacy_registry
+
+assert "maniac.sources.resolution" not in sys.modules
+assert [provider.name for provider in legacy_registry] == [
+    "local_lib", "uv", "mise", "npm", "pipx", "cargo", "go", "homebrew"
+]
+
 from maniac.sources.providers import registry as package_registry
 from maniac.sources import resolution
 
 assert legacy_registry is package_registry is resolution.registry
-assert [provider.name for provider in legacy_registry] == [
-    "local_lib", "uv", "mise", "npm", "pipx", "cargo", "go", "homebrew"
-]
 """
     result = subprocess.run(
         [sys.executable, "-c", code], capture_output=True, text=True, check=False

@@ -9,24 +9,8 @@ from ..models import Installation, RepoSource
 from . import loginpath
 from .discovery import resolve_bin_path
 from .providers.base import Provider
-from .providers.cargo import CargoProvider
-from .providers.go import GoProvider
-from .providers.homebrew import HomebrewProvider
-from .providers.local_lib import LocalLibProvider
 from .providers.mise import MiseProvider
-from .providers.npm import NpmProvider
-from .providers.pipx import PipxProvider
 from .providers.registry import registry
-from .providers.uv import UvProvider
-
-registry.register(LocalLibProvider())
-registry.register(UvProvider())
-registry.register(MiseProvider())
-registry.register(NpmProvider())
-registry.register(PipxProvider())
-registry.register(CargoProvider())
-registry.register(GoProvider())
-registry.register(HomebrewProvider())
 
 
 def _find_provider(name: str) -> Provider | None:

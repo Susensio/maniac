@@ -5,6 +5,14 @@ from pathlib import Path
 
 from ..pathcache import resolve_cached
 from .base import Provider
+from .cargo import CargoProvider
+from .go import GoProvider
+from .homebrew import HomebrewProvider
+from .local_lib import LocalLibProvider
+from .mise import MiseProvider
+from .npm import NpmProvider
+from .pipx import PipxProvider
+from .uv import UvProvider
 
 _SYSTEM_BIN_DIRS = frozenset(
     {Path("/bin"), Path("/sbin"), Path("/usr/bin"), Path("/usr/sbin")}
@@ -63,6 +71,13 @@ class ProviderRegistry:
         yield from self
 
 
-# The one registry the rest of the codebase composes providers through.
-# Empty at Stage 1: no concrete provider exists yet to register into it.
 registry = ProviderRegistry()
+
+registry.register(LocalLibProvider())
+registry.register(UvProvider())
+registry.register(MiseProvider())
+registry.register(NpmProvider())
+registry.register(PipxProvider())
+registry.register(CargoProvider())
+registry.register(GoProvider())
+registry.register(HomebrewProvider())
