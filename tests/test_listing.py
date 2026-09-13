@@ -13,7 +13,7 @@ from rich.live_render import LiveRender
 from typer.testing import CliRunner
 
 import maniac.cli as cli_module
-from maniac import manifest as manifest_module
+from maniac import manifest
 from maniac.cli import app
 from maniac.cli.listing import (
     ActionState,
@@ -23,9 +23,11 @@ from maniac.cli.listing import (
     _filter_rows,
     _grouped_for_display,
     _list_table,
+    _LocalClassification,
     _ProgressReporter,
     _render_list,
     _resolve_upstream,
+    _source_cell,
     _streaming_table,
     _StreamingList,
     compute_rows,
@@ -98,6 +100,11 @@ def _config(tmp_path: Path) -> Config:
     return Config(man_dir=tmp_path / "man" / "man1", cache_dir=tmp_path / "repos")
 
 
+def _classification_pair(*args: Any, **kwargs: Any) -> tuple[ActionState, PageSource]:
+    result = _classify(*args, **kwargs)
+    return result.state, result.source
+
+
 # -- compute_rows: enumeration and named-tools paths ------------------------
 
 
@@ -124,8 +131,75 @@ def test_compute_rows_no_args_walks_providers_not_the_manpath(
             state=ActionState.AVAILABLE,
             source=PageSource.VENDOR,
             upstream=None,
+            page_path=page,
         )
     ]
+
+
+def test_compute_rows_resolves_upstream_for_a_vendor_page(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    page = tmp_path / "tool.1"
+    page.write_text(".TH TOOL 1\n", encoding="utf-8")
+    source = RepoSource(name="tool", target="owner/tool", is_local=False)
+    provider = _FakeProvider(local_docs=[page], source=source)
+    inst = _installation(root=tmp_path)
+    monkeypatch.setattr(
+        "maniac.cli.listing.discovery.enumerate_installations",
+        lambda on_start=None, on_scan=None: [(provider, inst)],
+    )
+    monkeypatch.setattr(
+        "maniac.cli.listing.discover_repo_manpage",
+        lambda *args, **kwargs: pytest.fail("vendor rows must not probe for a page"),
+    )
+
+    row = compute_rows(config=_config(tmp_path))[0]
+
+    assert row.source is PageSource.VENDOR
+    assert row.upstream is source
+
+
+def test_compute_rows_recovers_the_uri_for_an_older_repository_manifest(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    cfg = _config(tmp_path)
+    installed = cfg.man_dir / "tool.1"
+    installed.parent.mkdir(parents=True)
+    installed.write_text(".TH TOOL 1\n", encoding="utf-8")
+    manifest.record(
+        "tool",
+        installed,
+        Tier.REPOSITORY,
+        "owner/tool",
+        manifest.checksum_of(installed),
+        version="1.2.3",
+        config=cfg,
+    )
+    source = RepoSource(name="tool", target="owner/tool", is_local=False)
+    provider = _FakeProvider(source=source)
+    inst = _installation(version="1.2.3")
+    cached = tmp_path / "cache" / "tool.1"
+    uri = "https://github.com/owner/tool/blob/v1.2.3/man/tool.1"
+    monkeypatch.setattr(
+        "maniac.cli.listing.discovery.enumerate_installations",
+        lambda on_start=None, on_scan=None: [(provider, inst)],
+    )
+    monkeypatch.setattr(
+        "maniac.cli.listing.find_installed_manpage_path",
+        lambda command, tool: installed,
+    )
+    monkeypatch.setattr(
+        "maniac.cli.listing.discover_repo_manpage", lambda *args, **kwargs: cached
+    )
+    monkeypatch.setattr("maniac.cli.listing.discovered_manpage_uri", lambda page: uri)
+
+    row = compute_rows(config=cfg)[0]
+
+    assert row.state is ActionState.OK
+    assert row.source is PageSource.UPSTREAM
+    assert row.managed
+    assert row.page_path == installed
+    assert row.page_uri == uri
 
 
 def test_compute_rows_with_tools_is_unfiltered_and_resolves_each_by_name(
@@ -272,6 +346,35 @@ def test_compute_rows_upgrades_a_versioned_cached_repository_page(
     assert rows[0].state is ActionState.AVAILABLE
     assert rows[0].source is PageSource.UPSTREAM
     assert rows[0].upstream is source
+    assert rows[0].page_path == page
+
+
+def test_local_repository_page_links_to_its_source_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    page = tmp_path / "checkout" / "man" / "tool.1"
+    page.parent.mkdir(parents=True)
+    page.write_text(".TH TOOL 1\n", encoding="utf-8")
+    source = RepoSource(
+        name="tool",
+        target=f"LOCAL:{page.parents[1]}",
+        is_local=True,
+        local_path=page.parents[1],
+    )
+    provider = _FakeProvider(source=source)
+    inst = _installation()
+    monkeypatch.setattr(
+        "maniac.cli.listing.discovery.enumerate_installations",
+        lambda on_start=None, on_scan=None: [(provider, inst)],
+    )
+    monkeypatch.setattr(
+        "maniac.cli.listing.discover_repo_manpage", lambda *args, **kwargs: page
+    )
+
+    row = compute_rows(config=_config(tmp_path))[0]
+
+    assert row.source is PageSource.UPSTREAM
+    assert row.page_uri == page.absolute().as_uri()
 
 
 def test_compute_rows_uses_the_exact_tmux_documentation_repository(
@@ -435,7 +538,7 @@ def test_compute_rows_bounds_parallel_local_classification(
         tool: str,
         cfg: Config,
         entries: object,
-    ) -> tuple[ActionState, PageSource, None]:
+    ) -> tuple[_LocalClassification, None]:
         nonlocal active, maximum
         with lock:
             active += 1
@@ -443,7 +546,10 @@ def test_compute_rows_bounds_parallel_local_classification(
         time.sleep(0.01)
         with lock:
             active -= 1
-        return ActionState.OK, PageSource.SYSTEM, None
+        return (
+            _LocalClassification(ActionState.OK, PageSource.SYSTEM, False, None),
+            None,
+        )
 
     monkeypatch.setattr("maniac.cli.listing._classify_and_resolve", classify)
 
@@ -504,11 +610,14 @@ def test_compute_rows_starts_upstream_before_slow_local_work_finishes(
         tool: str,
         cfg: Config,
         entries: object,
-    ) -> tuple[ActionState, PageSource, RepoSource]:
+    ) -> tuple[_LocalClassification, RepoSource]:
         if tool == "slow":
             slow_started.set()
             assert release_slow.wait(timeout=2)
-        return ActionState.MISSING, PageSource.NONE, source
+        return (
+            _LocalClassification(ActionState.MISSING, PageSource.NONE, False, None),
+            source,
+        )
 
     def probe(*args: object, **kwargs: object) -> Path:
         probe_started.set()
@@ -553,10 +662,13 @@ def test_compute_rows_ticks_while_a_slow_future_leaves_a_quiet_gap(
         tool: str,
         cfg: Config,
         entries: object,
-    ) -> tuple[ActionState, PageSource, RepoSource]:
+    ) -> tuple[_LocalClassification, RepoSource]:
         if tool == "slow":
             assert release_slow.wait(timeout=2)
-        return ActionState.MISSING, PageSource.NONE, source
+        return (
+            _LocalClassification(ActionState.MISSING, PageSource.NONE, False, None),
+            source,
+        )
 
     monkeypatch.setattr("maniac.cli.listing._classify_and_resolve", classify)
     monkeypatch.setattr(
@@ -1580,7 +1692,7 @@ def test_classify_available_when_install_root_ships_an_uninstalled_page(
     inst = _installation()
     cfg = _config(tmp_path)
 
-    assert _classify(provider, inst, "tool", cfg) == (
+    assert _classification_pair(provider, inst, "tool", cfg) == (
         ActionState.AVAILABLE,
         PageSource.VENDOR,
     )
@@ -1593,7 +1705,7 @@ def test_classify_missing_when_nothing_resolves_and_install_root_is_empty(
     inst = _installation()
     cfg = _config(tmp_path)
 
-    assert _classify(provider, inst, "tool", cfg) == (
+    assert _classification_pair(provider, inst, "tool", cfg) == (
         ActionState.MISSING,
         PageSource.NONE,
     )
@@ -1602,7 +1714,10 @@ def test_classify_missing_when_nothing_resolves_and_install_root_is_empty(
 def test_classify_missing_when_no_provider_at_all(tmp_path: Path) -> None:
     cfg = _config(tmp_path)
 
-    assert _classify(None, None, "tool", cfg) == (ActionState.MISSING, PageSource.NONE)
+    assert _classification_pair(None, None, "tool", cfg) == (
+        ActionState.MISSING,
+        PageSource.NONE,
+    )
 
 
 def test_classify_ok_when_man_resolves_and_nothing_suggests_staleness(
@@ -1615,28 +1730,63 @@ def test_classify_ok_when_man_resolves_and_nothing_suggests_staleness(
         lambda man_bin, tool_name: installed,
     )
 
-    assert _classify(None, None, "tool", cfg) == (ActionState.OK, PageSource.SYSTEM)
+    assert _classification_pair(None, None, "tool", cfg) == (
+        ActionState.OK,
+        PageSource.SYSTEM,
+    )
 
 
 # -- _classify: Source classification for a reachable page ------------------
 
 
-def test_classify_source_is_maniac_when_manifest_owns_the_resolved_page(
+def test_classify_source_keeps_vendor_provenance_when_manifest_owns_the_page(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     cfg = _config(tmp_path)
     cfg.man_dir.mkdir(parents=True)
     installed = cfg.man_dir / "tool.1"
     installed.write_text(".TH TOOL 1\n", encoding="utf-8")
-    manifest_module.record(
-        "tool", installed, Tier.INSTALL_ROOT, "src", "abc123", config=cfg
-    )
+    manifest.record("tool", installed, Tier.INSTALL_ROOT, "src", "abc123", config=cfg)
     monkeypatch.setattr(
         "maniac.cli.listing.find_installed_manpage_path",
         lambda man_bin, tool_name: installed,
     )
 
-    assert _classify(None, None, "tool", cfg) == (ActionState.OK, PageSource.MANIAC)
+    assert _classification_pair(None, None, "tool", cfg) == (
+        ActionState.OK,
+        PageSource.VENDOR,
+    )
+
+
+@pytest.mark.parametrize(
+    ("tier", "source"),
+    [
+        (Tier.INSTALL_ROOT, PageSource.VENDOR),
+        (Tier.REPOSITORY, PageSource.UPSTREAM),
+        (Tier.SYNTHESIS, PageSource.MANIAC),
+    ],
+)
+def test_managed_page_keeps_content_provenance_separate_from_ownership(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    tier: Tier,
+    source: PageSource,
+) -> None:
+    cfg = _config(tmp_path)
+    cfg.man_dir.mkdir(parents=True)
+    installed = cfg.man_dir / "tool.1"
+    installed.write_text(".TH TOOL 1\n", encoding="utf-8")
+    manifest.record("tool", installed, tier, "origin", "abc123", config=cfg)
+    monkeypatch.setattr(
+        "maniac.cli.listing.find_installed_manpage_path",
+        lambda man_bin, tool_name: installed,
+    )
+
+    actual = _classify(None, None, "tool", cfg)
+
+    assert actual.source is source
+    assert actual.managed
+    assert actual.page_path == installed
 
 
 def test_classify_source_is_vendor_when_resolved_page_sits_under_it(
@@ -1653,7 +1803,7 @@ def test_classify_source_is_vendor_when_resolved_page_sits_under_it(
     )
     inst = _installation(root=root)
 
-    assert _classify(_FakeProvider(), inst, "tool", cfg) == (
+    assert _classification_pair(_FakeProvider(), inst, "tool", cfg) == (
         ActionState.OK,
         PageSource.VENDOR,
     )
@@ -1674,7 +1824,7 @@ def test_classify_source_is_unverified_when_resolved_page_is_external(
     )
     inst = _installation(root=tmp_path / "install_root")
 
-    assert _classify(_FakeProvider(), inst, "tool", cfg) == (
+    assert _classification_pair(_FakeProvider(), inst, "tool", cfg) == (
         ActionState.UNVERIFIED,
         PageSource.SYSTEM,
     )
@@ -1693,16 +1843,17 @@ def test_classify_managed_page_can_be_compressed(
     entry_dir.mkdir(parents=True)
     entry_path = entry_dir / "tool.1"
     entry_path.write_text(".TH TOOL 1\n", encoding="utf-8")
-    manifest_module.record(
-        "tool", entry_path, Tier.INSTALL_ROOT, "src", "abc123", config=cfg
-    )
+    manifest.record("tool", entry_path, Tier.INSTALL_ROOT, "src", "abc123", config=cfg)
     installed = entry_dir / "tool.1.gz"  # same base page, compressed
     monkeypatch.setattr(
         "maniac.cli.listing.find_installed_manpage_path",
         lambda man_bin, tool_name: installed,
     )
 
-    assert _classify(None, None, "tool", cfg) == (ActionState.OK, PageSource.MANIAC)
+    assert _classification_pair(None, None, "tool", cfg) == (
+        ActionState.OK,
+        PageSource.VENDOR,
+    )
 
 
 def test_classify_managed_page_matched_through_a_symlink(
@@ -1714,9 +1865,7 @@ def test_classify_managed_page_matched_through_a_symlink(
     real_dir.mkdir()
     real_page = real_dir / "tool.1"
     real_page.write_text(".TH TOOL 1\n", encoding="utf-8")
-    manifest_module.record(
-        "tool", real_page, Tier.INSTALL_ROOT, "src", "abc123", config=cfg
-    )
+    manifest.record("tool", real_page, Tier.INSTALL_ROOT, "src", "abc123", config=cfg)
 
     link_dir = tmp_path / "man" / "man1"
     link_dir.mkdir(parents=True)
@@ -1727,7 +1876,10 @@ def test_classify_managed_page_matched_through_a_symlink(
         lambda man_bin, tool_name: linked_page,
     )
 
-    assert _classify(None, None, "tool", cfg) == (ActionState.OK, PageSource.MANIAC)
+    assert _classification_pair(None, None, "tool", cfg) == (
+        ActionState.OK,
+        PageSource.VENDOR,
+    )
 
 
 # -- _classify: outdated requires positive evidence --------------------------
@@ -1740,7 +1892,7 @@ def test_classify_outdated_when_recorded_version_differs_from_installed(
     cfg.man_dir.mkdir(parents=True)
     installed = cfg.man_dir / "tool.1"
     installed.write_text(".TH TOOL 1\n", encoding="utf-8")
-    manifest_module.record(
+    manifest.record(
         "tool",
         installed,
         Tier.SYNTHESIS,
@@ -1755,7 +1907,7 @@ def test_classify_outdated_when_recorded_version_differs_from_installed(
     )
     inst = _installation(version="2.0.0")
 
-    assert _classify(None, inst, "tool", cfg) == (
+    assert _classification_pair(None, inst, "tool", cfg) == (
         ActionState.OUTDATED,
         PageSource.MANIAC,
     )
@@ -1769,7 +1921,7 @@ def test_classify_ok_when_entry_records_no_version(
     cfg.man_dir.mkdir(parents=True)
     installed = cfg.man_dir / "tool.1"
     installed.write_text(".TH TOOL 1\n", encoding="utf-8")
-    manifest_module.record(
+    manifest.record(
         "tool", installed, Tier.SYNTHESIS, "model", "abc123", config=cfg, version=None
     )
     monkeypatch.setattr(
@@ -1778,7 +1930,10 @@ def test_classify_ok_when_entry_records_no_version(
     )
     inst = _installation(version="2.0.0")
 
-    assert _classify(None, inst, "tool", cfg) == (ActionState.OK, PageSource.MANIAC)
+    assert _classification_pair(None, inst, "tool", cfg) == (
+        ActionState.OK,
+        PageSource.MANIAC,
+    )
 
 
 def test_classify_ok_when_installation_version_is_unknown(
@@ -1788,7 +1943,7 @@ def test_classify_ok_when_installation_version_is_unknown(
     cfg.man_dir.mkdir(parents=True)
     installed = cfg.man_dir / "tool.1"
     installed.write_text(".TH TOOL 1\n", encoding="utf-8")
-    manifest_module.record(
+    manifest.record(
         "tool",
         installed,
         Tier.SYNTHESIS,
@@ -1803,7 +1958,10 @@ def test_classify_ok_when_installation_version_is_unknown(
     )
     inst = _installation(version=None)
 
-    assert _classify(None, inst, "tool", cfg) == (ActionState.OK, PageSource.MANIAC)
+    assert _classification_pair(None, inst, "tool", cfg) == (
+        ActionState.OK,
+        PageSource.MANIAC,
+    )
 
 
 def test_classify_outdated_when_unclaimed_binarys_own_version_differs(
@@ -1815,7 +1973,7 @@ def test_classify_outdated_when_unclaimed_binarys_own_version_differs(
     cfg.man_dir.mkdir(parents=True)
     installed = cfg.man_dir / "tool.1"
     installed.write_text(".TH TOOL 1\n", encoding="utf-8")
-    manifest_module.record(
+    manifest.record(
         "tool",
         installed,
         Tier.SYNTHESIS,
@@ -1830,7 +1988,7 @@ def test_classify_outdated_when_unclaimed_binarys_own_version_differs(
     )
     monkeypatch.setattr("maniac.cli.listing.get_version", lambda cmd, **kwargs: "2.0.0")
 
-    assert _classify(None, None, "tool", cfg) == (
+    assert _classification_pair(None, None, "tool", cfg) == (
         ActionState.OUTDATED,
         PageSource.MANIAC,
     )
@@ -1843,7 +2001,7 @@ def test_classify_ok_when_unclaimed_binarys_own_version_matches(
     cfg.man_dir.mkdir(parents=True)
     installed = cfg.man_dir / "tool.1"
     installed.write_text(".TH TOOL 1\n", encoding="utf-8")
-    manifest_module.record(
+    manifest.record(
         "tool",
         installed,
         Tier.SYNTHESIS,
@@ -1858,7 +2016,10 @@ def test_classify_ok_when_unclaimed_binarys_own_version_matches(
     )
     monkeypatch.setattr("maniac.cli.listing.get_version", lambda cmd, **kwargs: "1.0.0")
 
-    assert _classify(None, None, "tool", cfg) == (ActionState.OK, PageSource.MANIAC)
+    assert _classification_pair(None, None, "tool", cfg) == (
+        ActionState.OK,
+        PageSource.MANIAC,
+    )
 
 
 def test_classify_ok_when_unclaimed_binarys_version_is_unavailable(
@@ -1870,7 +2031,7 @@ def test_classify_ok_when_unclaimed_binarys_version_is_unavailable(
     cfg.man_dir.mkdir(parents=True)
     installed = cfg.man_dir / "tool.1"
     installed.write_text(".TH TOOL 1\n", encoding="utf-8")
-    manifest_module.record(
+    manifest.record(
         "tool",
         installed,
         Tier.SYNTHESIS,
@@ -1885,7 +2046,10 @@ def test_classify_ok_when_unclaimed_binarys_version_is_unavailable(
     )
     monkeypatch.setattr("maniac.cli.listing.get_version", lambda cmd, **kwargs: None)
 
-    assert _classify(None, None, "tool", cfg) == (ActionState.OK, PageSource.MANIAC)
+    assert _classification_pair(None, None, "tool", cfg) == (
+        ActionState.OK,
+        PageSource.MANIAC,
+    )
 
 
 def test_classify_no_subprocess_for_unowned_or_versionless_row(
@@ -1910,12 +2074,15 @@ def test_classify_no_subprocess_for_unowned_or_versionless_row(
         "maniac.cli.listing.find_installed_manpage_path",
         lambda man_bin, tool_name: unowned,
     )
-    assert _classify(None, None, "unowned", cfg) == (ActionState.OK, PageSource.SYSTEM)
+    assert _classification_pair(None, None, "unowned", cfg) == (
+        ActionState.OK,
+        PageSource.SYSTEM,
+    )
 
     # Owned, but the entry itself records no version.
     versionless = cfg.man_dir / "versionless.1"
     versionless.write_text(".TH VERSIONLESS 1\n", encoding="utf-8")
-    manifest_module.record(
+    manifest.record(
         "versionless",
         versionless,
         Tier.SYNTHESIS,
@@ -1928,7 +2095,7 @@ def test_classify_no_subprocess_for_unowned_or_versionless_row(
         "maniac.cli.listing.find_installed_manpage_path",
         lambda man_bin, tool_name: versionless,
     )
-    assert _classify(None, None, "versionless", cfg) == (
+    assert _classification_pair(None, None, "versionless", cfg) == (
         ActionState.OK,
         PageSource.MANIAC,
     )
@@ -1950,7 +2117,7 @@ def test_classify_unverified_when_external_page_has_no_provenance(
     )
     inst = _installation(version="2.0.0")
 
-    assert _classify(_FakeProvider(), inst, "tool", cfg) == (
+    assert _classification_pair(_FakeProvider(), inst, "tool", cfg) == (
         ActionState.UNVERIFIED,
         PageSource.SYSTEM,
     )
@@ -1980,7 +2147,7 @@ def test_classify_uses_proven_external_package_evidence(
         lambda page, **kwargs: freshness,
     )
 
-    assert _classify(_FakeProvider(), _installation(), "tool", cfg) == (
+    assert _classification_pair(_FakeProvider(), _installation(), "tool", cfg) == (
         state,
         PageSource.SYSTEM,
     )
@@ -2003,7 +2170,10 @@ def test_classify_unmanaged_page_hand_placed_in_man_dir_reads_ok_system(
         lambda man_bin, tool_name: installed,
     )
 
-    assert _classify(None, None, "tool", cfg) == (ActionState.OK, PageSource.SYSTEM)
+    assert _classification_pair(None, None, "tool", cfg) == (
+        ActionState.OK,
+        PageSource.SYSTEM,
+    )
 
 
 def test_classify_manifest_entry_with_vanished_file_and_no_man_hit_is_missing(
@@ -2012,11 +2182,14 @@ def test_classify_manifest_entry_with_vanished_file_and_no_man_hit_is_missing(
     """A manifest entry recorded before a crash between record and copy (ADR-0017)
     is not enough on its own once `man` is also asked."""
     cfg = _config(tmp_path)
-    manifest_module.record(
+    manifest.record(
         "tool", cfg.man_dir / "tool.1", Tier.SYNTHESIS, "model", "abc123", config=cfg
     )
 
-    assert _classify(None, None, "tool", cfg) == (ActionState.MISSING, PageSource.NONE)
+    assert _classification_pair(None, None, "tool", cfg) == (
+        ActionState.MISSING,
+        PageSource.NONE,
+    )
 
 
 def test_classify_managed_file_present_but_unreachable_by_man_is_not_managed(
@@ -2030,17 +2203,18 @@ def test_classify_managed_file_present_but_unreachable_by_man_is_not_managed(
     cfg.man_dir.mkdir(parents=True)
     entry_path = cfg.man_dir / "tool.1"
     entry_path.write_text(".TH TOOL 1\n", encoding="utf-8")
-    manifest_module.record(
-        "tool", entry_path, Tier.INSTALL_ROOT, "src", "abc123", config=cfg
-    )
+    manifest.record("tool", entry_path, Tier.INSTALL_ROOT, "src", "abc123", config=cfg)
     # find_installed_manpage_path stays patched to None by the autouse fixture:
     # `man` does not resolve this tool at all, despite the manifest entry.
 
-    assert _classify(None, None, "tool", cfg) == (ActionState.MISSING, PageSource.NONE)
+    assert _classification_pair(None, None, "tool", cfg) == (
+        ActionState.MISSING,
+        PageSource.NONE,
+    )
 
     provider = _FakeProvider(local_docs=[tmp_path / "install_root" / "tool.1"])
     inst = _installation()
-    assert _classify(provider, inst, "tool", cfg) == (
+    assert _classification_pair(provider, inst, "tool", cfg) == (
         ActionState.AVAILABLE,
         PageSource.VENDOR,
     )
@@ -2134,7 +2308,11 @@ def test_resolve_upstream_none_without_provider_or_installation() -> None:
 
 
 def _row(
-    tool: str, state: ActionState, source: PageSource = PageSource.NONE
+    tool: str,
+    state: ActionState,
+    source: PageSource = PageSource.NONE,
+    *,
+    managed: bool = False,
 ) -> ToolRow:
     return ToolRow(
         tool=tool,
@@ -2143,6 +2321,7 @@ def _row(
         state=state,
         source=source,
         upstream=None,
+        managed=managed,
     )
 
 
@@ -2192,9 +2371,9 @@ def test_filter_rows_selects_unverified_rows() -> None:
 
 def test_filter_rows_intersects_across_axes() -> None:
     rows = [
-        _row("stale-managed", ActionState.OUTDATED, PageSource.MANIAC),
+        _row("stale-managed", ActionState.OUTDATED, PageSource.UPSTREAM, managed=True),
         _row("stale-unmanaged", ActionState.OUTDATED, PageSource.SYSTEM),
-        _row("ok-managed", ActionState.OK, PageSource.MANIAC),
+        _row("ok-managed", ActionState.OK, PageSource.VENDOR, managed=True),
     ]
 
     filtered = _filter_rows(
@@ -2407,6 +2586,42 @@ def test_grouped_for_display_differing_upstream_targets_still_split() -> None:
 
 
 # -- Rendering -----------------------------------------------------------------
+
+
+def test_vendor_source_keyword_links_to_the_local_manpage(tmp_path: Path) -> None:
+    page = tmp_path / "tool.1"
+    row = ToolRow(
+        "tool",
+        "tool",
+        "fake",
+        ActionState.AVAILABLE,
+        PageSource.VENDOR,
+        None,
+        page_path=page,
+    )
+    output = io.StringIO()
+    Console(file=output, force_terminal=True).print(_source_cell(row))
+
+    assert page.absolute().as_uri() in output.getvalue()
+
+
+def test_upstream_source_keyword_links_to_the_upstream_manpage() -> None:
+    uri = "https://github.com/owner/tool/blob/v1.2.3/man/tool.1"
+    row = ToolRow(
+        "tool",
+        "tool",
+        "fake",
+        ActionState.AVAILABLE,
+        PageSource.UPSTREAM,
+        None,
+        page_path=Path("/cached/tool.1"),
+        page_uri=uri,
+    )
+    output = io.StringIO()
+    Console(file=output, force_terminal=True).print(_source_cell(row))
+
+    assert uri in output.getvalue()
+    assert "file:///cached/tool.1" not in output.getvalue()
 
 
 def test_render_list_tty_shows_the_four_column_table() -> None:

@@ -19,7 +19,7 @@ from ..logging import logger
 from ..manifest import Tier
 from ..models import Installation, PipelineResult
 from ..sources import discovery
-from ..sources.docs import discover_repo_manpages
+from ..sources.docs import discover_repo_manpages, discovered_manpage_uri
 from ..sources.documentation import documentation_source
 from ..sources.manpages import (
     manpage_documents,
@@ -235,6 +235,11 @@ def _try_repository(
             target_dir=_manpage_directory(candidate, cfg),
             force=force,
             version=inst.version,
+            source_uri=(
+                candidate.absolute().as_uri()
+                if source.is_local
+                else discovered_manpage_uri(candidate)
+            ),
             config=cfg,
         )
         if candidate == page:

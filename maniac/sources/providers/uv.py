@@ -1,6 +1,7 @@
 """uv tool installs under `~/.local/share/uv/tools/` (ADR-0015)."""
 
 import json
+from functools import cache
 from pathlib import Path
 
 from ...config import Config
@@ -8,15 +9,13 @@ from ...logging import logger
 from ...models import Installation, RepoSource
 from ..manpages import find_install_root_manpages
 from ..pathcache import resolve_cached
+from .pipx import find_distribution_metadata, repository_from_metadata
 
 _TOOLS_MARKER = "/.local/share/uv/tools/"
 
 
 class UvProvider:
-    """Detects a `uv tool install`; resolves only the local-editable case uv itself
-    records -- a published package has no upstream repository recorded anywhere
-    in the install, so it is left unresolved, matching prior behaviour.
-    """
+    """Detect a uv tool and resolve editable or distribution metadata sources."""
 
     name = "uv"
 
@@ -46,19 +45,24 @@ class UvProvider:
         self, inst: Installation, *, config: Config
     ) -> RepoSource | None:
         local_dir = _local_editable_dir(inst.root)
-        if local_dir is None:
-            return None
-        return RepoSource(
-            name=inst.binary,
-            target=f"LOCAL:{local_dir}",
-            is_local=True,
-            local_path=local_dir,
+        if local_dir is not None:
+            return RepoSource(
+                name=inst.binary,
+                target=f"LOCAL:{local_dir}",
+                is_local=True,
+                local_path=local_dir,
+            )
+        metadata = find_distribution_metadata(inst.root, inst.package)
+        repo = repository_from_metadata(metadata) if metadata is not None else None
+        return (
+            RepoSource(name=inst.binary, target=repo, is_local=False) if repo else None
         )
 
     def local_docs(self, inst: Installation) -> list[Path]:
         return find_install_root_manpages(inst.root, inst.binary)
 
 
+@cache
 def _installed_version(root: Path, tool: str) -> str | None:
     """Read the tool's own version from its dist-info directory name, if findable.
 
@@ -78,6 +82,7 @@ def _normalize(name: str) -> str:
     return name.lower().replace("_", "-").replace(".", "-")
 
 
+@cache
 def _local_editable_dir(root: Path) -> Path | None:
     """Return the local checkout an editable uv-tool install points at, if any.
 

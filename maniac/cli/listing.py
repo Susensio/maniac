@@ -19,8 +19,8 @@ bounds what a bulk install could act on -- but each row's *state* is now a
 reachability fact, checked against `man` directly.
 
 `--unverified`/`--outdated`/`--available`/`--missing` filters the State axis; `--managed`
-filters the Source axis to `PageSource.MANIAC`. Filters union within an
-axis and intersect across axes; no flags means no filtering. There is no
+filters manifest ownership independently of page provenance. Filters union
+within an axis and intersect across axes; no flags means no filtering. There is no
 `--ok`, deliberately (ADR-0018): it would select exactly the rows needing
 no action.
 
@@ -49,7 +49,7 @@ from ..logging import logger
 from ..models import RepoSource
 from ..sources import discovery
 from ..sources.crawler import get_version
-from ..sources.docs import discover_repo_manpage
+from ..sources.docs import discover_repo_manpage, discovered_manpage_uri
 from ..sources.documentation import documentation_source
 from ..sources.manpages import (
     _opener_for,
@@ -122,7 +122,7 @@ _STATE_COLOR: dict[ActionState, str] = {
 
 
 class PageSource(Enum):
-    """Where a reachable page came from, or would come from if installed (ADR-0018).
+    """Where page content came from, or would come from if installed (ADR-0027).
 
     One column serves both readings -- State already disambiguates which
     applies, since `ok`/`outdated` describe a page that resolves and
@@ -158,6 +158,18 @@ class ToolRow:
     state: ActionState
     source: PageSource
     upstream: RepoSource | None
+    managed: bool = False
+    page_path: Path | None = None
+    page_uri: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _LocalClassification:
+    state: ActionState
+    source: PageSource
+    managed: bool
+    page_path: Path | None
+    page_uri: str | None = None
 
 
 def _strip_compression(path: Path) -> Path:
@@ -200,7 +212,7 @@ def _classify(
     tool: str,
     cfg: Config,
     entries: Mapping[str, manifest.Entry] | None = None,
-) -> tuple[ActionState, PageSource]:
+) -> _LocalClassification:
     """Decide one binary's state and page source by whether `man` resolves it (ADR-0026).
 
     Reverses `status`'s prior rule of consulting the manifest alone: `man
@@ -225,7 +237,12 @@ def _classify(
 
     if installed is not None:
         if owned:
-            source = PageSource.MANIAC
+            assert entry is not None
+            source = {
+                manifest.Tier.INSTALL_ROOT: PageSource.VENDOR,
+                manifest.Tier.REPOSITORY: PageSource.UPSTREAM,
+                manifest.Tier.SYNTHESIS: PageSource.MANIAC,
+            }[entry.tier]
         elif inst is not None and _under_root(installed, inst.root):
             source = PageSource.VENDOR
         else:
@@ -254,23 +271,35 @@ def _classify(
             and entry.version != current_version
         )
         if owned:
-            return (ActionState.OUTDATED if outdated else ActionState.OK, source)
+            return _LocalClassification(
+                ActionState.OUTDATED if outdated else ActionState.OK,
+                source,
+                True,
+                installed,
+                entry.source_uri,
+            )
         if provider is not None and inst is not None and source is PageSource.SYSTEM:
             freshness = verify_external_page(
                 installed, package=inst.package, version=inst.version
             )
             if freshness is ExternalPageFreshness.MATCH:
-                return (ActionState.OK, source)
+                return _LocalClassification(ActionState.OK, source, False, installed)
             if freshness is ExternalPageFreshness.MISMATCH:
-                return (ActionState.OUTDATED, source)
-            return (ActionState.UNVERIFIED, source)
-        return (ActionState.OK, source)
+                return _LocalClassification(
+                    ActionState.OUTDATED, source, False, installed
+                )
+            return _LocalClassification(
+                ActionState.UNVERIFIED, source, False, installed
+            )
+        return _LocalClassification(ActionState.OK, source, False, installed)
 
     if provider is not None and inst is not None:
         page = select_primary_manpage(provider.local_docs(inst), inst.binary)
         if page is not None:
-            return (ActionState.AVAILABLE, PageSource.VENDOR)
-    return (ActionState.MISSING, PageSource.NONE)
+            return _LocalClassification(
+                ActionState.AVAILABLE, PageSource.VENDOR, False, page
+            )
+    return _LocalClassification(ActionState.MISSING, PageSource.NONE, False, None)
 
 
 def _resolve_upstream(
@@ -287,19 +316,26 @@ def _resolve_upstream(
     )
 
 
-def _probe_upstream(source: RepoSource, inst: "Installation", cfg: Config) -> bool:
-    """Whether tier 2 has a version-matched manpage for one unresolved row."""
+def _probe_upstream(
+    source: RepoSource, inst: "Installation", cfg: Config
+) -> tuple[Path, str | None] | None:
+    """Return tier 2's version-matched manpage for one unresolved row."""
     try:
-        return (
-            discover_repo_manpage(
-                source,
-                inst.binary,
-                cache_dir=cfg.cache_dir,
-                config=cfg,
-                version=inst.version,
-            )
-            is not None
+        page = discover_repo_manpage(
+            source,
+            inst.binary,
+            cache_dir=cfg.cache_dir,
+            config=cfg,
+            version=inst.version,
         )
+        if page is None:
+            return None
+        uri = (
+            page.absolute().as_uri()
+            if source.is_local
+            else discovered_manpage_uri(page)
+        )
+        return page, uri
     except (OSError, UnicodeError) as error:
         # Repository probing is supplementary to the local reachability result.
         logger.debug(
@@ -308,14 +344,16 @@ def _probe_upstream(source: RepoSource, inst: "Installation", cfg: Config) -> bo
             source=source.target,
             error=str(error),
         )
-        return False
+        return None
 
 
 def _is_upstream_eligible(row: ToolRow, inst: "Installation | None") -> bool:
     """Whether one completed local row needs the version-matched remote check."""
     return (
-        row.state is ActionState.MISSING
-        and row.source is PageSource.NONE
+        (
+            (row.state is ActionState.MISSING and row.source is PageSource.NONE)
+            or (row.source is PageSource.UPSTREAM and row.page_uri is None)
+        )
         and row.upstream is not None
         and inst is not None
         and inst.version is not None
@@ -328,15 +366,11 @@ def _classify_and_resolve(
     tool: str,
     cfg: Config,
     entries: Mapping[str, manifest.Entry],
-) -> tuple[ActionState, PageSource, RepoSource | None]:
-    """Classify locally, resolving tier 2 only for a locally missing row."""
-    state, source = _classify(provider, inst, tool, cfg, entries)
-    upstream = (
-        _resolve_upstream(provider, inst, config=cfg)
-        if state is ActionState.MISSING and source is PageSource.NONE
-        else None
-    )
-    return state, source, upstream
+) -> tuple[_LocalClassification, RepoSource | None]:
+    """Classify locally and resolve repository identity independently."""
+    result = _classify(provider, inst, tool, cfg, entries)
+    upstream = _resolve_upstream(provider, inst, config=cfg)
+    return result, upstream
 
 
 def _probe_key(source: RepoSource, inst: "Installation") -> tuple[str, str, str]:
@@ -435,22 +469,41 @@ def compute_rows(
     # callback. Upstream completions may legitimately arrive before the last
     # local `man -w`, but cannot change this snapshot.
     local_rows = rows.copy()
-    local_pending: dict[Future[tuple[ActionState, PageSource, RepoSource | None]], int]
+    local_pending: dict[Future[tuple[_LocalClassification, RepoSource | None]], int]
     local_pending = {}
-    probe_pending: dict[Future[bool], tuple[str, str, str]] = {}
+    probe_pending: dict[
+        Future[tuple[Path, str | None] | None], tuple[str, str, str]
+    ] = {}
     probe_indexes: dict[tuple[str, str, str], list[int]] = {}
-    probe_results: dict[tuple[str, str, str], bool] = {}
+    probe_results: dict[tuple[str, str, str], tuple[Path, str | None] | None] = {}
     active_probe_keys: set[tuple[str, str, str]] = set()
     local_eligible: set[int] = set()
     initial_sent = False
 
-    def apply_probe(key: tuple[str, str, str], available: bool) -> None:
+    def with_probe_result(
+        row: ToolRow, page: tuple[Path, str | None] | None
+    ) -> ToolRow:
+        if page is None:
+            return row
+        path, uri = page
+        if row.state is ActionState.MISSING and row.source is PageSource.NONE:
+            return replace(
+                row,
+                state=ActionState.AVAILABLE,
+                source=PageSource.UPSTREAM,
+                page_path=path,
+                page_uri=uri,
+            )
+        if row.source is PageSource.UPSTREAM:
+            return replace(row, page_uri=uri)
+        return row
+
+    def apply_probe(
+        key: tuple[str, str, str], page: tuple[Path, str | None] | None
+    ) -> None:
         indexes = probe_indexes[key]
-        if available:
-            for index in indexes:
-                rows[index] = replace(
-                    rows[index], state=ActionState.AVAILABLE, source=PageSource.UPSTREAM
-                )
+        for index in indexes:
+            rows[index] = with_probe_result(rows[index], page)
         if on_row_scan is not None:
             for _ in indexes:
                 on_row_scan()
@@ -459,12 +512,9 @@ def compute_rows(
             # a snapshot. The coordinator owns both mutation and callbacks.
             on_upstream_rows(rows.copy(), set(indexes))
 
-    def apply_completed_probe(index: int, available: bool) -> None:
+    def apply_completed_probe(index: int, page: tuple[Path, str | None] | None) -> None:
         """Apply a completed group to one sibling classified later."""
-        if available:
-            rows[index] = replace(
-                rows[index], state=ActionState.AVAILABLE, source=PageSource.UPSTREAM
-            )
+        rows[index] = with_probe_result(rows[index], page)
         if on_row_scan is not None:
             on_row_scan()
         if on_upstream_rows is not None:
@@ -499,15 +549,18 @@ def compute_rows(
                 key=local_pending.__getitem__,
             ):
                 index = local_pending.pop(future)
-                state, source, upstream = future.result()
+                classified, upstream = future.result()
                 provider, inst, tool = candidates[index]
                 row = ToolRow(
                     tool=tool,
                     package=inst.package if inst is not None else tool,
                     provider=provider.name if provider is not None else "",
-                    state=state,
-                    source=source,
+                    state=classified.state,
+                    source=classified.source,
                     upstream=upstream,
+                    managed=classified.managed,
+                    page_path=classified.page_path,
+                    page_uri=classified.page_uri,
                 )
                 rows[index] = row
                 local_rows[index] = row
@@ -543,9 +596,9 @@ def compute_rows(
 
             for future in [future for future in done if future in probe_pending]:
                 key = probe_pending.pop(future)
-                available = future.result()
-                probe_results[key] = available
-                apply_probe(key, available)
+                page = future.result()
+                probe_results[key] = page
+                apply_probe(key, page)
 
     return rows
 
@@ -638,6 +691,28 @@ def _upstream_cell(upstream: RepoSource | None) -> Any:
     return _repo_cell(upstream, blank_when_unresolvable=True)
 
 
+def _source_cell(row: ToolRow) -> Any:
+    """Render page provenance, linked to the selected or reachable page."""
+    from rich.style import Style
+    from rich.text import Text
+
+    text = Text(row.source.value)
+    link = row.page_uri
+    if (
+        link is None
+        and row.page_path is not None
+        and row.source is not PageSource.UPSTREAM
+    ):
+        link = row.page_path.absolute().as_uri()
+    if link is not None and row.source is not PageSource.NONE:
+        text.stylize(
+            Style(link=link),
+            0,
+            len(text),
+        )
+    return text
+
+
 def _filter_rows(
     rows: list[ToolRow],
     *,
@@ -647,7 +722,7 @@ def _filter_rows(
     missing: bool,
     managed: bool,
 ) -> list[ToolRow]:
-    """Narrow `rows` by the State axis (union) and the Source axis (union), intersected.
+    """Narrow `rows` by State and independent MANIAC ownership filters.
 
     No flag set at all means no filtering. `--available --missing` unions
     within the State axis to every row worth acting on; `--managed
@@ -665,15 +740,12 @@ def _filter_rows(
         )
         if flag
     }
-    source_axis = {PageSource.MANIAC} if managed else set()
-
-    if not state_axis and not source_axis:
+    if not state_axis and not managed:
         return rows
     return [
         row
         for row in rows
-        if (not state_axis or row.state in state_axis)
-        and (not source_axis or row.source in source_axis)
+        if (not state_axis or row.state in state_axis) and (not managed or row.managed)
     ]
 
 
@@ -700,7 +772,7 @@ def _list_table(rows: list[ToolRow]) -> Table:
         state = (
             f"[{_STATE_COLOR[row.state]}]{row.state.value}[/{_STATE_COLOR[row.state]}]"
         )
-        table.add_row(label, state, row.source.value, _upstream_cell(row.upstream))
+        table.add_row(label, state, _source_cell(row), _upstream_cell(row.upstream))
     return table
 
 
@@ -746,7 +818,7 @@ def _streaming_table(
                 f"[{_STATE_COLOR[row.state]}]{row.state.value}[/{_STATE_COLOR[row.state]}]"
             )
         )
-        table.add_row(row.tool, state, row.source.value, _upstream_cell(row.upstream))
+        table.add_row(row.tool, state, _source_cell(row), _upstream_cell(row.upstream))
     hidden_rows = len(rows) - len(visible_rows)
     if hidden_rows:
         table.add_row(

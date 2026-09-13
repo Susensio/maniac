@@ -9,6 +9,7 @@ from maniac.models import DocFile, RepoSource
 from maniac.sources.docs import (
     discover_repo_manpage,
     discover_repo_manpages,
+    discovered_manpage_uri,
     extract_docs_from_dir,
     fetch_and_extract_docs,
     format_docs_section,
@@ -237,6 +238,9 @@ def test_discover_repo_manpage_uses_a_bare_cache_without_clone_or_checkout(
     manpage = discover_repo_manpage(source, "tool", cache_dir=tmp_path)
     assert manpage is not None
     assert manpage.read_text(encoding="utf-8") == ".TH TOOL 1\n"
+    assert discovered_manpage_uri(manpage) == (
+        "https://github.com/owner/tool/blob/HEAD/man/tool.1"
+    )
     discover_repo_manpage(source, "tool", cache_dir=tmp_path)
     assert not any(command[1] in {"clone", "checkout"} for command in calls)
     assert sum("fetch" in command for command in calls) == 1
@@ -839,7 +843,7 @@ def test_malformed_upstream_cache_is_replaced(
     source = RepoSource(name="tool", target="owner/tool", is_local=False)
     assert source.clone_url is not None
     path = docs_module._upstream_cache_path(
-        tmp_path, "probes", source.clone_url, "1.2.3", "tool"
+        tmp_path, "probes", "source-uri-v1", source.clone_url, "1.2.3", "tool"
     )
     path.parent.mkdir(parents=True)
     path.write_text("not json", encoding="utf-8")
@@ -982,6 +986,9 @@ def test_discover_repo_manpage_with_version_fetches_the_exact_tag(
 
     assert manpage is not None
     assert fetched == [["v1.2.3", "refs/tags/v1.2.3"]]
+    assert discovered_manpage_uri(manpage) == (
+        "https://github.com/owner/tool/blob/v1.2.3/tool.1"
+    )
 
 
 def test_github_release_assets_accept_only_actual_matching_manpage(
@@ -1066,6 +1073,10 @@ def test_github_release_archive_keeps_valid_companion_manpages(
         "eza_colors-explanation.5",
     ]
     assert all(page.parent.parent.name == "manpages" for page in pages)
+    assert all(
+        discovered_manpage_uri(page) == "https://example.test/eza-manpages.tar.gz"
+        for page in pages
+    )
 
 
 def test_release_probe_skips_large_non_man_archives(

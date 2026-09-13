@@ -53,6 +53,25 @@ def test_record_lookup_round_trip_preserves_version(tmp_path: Path) -> None:
     assert entry.version == "1.2.3"
 
 
+def test_record_lookup_round_trip_preserves_source_uri(tmp_path: Path) -> None:
+    cfg = _config(tmp_path)
+    uri = "https://github.com/owner/tool/blob/v1.2.3/man/tool.1"
+
+    manifest.record(
+        "tool",
+        tmp_path / "man1" / "tool.1",
+        Tier.REPOSITORY,
+        "owner/tool",
+        "abc123",
+        config=cfg,
+        source_uri=uri,
+    )
+
+    entry = manifest.lookup("tool", config=cfg)
+    assert entry is not None
+    assert entry.source_uri == uri
+
+
 def test_row_missing_version_key_loads_as_none(tmp_path: Path) -> None:
     """A row written before the field existed reads version=None, not dropped or raised (ADR-0018)."""
     cfg = _config(tmp_path)
@@ -78,6 +97,33 @@ def test_row_missing_version_key_loads_as_none(tmp_path: Path) -> None:
     entries = manifest.load(config=cfg)
     assert set(entries) == {"tool"}
     assert entries["tool"].version is None
+
+
+def test_malformed_source_uri_is_ignored(tmp_path: Path) -> None:
+    cfg = _config(tmp_path)
+    cfg.manifest_path.parent.mkdir(parents=True)
+    cfg.manifest_path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "entries": {
+                    "tool": {
+                        "path": "/x/tool.1",
+                        "tier": "repository",
+                        "source": "owner/tool",
+                        "checksum": "abc123",
+                        "backup": None,
+                        "source_uri": 42,
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    entry = manifest.load(config=cfg)["tool"]
+
+    assert entry.source_uri is None
 
 
 def test_forget_missing_tool_is_a_noop(tmp_path: Path) -> None:

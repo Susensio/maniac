@@ -1,4 +1,4 @@
-"""`uninstall`: remove a MANIAC-generated manpage and restore any vendor backup."""
+"""`uninstall`: remove a MANIAC-managed manpage and restore any vendor backup."""
 
 from dataclasses import dataclass
 from typing import Annotated, Any
@@ -80,7 +80,7 @@ def uninstall_cmd(
     ] = False,
     force: ForceOption = False,
 ) -> None:
-    """Uninstall a MANIAC-generated manpage and restore vendor backup if present."""
+    """Uninstall a MANIAC-managed manpage and restore vendor backup if present."""
     try:
         outcome = compute_uninstall(
             tool, purge=purge, force=force, config=get_config(ctx)

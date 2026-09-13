@@ -43,3 +43,11 @@ The mapping is used before list/install manpage probes, `source docs`, and tier-
 Help crawling now keeps successful stdout, falls back to stderr, and accepts a failed `--help` only when the combined output contains a real `usage:` line; empty or option-error-only output is a crawl failure.
 Tier-3 synthesis may proceed from root help alone or repository documentation alone, warns when only root help is available, and refuses only when neither source produced usable material.
 Before the LLM call it reports command and subcommand counts, the resolved repository, documentation-file count, and whether those files matched the installed version.
+
+`list` now keeps content provenance separate from MANIAC ownership: install-root, repository, and synthesis manifest entries render `vendor`, `upstream`, and `maniac` respectively, while `--managed` selects all three.
+Each Source keyword links to the exact reachable or shipped local manpage; for GitHub sources, `upstream` links to the version-pinned repository file or release asset rather than MANIAC's cache. Tier-2 installs persist that remote URI in the manifest. The Upstream column continues to link to the repository; unsupported Git hosts keep plain Source text rather than receiving a guessed URL.
+Older repository-tier manifest entries recover their missing URI through the same version-pinned, cache-first probe while retaining their installed state.
+Repository identity now resolves independently of local page provenance, so vendor rows such as zoxide can still show their upstream project while only missing rows pay for a remote manpage probe.
+UV tools now reuse their installed distribution metadata for published packages as well as `direct_url.json` for editable installs; Serena's `Project-URL: Homepage, https://github.com/oraios/serena` therefore resolves its Upstream cell.
+Process-local caching reduces repeated UV metadata scans for sibling binaries sharing one tool root from five scans to two on the development system; the isolated editable-source pass measured 0.413 seconds before and 0.132 seconds after.
+Full warm TTY runs remained noisy at 6.58-7.75 seconds because transient upstream retries dominated this sandboxed measurement, so no larger end-to-end speedup is claimed.

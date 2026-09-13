@@ -44,6 +44,8 @@ class Entry:
     `version` is the tool version the page documents, None where nothing
     was known to record -- including every entry written before this field
     existed (ADR-0018).
+    `source_uri` is the exact upstream file or release asset URI for a
+    repository-tier page; older entries and other tiers leave it None.
     """
 
     path: Path
@@ -52,6 +54,7 @@ class Entry:
     checksum: str
     backup: Path | None = None
     version: str | None = None
+    source_uri: str | None = None
 
 
 def checksum_of(path: str | Path) -> str:
@@ -75,6 +78,7 @@ def _entry_to_row(entry: Entry) -> dict[str, Any]:
         "checksum": entry.checksum,
         "backup": str(entry.backup) if entry.backup is not None else None,
         "version": entry.version,
+        "source_uri": entry.source_uri,
     }
 
 
@@ -88,6 +92,13 @@ def _row_to_entry(row: Any) -> Entry | None:
         return None
     try:
         backup = row["backup"]
+        raw_source_uri = row.get("source_uri")
+        source_uri = (
+            raw_source_uri
+            if isinstance(raw_source_uri, str)
+            and raw_source_uri.startswith(("https://", "http://", "file://"))
+            else None
+        )
         return Entry(
             path=Path(row["path"]),
             tier=Tier(row["tier"]),
@@ -97,6 +108,7 @@ def _row_to_entry(row: Any) -> Entry | None:
             # .get, not []: absent on every row written before this field
             # existed (ADR-0018), and that must read as None, not fail to parse.
             version=row.get("version"),
+            source_uri=source_uri,
         )
     except (KeyError, TypeError, ValueError):
         return None
@@ -217,6 +229,7 @@ def record(
     config: Config | None = None,
     *,
     version: str | None = None,
+    source_uri: str | None = None,
 ) -> None:
     """Record `tool`'s installed page. Called before the copy that places it, per ADR-0017."""
     manifest_path = _manifest_path(config)
@@ -228,6 +241,7 @@ def record(
         checksum=checksum,
         backup=backup,
         version=version,
+        source_uri=source_uri,
     )
     _save(manifest_path, entries)
 

@@ -120,6 +120,7 @@ For `list`, upstream repository checks inspect the exact version-matched tree wi
 For GitHub sources, MANIAC also inspects bounded, likely release artifacts independently, validates their archive contents rather than trusting artifact names, and can therefore discover release-only pages such as eza's.
 It never reads handcrafted Mise `extra_assets` entries.
 A validated bundle retains and installs every valid companion manpage across sections.
+Vendor and upstream pages are copied byte-for-byte into the configured manpath, not symlinked to Mise or the cache. The manifest records their tier, source, version, checksum, destination, and any displaced-page backup. Uninstall removes a page only while its checksum still matches (unless forced), then restores that backup; a changed page is kept. Companion pages are tracked separately today, so uninstalling the primary name does not yet remove the whole bundle.
 The default cache is `$XDG_CACHE_HOME/maniac/repos` (normally `~/.cache/maniac/repos`), with bare filtered Git objects under `git/`, selected pages under `manpages/`, release responses and assets under `releases/`, and tag/probe decisions under `upstream/`.
 Positive versioned results persist; definitive misses expire after five minutes, and transient network failures are not cached as misses.
 `list` uses no sparse checkout; sparse checkouts are reserved for synthesis and limited to documentation paths.
@@ -144,6 +145,9 @@ man howdoi
 
 `list` reports five states by checking manpage reachability: *ok* (a page resolves and local evidence says it is current), *unverified* (an external page resolves but its package/version match cannot be proven), *outdated* (positive evidence says a page documents another version), *available* (nothing resolves, but a page can be had without LLM synthesis), *missing* (nothing resolves and no free page is known). Use `--unverified`, `--outdated`, `--available`, or `--missing` to select a state.
 The table carries four columns: Tool, State, Source, and Upstream.
+Source reports who produced the page: `vendor` for a page shipped with the installed tool, `upstream` for one fetched from its repository, `maniac` for an LLM-generated page, and `system` for another page already on the manpath.
+The Source keyword links to the exact local page for `vendor`, `system`, and `maniac`; for GitHub sources, `upstream` links to the version-pinned repository file or release asset that supplied it, never MANIAC's cache. Upstream links to the repository itself. Other Git hosts remain plain Source text until MANIAC has an exact-file URL adapter for that host.
+`--managed` is independent of Source and selects every page MANIAC installed, including vendor and upstream pages copied onto the manpath.
 With no arguments, it reports every tool in your `$PATH`:
 
 ```bash
@@ -201,7 +205,7 @@ maniac eval howdoi --against-installed
 
 ### 5. Manage Installed Manpages
 
-`list` doubles as the inventory view -- a tool MANIAC manages reads `maniac` in its Source column, and `--managed` narrows to exactly those.
+`list` doubles as the inventory view: `--managed` selects pages MANIAC installed without replacing their content provenance. A managed vendor page still reads `vendor`, a managed repository page `upstream`, and only a generated page `maniac`.
 Uninstall safely restores any vendor backup:
 
 ```bash

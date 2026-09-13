@@ -55,6 +55,7 @@ def install_manpage(
     force: bool = False,
     *,
     version: str | None = None,
+    source_uri: str | None = None,
     config: Config | None = None,
 ) -> Path:
     """Copy compiled roff manpage into man directory with conflict guard and backup.
@@ -111,6 +112,7 @@ def install_manpage(
         checksum,
         backup=backup_path,
         version=version,
+        source_uri=source_uri,
         config=cfg,
     )
     try:
@@ -131,6 +133,7 @@ def install_manpage(
                 previous_entry.checksum,
                 backup=previous_entry.backup,
                 version=previous_entry.version,
+                source_uri=previous_entry.source_uri,
                 config=cfg,
             )
         else:

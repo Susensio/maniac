@@ -20,7 +20,11 @@ def _make_uv_tool(tmp_path: Path, tool: str, real_name: str) -> tuple[Path, Path
 
 
 def _add_dist_info(
-    root: Path, dist_info_name: str, *, direct_url: dict[str, object] | None = None
+    root: Path,
+    dist_info_name: str,
+    *,
+    direct_url: dict[str, object] | None = None,
+    metadata: str | None = None,
 ) -> Path:
     dist_info = root / "lib" / "python3.12" / "site-packages" / dist_info_name
     dist_info.mkdir(parents=True)
@@ -28,6 +32,8 @@ def _add_dist_info(
         (dist_info / "direct_url.json").write_text(
             json.dumps(direct_url), encoding="utf-8"
         )
+    if metadata is not None:
+        (dist_info / "METADATA").write_text(metadata, encoding="utf-8")
     return dist_info
 
 
@@ -103,15 +109,61 @@ def test_resolve_source_finds_a_local_editable_checkout(tmp_path: Path) -> None:
     assert source.target == f"LOCAL:{local_checkout}"
 
 
-def test_resolve_source_returns_none_for_a_published_package(tmp_path: Path) -> None:
-    """No direct_url.json (or none pointing at a local file): nothing to resolve to,
-    matching the prior `discover.py` behaviour for a plain PyPI install."""
+def test_resolve_source_reads_a_published_packages_repository_metadata(
+    tmp_path: Path,
+) -> None:
+    bin_path, root = _make_uv_tool(tmp_path, "ruff", "ruff")
+    _add_dist_info(
+        root,
+        "ruff-0.5.0.dist-info",
+        metadata=(
+            "Name: ruff\n"
+            "Version: 0.5.0\n"
+            "Project-URL: Repository, https://github.com/astral-sh/ruff\n"
+        ),
+    )
+    inst = uv.UvProvider().detect(bin_path)
+    assert inst is not None
+
+    source = uv.UvProvider().resolve_source(inst, config=Config())
+
+    assert source is not None
+    assert source.target == "astral-sh/ruff"
+
+
+def test_resolve_source_returns_none_without_repository_metadata(
+    tmp_path: Path,
+) -> None:
     bin_path, root = _make_uv_tool(tmp_path, "ruff", "ruff")
     _add_dist_info(root, "ruff-0.5.0.dist-info")
     inst = uv.UvProvider().detect(bin_path)
     assert inst is not None
 
     assert uv.UvProvider().resolve_source(inst, config=Config()) is None
+
+
+def test_uv_metadata_scans_are_cached_per_install_root(tmp_path: Path) -> None:
+    bin_path, root = _make_uv_tool(tmp_path, "tool", "tool")
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    _add_dist_info(
+        root,
+        "tool-1.2.3.dist-info",
+        direct_url={"url": f"file://{checkout}"},
+    )
+    uv._installed_version.cache_clear()
+    uv._local_editable_dir.cache_clear()
+
+    first = uv.UvProvider().detect(bin_path)
+    second = uv.UvProvider().detect(bin_path)
+    assert first is not None
+    assert second is not None
+    assert first.version == second.version == "1.2.3"
+    assert uv.UvProvider().resolve_source(first, config=Config()) is not None
+    assert uv.UvProvider().resolve_source(second, config=Config()) is not None
+
+    assert uv._installed_version.cache_info().hits == 1
+    assert uv._local_editable_dir.cache_info().hits == 1
 
 
 def test_local_docs_finds_manpage_under_install_root(tmp_path: Path) -> None:

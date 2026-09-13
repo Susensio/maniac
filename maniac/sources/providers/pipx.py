@@ -49,7 +49,7 @@ class PipxProvider:
             if not package:
                 continue
             root = Path(prefix + marker + package)
-            metadata = _find_metadata(root, package)
+            metadata = find_distribution_metadata(root, package)
             version = metadata.get("Version") if metadata else None
             return Installation(
                 binary=bin_path.name,
@@ -65,10 +65,10 @@ class PipxProvider:
     def resolve_source(
         self, inst: Installation, *, config: Config
     ) -> RepoSource | None:
-        metadata = _find_metadata(inst.root, inst.package)
+        metadata = find_distribution_metadata(inst.root, inst.package)
         if metadata is None:
             return None
-        repo = _repo_from_metadata(metadata)
+        repo = repository_from_metadata(metadata)
         return (
             RepoSource(name=inst.binary, target=repo, is_local=False) if repo else None
         )
@@ -95,7 +95,10 @@ def _pipx_home_candidates(
     return (str(default / "pipx"), str(Path(home) / ".local/pipx"))
 
 
-def _find_metadata(root: Path, package: str) -> email.message.Message | None:
+@cache
+def find_distribution_metadata(
+    root: Path, package: str
+) -> email.message.Message | None:
     """Locate the dist-info `METADATA` matching `package` under a pipx venv.
 
     Mirrors `UvProvider`'s glob across `lib/**/site-packages/*.dist-info`,
@@ -128,7 +131,7 @@ def _normalize(name: str) -> str:
 _REPO_LABELS = ("repository", "source", "source code", "github")
 
 
-def _repo_from_metadata(metadata: email.message.Message) -> str | None:
+def repository_from_metadata(metadata: email.message.Message) -> str | None:
     """Read an explicit GitHub link from `Project-URL`/`Home-page`, never guessed.
 
     `Project-URL` entries are "Label, URL" pairs, and a package lists several

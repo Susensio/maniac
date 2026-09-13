@@ -21,6 +21,7 @@ from hashlib import sha256
 from io import BytesIO, TextIOWrapper
 from pathlib import Path
 from urllib.error import HTTPError, URLError
+from urllib.parse import quote
 from urllib.request import Request, urlopen
 
 import zstandard
@@ -235,6 +236,24 @@ def discover_repo_manpage(
     return pages[0] if pages else None
 
 
+def discovered_manpage_uri(page: Path) -> str | None:
+    """Return the upstream-hosted URI recorded when ``page`` was materialized."""
+    try:
+        metadata = json.loads(
+            (page.parent / ".source.json").read_text(encoding="utf-8")
+        )
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(metadata, dict):
+        return None
+    uri = metadata.get("uri")
+    return (
+        uri
+        if isinstance(uri, str) and uri.startswith(("http://", "https://"))
+        else None
+    )
+
+
 def discover_repo_manpages(
     source: RepoSource,
     binary_name: str,
@@ -267,7 +286,7 @@ def discover_repo_manpages(
             source, binary_name, cache_dir_path, cfg, version, None
         ).pages
     probe_path = _upstream_cache_path(
-        cache_dir_path, "probes", clone_url, version, binary_name
+        cache_dir_path, "probes", "source-uri-v1", clone_url, version, binary_name
     )
     with _cache_lock(probe_path):
         cached = _read_probe_cache(probe_path, cache_dir_path, binary_name)
@@ -334,12 +353,14 @@ def _discover_remote_manpage_result(
         return _ProbeResult([], False)
     ref_name = "default"
     fetch_ref = "HEAD"
+    source_ref = "HEAD"
     if version is not None:
         tag = tag or _find_matching_tag_cached(cache_dir, clone_url, version, cfg)
         if tag is None:
             return _ProbeResult([], True)
         ref_name = tag
         fetch_ref = f"refs/tags/{tag}"
+        source_ref = tag
     repo = _bare_cache_dir(cache_dir, clone_url)
     ref = _fetch_bare_ref(repo, clone_url, ref_name, fetch_ref, cfg)
     if ref is None:
@@ -356,6 +377,7 @@ def _discover_remote_manpage_result(
             definitive = False
             continue
         cached = _materialize_page(cache_dir, source, ref_name, path, content)
+        _record_page_uri(cached, _repository_page_uri(source, source_ref, path))
         if _valid_page(cached, binary_name):
             return _ProbeResult([cached], True)
     return _ProbeResult([], definitive)
@@ -479,6 +501,23 @@ def _materialize_page(
     return destination
 
 
+def _repository_page_uri(source: RepoSource, ref: str, path: str) -> str | None:
+    """Build the browser URL for an exact file in a GitHub repository ref."""
+    clone_url = source.clone_url
+    if clone_url is None or not clone_url.startswith("https://github.com/"):
+        return None
+    repository = clone_url.removeprefix("https://github.com/").removesuffix(".git")
+    return (
+        f"https://github.com/{repository}/blob/{quote(ref, safe='')}/"
+        f"{quote(path, safe='/')}"
+    )
+
+
+def _record_page_uri(page: Path, uri: str | None) -> None:
+    if uri is not None:
+        _write_json_cache(page.parent / ".source.json", {"uri": uri})
+
+
 def _discover_github_release_manpages(
     source: RepoSource,
     binary_name: str,
@@ -555,13 +594,19 @@ def _discover_github_release_manpages_result(
             continue
         if direct:
             page = _materialize_page(cache_dir, source, tag, name, content)
+            _record_page_uri(page, asset["browser_download_url"])
             if _valid_page(page, binary_name):
                 return _ProbeResult([page], True)
             definitive = False
             continue
         try:
             pages = _manpages_from_release_archive(
-                content, source, binary_name, cache_dir, tag
+                content,
+                source,
+                binary_name,
+                cache_dir,
+                tag,
+                asset["browser_download_url"],
             )
         except (OSError, tarfile.TarError):
             definitive = False
@@ -629,7 +674,12 @@ def _download_cached_result(
 
 
 def _manpages_from_release_archive(
-    archive: bytes, source: RepoSource, binary_name: str, cache_dir: Path, tag: str
+    archive: bytes,
+    source: RepoSource,
+    binary_name: str,
+    cache_dir: Path,
+    tag: str,
+    source_uri: str | None = None,
 ) -> list[Path]:
     """Materialize every valid page from an archive with a valid primary page."""
     pages: list[Path] = []
@@ -655,6 +705,7 @@ def _manpages_from_release_archive(
             if extracted_total > _RELEASE_EXTRACTED_LIMIT:
                 return []
             page = _materialize_page(cache_dir, source, tag, member.name, content)
+            _record_page_uri(page, source_uri)
             if not _is_valid_bundle_page(page):
                 continue
             pages.append(page)
