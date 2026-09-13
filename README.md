@@ -111,6 +111,11 @@ hx       synthesized from --help + repo docs
 
 `--no-generate` restricts this to the first two tiers and never calls an LLM; `--generate` forces the third, skipping the first two outright.
 
+Before synthesis, MANIAC reports how many commands, subcommands, and repository documents it found, which repository it used, and whether those documents matched the installed version.
+Root `--help` alone is enough to generate a page when no better source exists, but MANIAC warns that the source material is limited.
+Repository documentation alone can also be used when the help crawl fails; synthesis stops only when neither source provides usable material.
+A failed `--help` invocation is accepted as documentation only when its combined output contains a recognizable `usage:` line, covering tools such as tmux that write usage to stderr and exit nonzero without treating a bare option error as help.
+
 For `list`, upstream repository checks inspect the exact version-matched tree without cloning or checking out a worktree, using cached Git tree objects and materializing only a selected page.
 For GitHub sources, MANIAC also inspects bounded, likely release artifacts independently, validates their archive contents rather than trusting artifact names, and can therefore discover release-only pages such as eza's.
 It never reads handcrafted Mise `extra_assets` entries.

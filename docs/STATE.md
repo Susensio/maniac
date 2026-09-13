@@ -40,4 +40,6 @@ The development system still has no installed `fzf.1` in either MANIAC's data di
 Mise correctly retains `tmux/tmux-builds` as the binary-distribution provenance for tmux.
 Every documentation consumer maps that exact repository to `tmux/tmux` through packaged `defaults.toml`; no repository-name heuristic or Mise `extra_assets` field is consulted.
 The mapping is used before list/install manpage probes, `source docs`, and tier-3 documentation extraction.
-Tmux's empty-stdout help handling and the insufficient synthesis-input guard remain separate open defects in `docs/BACKLOG.md`.
+Help crawling now keeps successful stdout, falls back to stderr, and accepts a failed `--help` only when the combined output contains a real `usage:` line; empty or option-error-only output is a crawl failure.
+Tier-3 synthesis may proceed from root help alone or repository documentation alone, warns when only root help is available, and refuses only when neither source produced usable material.
+Before the LLM call it reports command and subcommand counts, the resolved repository, documentation-file count, and whether those files matched the installed version.
