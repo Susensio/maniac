@@ -12,7 +12,7 @@ import zstandard
 
 from maniac.config import Config
 from maniac.models import Installation
-from maniac.sources import discovery, loginpath
+from maniac.sources import discovery, loginpath, resolution
 from maniac.sources.discovery import (
     _check_mise_toml,
     _clean_git_url,
@@ -167,7 +167,7 @@ def test_enumerate_installations_walks_path_and_keeps_only_claimed_binaries(
             return ("fake-provider", _fake_installation("claimed"))
         return None
 
-    monkeypatch.setattr(discovery, "_detect_via_registry", fake_detect)
+    monkeypatch.setattr(resolution, "_detect_via_registry", fake_detect)
 
     found = enumerate_installations()
 
@@ -194,7 +194,7 @@ def test_enumerate_installations_resolves_a_name_once_at_its_first_path_entry(
         seen_paths.append(bin_path)
         return ("fake-provider", _fake_installation("tool"))
 
-    monkeypatch.setattr(discovery, "_detect_via_registry", fake_detect)
+    monkeypatch.setattr(resolution, "_detect_via_registry", fake_detect)
 
     enumerate_installations()
 
@@ -207,7 +207,7 @@ def test_enumerate_installations_skips_non_executable_files(
     (tmp_path / "not_executable").touch(mode=0o644)
     monkeypatch.setattr(discovery.loginpath, "login_path", lambda: str(tmp_path))
     monkeypatch.setattr(
-        discovery, "_detect_via_registry", lambda p: pytest.fail("must not be called")
+        resolution, "_detect_via_registry", lambda p: pytest.fail("must not be called")
     )
 
     assert enumerate_installations() == []
@@ -221,7 +221,7 @@ def test_enumerate_installations_on_start_and_on_scan_are_optional_and_no_op_by_
     claimed.touch(mode=0o755)
     monkeypatch.setattr(discovery.loginpath, "login_path", lambda: str(tmp_path))
     monkeypatch.setattr(
-        discovery,
+        resolution,
         "_detect_via_registry",
         lambda p: ("fake-provider", _fake_installation(p.name)),
     )
@@ -238,7 +238,7 @@ def test_enumerate_installations_reports_candidate_count_then_one_scan_per_candi
         (tmp_path / name).touch(mode=0o755)
     monkeypatch.setattr(discovery.loginpath, "login_path", lambda: str(tmp_path))
     monkeypatch.setattr(
-        discovery,
+        resolution,
         "_detect_via_registry",
         lambda p: ("fake-provider", _fake_installation(p.name)),
     )

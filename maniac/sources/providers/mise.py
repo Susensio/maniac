@@ -1,7 +1,9 @@
 """Mise-installed binaries under `~/.local/share/mise/installs/` (ADR-0015)."""
 
 import tomllib
+from collections.abc import Callable
 from pathlib import Path
+from typing import ClassVar
 
 from ...config import Config
 from ...logging import logger
@@ -9,9 +11,7 @@ from ...models import Installation, RepoSource
 from .. import discovery
 from ..manpages import find_install_root_manpages
 from ..pathcache import resolve_cached
-from .base import Provider
 from .npm import read_package_json
-from .registry import registry
 
 _INSTALLS_MARKER = "/.local/share/mise/installs/"
 _DIRECT_BACKENDS = ("aqua", "github")
@@ -35,6 +35,16 @@ class MiseProvider:
     """
 
     name = "mise"
+    _composed_source_resolver: ClassVar[
+        Callable[[Installation, Config], RepoSource | None] | None
+    ] = None
+
+    @classmethod
+    def set_composed_source_resolver(
+        cls, resolver: Callable[[Installation, Config], RepoSource | None]
+    ) -> None:
+        """Bind resolution of installation records composed by Mise."""
+        cls._composed_source_resolver = resolver
 
     def can_detect(self, real_path: Path) -> bool:
         """Recognise mise's versioned installation layout."""
@@ -72,12 +82,7 @@ class MiseProvider:
         pure filesystem reads, so neither branch needs it.
         """
         if inst.parent is not None:
-            provider = _find_provider(inst.parent.provider)
-            return (
-                provider.resolve_source(inst.parent, config=config)
-                if provider
-                else None
-            )
+            return self._resolve_composed_source(inst.parent, config)
         backend_record = _read_backend_record(inst.root)
         if backend_record is not None:
             repo = _repo_from_backend(*backend_record)
@@ -88,10 +93,7 @@ class MiseProvider:
             )
         parent = _build_npm_parent_from_layout(inst)
         if parent is not None:
-            provider = _find_provider(parent.provider)
-            source = (
-                provider.resolve_source(parent, config=config) if provider else None
-            )
+            source = self._resolve_composed_source(parent, config)
             if source:
                 return source
         repo = discovery._resolve_from_mise(
@@ -103,6 +105,14 @@ class MiseProvider:
 
     def local_docs(self, inst: Installation) -> list[Path]:
         return find_install_root_manpages(inst.root, inst.binary)
+
+    @classmethod
+    def _resolve_composed_source(
+        cls, parent: Installation, config: Config
+    ) -> RepoSource | None:
+        if cls._composed_source_resolver is None:
+            return None
+        return cls._composed_source_resolver(parent, config)
 
 
 def _read_backend_record(root: Path) -> tuple[str, str] | None:
@@ -224,10 +234,3 @@ def _npm_package_candidates(modules_root: Path) -> list[tuple[str, Path]]:
         if name == expected_name:
             result.append((name, candidate))
     return result
-
-
-def _find_provider(name: str) -> Provider | None:
-    for provider in registry:
-        if provider.name == name:
-            return provider
-    return None

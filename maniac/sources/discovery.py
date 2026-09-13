@@ -1,7 +1,6 @@
 """Dynamic repository discovery via local metadata and Mise's registry."""
 
 import io
-import os
 import re
 import tarfile
 import tempfile
@@ -18,10 +17,11 @@ import zstandard
 
 from ..config import Config
 from ..logging import logger
-from ..models import Installation, RepoSource
+from ..models import RepoSource
 from . import loginpath
 
 if TYPE_CHECKING:
+    from ..models import Installation
     from .providers.base import Provider
 
 MISE_REGISTRY_URL = "https://mise.jdx.dev/registry/latest.tar.zst"
@@ -93,10 +93,9 @@ def discover_repo(
     `RepoSource(name=binary, target=binary)`, reachable by `run_pipeline`
     and liable to synthesize a page for a genuinely unresolved tool.
     """
-    bin_path = resolve_bin_path(binary_name, bin_dir)
-    if bin_path is None:
-        return None
-    return _resolve_symlink_target(binary_name, bin_path, config=config)
+    from .resolution import discover_repo as resolve_repo
+
+    return resolve_repo(binary_name, bin_dir=bin_dir, config=config)
 
 
 def find_installation(
@@ -110,10 +109,9 @@ def find_installation(
     need the install root and version directly, not only what
     `resolve_source` derives from them.
     """
-    bin_path = resolve_bin_path(binary_name, bin_dir)
-    if bin_path is None:
-        return None
-    return _detect_via_registry(bin_path)
+    from .resolution import find_installation as resolve_installation
+
+    return resolve_installation(binary_name, bin_dir=bin_dir)
 
 
 def enumerate_installations(
@@ -140,55 +138,9 @@ def enumerate_installations(
     `_detect_via_registry` loop that dominates the cost; `on_scan` fires
     once per candidate processed in that loop.
     """
-    seen: dict[str, Path] = {}
-    for entry in loginpath.login_path_dirs():
-        try:
-            children = list(os.scandir(entry))
-        except OSError:
-            continue
-        for child in children:
-            if child.name in seen:
-                continue
-            try:
-                if not child.is_file() or not os.access(child.path, os.X_OK):
-                    continue
-            except OSError:
-                continue
-            seen[child.name] = Path(child.path)
+    from .resolution import enumerate_installations as resolve_installations
 
-    if on_start is not None:
-        on_start(len(seen))
-
-    found: list[tuple[Provider, Installation]] = []
-    for bin_path in seen.values():
-        claim = _detect_via_registry(bin_path)
-        if claim is not None:
-            found.append(claim)
-        if on_scan is not None:
-            on_scan()
-
-    return sorted(found, key=lambda item: item[1].binary)
-
-
-def _detect_via_registry(bin_path: Path) -> "tuple[Provider, Installation] | None":
-    """Loop over registered providers (ADR-0015) for the one that claims this path."""
-    from .providers import registry  # deferred: providers import this module themselves
-
-    for provider in registry.candidates_for(bin_path):
-        inst = provider.detect(bin_path)
-        if inst is not None:
-            return provider, inst
-    return None
-
-
-def _resolve_symlink_target(
-    binary_name: str, bin_path: Path, *, config: Config
-) -> RepoSource | None:
-    found = _detect_via_registry(bin_path)
-    if found is None:
-        return None
-    provider, inst = found
-    return provider.resolve_source(inst, config=config)
+    return resolve_installations(on_start=on_start, on_scan=on_scan)
 
 
 def _check_mise_toml(cfg_path: Path, tool_id: str, binary_name: str) -> str | None:

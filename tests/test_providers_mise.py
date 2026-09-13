@@ -514,7 +514,11 @@ def test_resolve_source_passes_config_to_a_parent_provider(
                 is_local=False,
             )
 
-    monkeypatch.setattr(mise, "_find_provider", lambda name: ParentProvider())
+    monkeypatch.setattr(
+        mise.MiseProvider,
+        "_composed_source_resolver",
+        lambda parent, config: ParentProvider().resolve_source(parent, config=config),
+    )
 
     source = mise.MiseProvider().resolve_source(inst, config=config)
 

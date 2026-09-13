@@ -4,6 +4,7 @@ from pathlib import Path
 
 from maniac.config import Config
 from maniac.models import Installation, RepoSource
+from maniac.sources import resolution
 from maniac.sources.providers import ProviderRegistry, registry
 
 
@@ -54,13 +55,13 @@ class _RoutedFakeProvider(_FakeProvider):
         )
 
 
-def test_the_module_registry_holds_the_registered_providers() -> None:
+def test_resolution_registry_holds_the_registered_providers() -> None:
     """`local_lib`, `uv`, `mise` register first, mirroring the prior check order;
     Stage 4 appends npm, pipx, cargo, go, Homebrew -- registration order settles
     nothing between providers (ADR-0015: `$PATH` order breaks ties), only the
     diff staying a pure append.
     """
-    assert [provider.name for provider in registry] == [
+    expected = [
         "local_lib",
         "uv",
         "mise",
@@ -70,6 +71,8 @@ def test_the_module_registry_holds_the_registered_providers() -> None:
         "go",
         "homebrew",
     ]
+    assert [provider.name for provider in resolution.registry] == expected
+    assert [provider.name for provider in registry] == expected
 
 
 def test_register_appends_and_iteration_preserves_order() -> None:
