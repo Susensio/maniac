@@ -16,10 +16,9 @@ from .providers.local_lib import LocalLibProvider
 from .providers.mise import MiseProvider
 from .providers.npm import NpmProvider
 from .providers.pipx import PipxProvider
-from .providers.registry import ProviderRegistry
+from .providers.registry import registry
 from .providers.uv import UvProvider
 
-registry = ProviderRegistry()
 registry.register(LocalLibProvider())
 registry.register(UvProvider())
 registry.register(MiseProvider())

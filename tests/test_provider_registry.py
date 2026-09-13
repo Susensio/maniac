@@ -6,6 +6,7 @@ from maniac.config import Config
 from maniac.models import Installation, RepoSource
 from maniac.sources import resolution
 from maniac.sources.providers import ProviderRegistry, registry
+from maniac.sources.providers.registry import registry as legacy_registry
 
 
 class _FakeProvider:
@@ -73,6 +74,7 @@ def test_resolution_registry_holds_the_registered_providers() -> None:
     ]
     assert [provider.name for provider in resolution.registry] == expected
     assert [provider.name for provider in registry] == expected
+    assert legacy_registry is resolution.registry is registry
 
 
 def test_register_appends_and_iteration_preserves_order() -> None:
