@@ -7,6 +7,11 @@ Immediate order after the completed list/provenance work:
 1. Distinguish a definitive tier-2 absence from a transient probe failure, then prevent the latter from silently falling through to synthesis; the remaining product choice is an interactive confirmation versus uniform refusal with explicit `--generate` as the override.
 2. Make every page in an upstream release bundle uninstall as one managed unit, including checksum protection and restoration of each displaced vendor page.
 3. Admit bounded documentation roots inside monorepos, using OpenCode's versioned English docs as the first real fixture.
+4. Install every MANIAC-managed manpath entry as a symlink instead of duplicating page bytes.
+   Vendor pages should link to the provider-managed page so an application update refreshes the manual too, matching the Mise `system-install` workflow; verify that each provider offers a target that survives or advances across version changes rather than leaving a link pinned to an obsolete version directory.
+   Generated pages should link to their existing durable MANIAC output, while upstream pages must first be materialized in a durable MANIAC data directory and linked from there -- never link the manpath into the disposable cache.
+   Record the expected link target in the manifest so uninstall removes only MANIAC's link, permits provider-owned vendor content to change, restores displaced pages safely, and handles dangling or manually retargeted links explicitly.
+   Write the storage and ownership decision as an ADR before implementation, narrowing ADR-0017 without weakening its manifest-based uninstall guarantees.
 
 ## Recovered from an unrecorded session (2026-09-09)
 
