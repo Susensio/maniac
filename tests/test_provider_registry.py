@@ -1,5 +1,7 @@
 """Tests for `ProviderRegistry` (ADR-0015): registration plus ordered iteration."""
 
+import subprocess
+import sys
 from pathlib import Path
 
 from maniac.config import Config
@@ -75,6 +77,24 @@ def test_resolution_registry_holds_the_registered_providers() -> None:
     assert [provider.name for provider in resolution.registry] == expected
     assert [provider.name for provider in registry] == expected
     assert legacy_registry is resolution.registry is registry
+
+
+def test_legacy_registry_import_bootstraps_the_populated_singleton() -> None:
+    code = """
+from maniac.sources.providers.registry import registry as legacy_registry
+from maniac.sources.providers import registry as package_registry
+from maniac.sources import resolution
+
+assert legacy_registry is package_registry is resolution.registry
+assert [provider.name for provider in legacy_registry] == [
+    "local_lib", "uv", "mise", "npm", "pipx", "cargo", "go", "homebrew"
+]
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, check=False
+    )
+
+    assert result.returncode == 0, result.stderr
 
 
 def test_register_appends_and_iteration_preserves_order() -> None:
