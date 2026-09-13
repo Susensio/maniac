@@ -1,14 +1,11 @@
 """Tests for `ProviderRegistry` (ADR-0015): registration plus ordered iteration."""
 
-import subprocess
-import sys
 from pathlib import Path
 
 from maniac.config import Config
 from maniac.models import Installation, RepoSource
 from maniac.sources import resolution
-from maniac.sources.providers import ProviderRegistry, registry
-from maniac.sources.providers.registry import registry as legacy_registry
+from maniac.sources.providers.registry import ProviderRegistry, registry
 
 
 class _FakeProvider:
@@ -58,7 +55,7 @@ class _RoutedFakeProvider(_FakeProvider):
         )
 
 
-def test_resolution_registry_holds_the_registered_providers() -> None:
+def test_registry_holds_the_registered_providers() -> None:
     """`local_lib`, `uv`, `mise` register first, mirroring the prior check order;
     Stage 4 appends npm, pipx, cargo, go, Homebrew -- registration order settles
     nothing between providers (ADR-0015: `$PATH` order breaks ties), only the
@@ -76,30 +73,7 @@ def test_resolution_registry_holds_the_registered_providers() -> None:
     ]
     assert [provider.name for provider in resolution.registry] == expected
     assert [provider.name for provider in registry] == expected
-    assert legacy_registry is resolution.registry is registry
-
-
-def test_legacy_registry_import_bootstraps_the_populated_singleton() -> None:
-    code = """
-import sys
-
-from maniac.sources.providers.registry import registry as legacy_registry
-
-assert "maniac.sources.resolution" not in sys.modules
-assert [provider.name for provider in legacy_registry] == [
-    "local_lib", "uv", "mise", "npm", "pipx", "cargo", "go", "homebrew"
-]
-
-from maniac.sources.providers import registry as package_registry
-from maniac.sources import resolution
-
-assert legacy_registry is package_registry is resolution.registry
-"""
-    result = subprocess.run(
-        [sys.executable, "-c", code], capture_output=True, text=True, check=False
-    )
-
-    assert result.returncode == 0, result.stderr
+    assert resolution.registry is registry
 
 
 def test_register_appends_and_iteration_preserves_order() -> None:
