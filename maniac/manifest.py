@@ -191,6 +191,7 @@ def load(config: Config | None = None) -> dict[str, Entry]:
     path = _manifest_path(config)
     if not path.exists():
         entries = _seed_from_headers(config)
+        _migrate_links(entries, config)
         _save(path, entries)
         return entries
 

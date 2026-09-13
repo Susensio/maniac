@@ -142,6 +142,42 @@ def test_install_manpage_maniac_overwrite(tmp_path: Path) -> None:
     assert entry.source == "new-model"
 
 
+def test_install_does_not_authorize_a_different_manpath_destination(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source" / "tool.1"
+    source.parent.mkdir()
+    source.write_text(".TH TOOL 1 managed", encoding="utf-8")
+    cfg = Config(
+        output_dir=tmp_path / "durable",
+        manifest_path=tmp_path / "state" / "installed.json",
+    )
+    install_manpage(
+        source,
+        "tool",
+        Tier.SYNTHESIS,
+        "model",
+        target_dir=tmp_path / "old-man1",
+        config=cfg,
+    )
+    new_dir = tmp_path / "new-man1"
+    new_dir.mkdir()
+    foreign = new_dir / "tool.1"
+    foreign.write_text(".TH TOOL 1 foreign", encoding="utf-8")
+
+    with pytest.raises(FileExistsError):
+        install_manpage(
+            source,
+            "tool",
+            Tier.SYNTHESIS,
+            "model",
+            target_dir=new_dir,
+            config=cfg,
+        )
+
+    assert foreign.read_text(encoding="utf-8") == ".TH TOOL 1 foreign"
+
+
 def test_install_manpage_foreign_without_force_fails(tmp_path: Path) -> None:
     target_dir = tmp_path / "man1"
     target_dir.mkdir(parents=True)
@@ -598,6 +634,60 @@ def test_uninstall_preserves_retargeted_link_and_backup(tmp_path: Path) -> None:
     assert installed.resolve() == replacement
     assert backup.exists()
     assert manifest_module.lookup("tool", config=cfg) is not None
+
+
+def test_uninstall_preserves_link_retargeted_through_an_alias(tmp_path: Path) -> None:
+    source = tmp_path / "source" / "tool.1"
+    source.parent.mkdir()
+    source.write_text(".TH TOOL 1 maniac", encoding="utf-8")
+    cfg = Config(
+        man_dir=tmp_path / "man1",
+        output_dir=tmp_path / "durable",
+        manifest_path=tmp_path / "state" / "installed.json",
+    )
+    installed = install_manpage(source, "tool", Tier.SYNTHESIS, "model", config=cfg)
+    entry = manifest_module.lookup("tool", config=cfg)
+    assert entry is not None and entry.target is not None
+    alias = tmp_path / "alias.1"
+    alias.symlink_to(entry.target)
+    installed.unlink()
+    installed.symlink_to(alias)
+
+    result = uninstall_manpage("tool", config=cfg)
+
+    assert result.modified_kept == installed
+    assert installed.readlink() == alias
+    assert manifest_module.lookup("tool", config=cfg) is not None
+
+
+def test_uninstall_accepts_a_recorded_relative_link_target(tmp_path: Path) -> None:
+    man_dir = tmp_path / "man1"
+    man_dir.mkdir()
+    target = tmp_path / "durable" / "tool.1"
+    target.parent.mkdir()
+    target.write_text(".TH TOOL 1 maniac", encoding="utf-8")
+    installed = man_dir / "tool.1"
+    relative_target = Path("../durable/tool.1")
+    installed.symlink_to(relative_target)
+    cfg = Config(
+        man_dir=man_dir,
+        output_dir=target.parent,
+        manifest_path=tmp_path / "state" / "installed.json",
+    )
+    manifest_module.record(
+        "tool",
+        installed,
+        Tier.SYNTHESIS,
+        "model",
+        manifest_module.checksum_of(target),
+        target=relative_target,
+        config=cfg,
+    )
+
+    result = uninstall_manpage("tool", config=cfg)
+
+    assert installed in result.removed
+    assert not installed.exists()
 
 
 def test_uninstall_preserves_replaced_link(tmp_path: Path) -> None:

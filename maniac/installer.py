@@ -82,7 +82,11 @@ def install_manpage(
     previous_entry: Entry | None = None
     if _path_exists(dest_file):
         existing = manifest.lookup(tool, config=cfg)
-        owned = existing is not None and _is_expected_link(existing)
+        owned = (
+            existing is not None
+            and existing.path == dest_file
+            and _is_expected_link(existing)
+        )
         if owned:
             # Reinstalling over our own page: carry the prior backup forward
             # rather than dropping it, or a vendor page backed up on an
@@ -169,16 +173,23 @@ def _durable_target(src: Path, cfg: Config, *, durable_source: bool) -> Path:
 
 def _is_expected_link(entry: Entry) -> bool:
     """Whether the recorded manpath entry still points to its recorded target."""
-    if entry.target is None or not entry.path.is_symlink() or not entry.target.exists():
+    if entry.target is None or not entry.path.is_symlink():
         return False
     try:
         link_target = entry.path.readlink()
     except OSError:
         return False
-    actual = (
-        link_target if link_target.is_absolute() else entry.path.parent / link_target
+    if link_target != entry.target:
+        return False
+    return _expected_target_path(entry).exists()
+
+
+def _expected_target_path(entry: Entry) -> Path:
+    """Return the recorded target as resolved from its manpath entry."""
+    assert entry.target is not None
+    return (
+        entry.target if entry.target.is_absolute() else entry.path.parent / entry.target
     )
-    return actual.resolve(strict=False) == entry.target.resolve(strict=False)
 
 
 @dataclass
@@ -233,11 +244,14 @@ def uninstall_manpage(
     elif (
         entry.target is None
         or not _is_expected_link(entry)
-        or (not force and manifest.checksum_of(entry.target) != entry.checksum)
+        or (
+            not force
+            and manifest.checksum_of(_expected_target_path(entry)) != entry.checksum
+        )
     ):
         modified_kept = entry.path
     else:
-        target = entry.target
+        target = _expected_target_path(entry)
         installed_file = entry.path
         installed_file.unlink()
         logger.info("Removed installed manpage", path=str(installed_file))

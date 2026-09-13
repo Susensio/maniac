@@ -258,8 +258,8 @@ def test_migration_ignores_a_header_carrying_page_only_in_output_dir(
     assert manifest.load(config=cfg) == {}
 
 
-def test_migration_seeds_from_a_header_carrying_page(tmp_path: Path) -> None:
-    """No manifest file yet: a synthesized page's provenance header seeds tier=synthesis."""
+def test_migration_seeds_and_links_a_header_carrying_page(tmp_path: Path) -> None:
+    """First load migrates a header-seeded page to its durable target."""
     man_dir = tmp_path / "man1"
     man_dir.mkdir(parents=True)
     header = build_provenance_header("tool", model="Gemini 3.7 Flash")
@@ -273,6 +273,9 @@ def test_migration_seeds_from_a_header_carrying_page(tmp_path: Path) -> None:
     assert entries["tool"].source == "Gemini 3.7 Flash"
     assert entries["tool"].path == man_dir / "tool.1"
     assert entries["tool"].checksum == manifest.checksum_of(man_dir / "tool.1")
+    assert entries["tool"].target == cfg.output_dir / "tool.1"
+    assert (man_dir / "tool.1").is_symlink()
+    assert (man_dir / "tool.1").resolve() == entries["tool"].target
     # Migration persists so it never reruns.
     assert cfg.manifest_path.exists()
 
