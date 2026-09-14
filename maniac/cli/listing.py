@@ -1,71 +1,49 @@
-"""`list`: report each binary's manpage reachability, per ADR-0026's action ladder.
+"""`list`: the terminal face of `maniac.listing`, and nothing else.
 
-| state    | means                                                             |
-|----------|--------------------------------------------------------------------|
-| ok       | a page resolves through `man` now and is current by local evidence |
-| unverified | an external page resolves but its matching package cannot be proven |
-| outdated | a page resolves, and positive evidence says it documents another version |
-| available| nothing resolves, but a page can be had without an LLM             |
-| missing  | nothing resolves and no free page is known                         |
-
-This reverses ADR-0013/ADR-0016's choice, recorded in this module's earlier
-docstring as "the manpath is never scanned": `find_installed_manpage_path`
-(`sources/manpages.py`, `man -w`) is now called for every row, because the
-question this command answers is whether `man <tool>` works, not what
-MANIAC itself has done for a binary (ADR-0018). Enumeration is still a
-provider walk (`resolution.enumerate_installations`), not a manpath scan --
-the unit stays a binary a provider detected, since that is still what
-bounds what a bulk install could act on -- but each row's *state* is now a
-reachability fact, checked against `man` directly.
-
-`--unverified`/`--outdated`/`--available`/`--missing` filters the State axis; `--managed`
-filters manifest ownership independently of page provenance. Filters union
-within an axis and intersect across axes; no flags means no filtering. There is no
-`--ok`, deliberately (ADR-0018): it would select exactly the rows needing
-no action.
-
-Repository identity is resolved for rows that remain locally unresolved per
-ADR-0018. Tier-2 manpage lookup is cache-first and runs only for unresolved
-rows with an installed version and an installation-derived repository.
+Every reachability fact comes from the inventory service; this module only
+selects, groups and draws. `--unverified`/`--outdated`/`--available`/`--missing`
+filters the State axis and `--managed` filters manifest ownership independently
+of page provenance. Filters union within an axis and intersect across axes; no
+flags means no filtering. There is no `--ok`, deliberately (ADR-0018): it would
+select exactly the rows needing no action.
 """
 
-from collections.abc import Callable, Mapping
-from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
-from dataclasses import dataclass, replace
-from enum import Enum
-from pathlib import Path
 from time import monotonic
-from types import MappingProxyType
-from typing import TYPE_CHECKING, Annotated, Any
+from typing import Annotated, Any
 
 import typer
 from rich.live import Live
 from rich.progress import Progress
 from rich.table import Table
 
-from .. import manifest
-from ..config import Config
-from ..logging import logger
-from ..models import RepoSource
-from ..sources import resolution
-from ..sources.crawler import get_version
-from ..sources.docs import discover_repo_manpage, discovered_manpage_uri
-from ..sources.documentation import documentation_source
-from ..sources.manpages import (
-    _opener_for,
-    find_installed_manpage_path,
-    select_primary_manpage,
+from ..listing import (
+    ActionState,
+    InventoryObserver,
+    PageSource,
+    RowSnapshot,
+    ToolRow,
+    compute_rows,
 )
-from ..sources.packages import ExternalPageFreshness, verify_external_page
-from ..sources.pathcache import resolve_cached
-from ..sources.providers.base import DirectPageProvider
-from ..sources.providers.registry import registry
+from ..models import RepoSource
 from . import app, console, get_config
 from .render import _repo_cell
 
-if TYPE_CHECKING:
-    from ..models import Installation
-    from ..sources.providers.base import Provider
+# Traffic-light by what remains to be done: green needs nothing, yellow
+# needs a free reinstall or install, red needs an LLM.
+_STATE_COLOR: dict[ActionState, str] = {
+    ActionState.OK: "green",
+    ActionState.UNVERIFIED: "yellow",
+    ActionState.OUTDATED: "yellow",
+    ActionState.AVAILABLE: "yellow",
+    ActionState.MISSING: "red",
+}
+
+_STATE_COLUMN_WIDTH = max(
+    len("checking…"), *(len(state.value) for state in ActionState)
+)
+_STREAMING_SOURCE_WIDTH = max(len(source.value) for source in PageSource)
+_TOOL_COLUMN_MAX_WIDTH = 24
+_UPSTREAM_COLUMN_WIDTH = 24
 
 
 class _ProgressReporter:
@@ -100,722 +78,6 @@ class _ProgressReporter:
 
     def stop(self) -> None:
         self._progress.stop()
-
-
-class ActionState(Enum):
-    """The action-ladder state a binary's manpage reachability puts it in (ADR-0026)."""
-
-    OK = "ok"
-    UNVERIFIED = "unverified"
-    OUTDATED = "outdated"
-    AVAILABLE = "available"
-    MISSING = "missing"
-
-
-# Traffic-light by what remains to be done: green needs nothing, yellow
-# needs a free reinstall or install, red needs an LLM.
-_STATE_COLOR: dict[ActionState, str] = {
-    ActionState.OK: "green",
-    ActionState.UNVERIFIED: "yellow",
-    ActionState.OUTDATED: "yellow",
-    ActionState.AVAILABLE: "yellow",
-    ActionState.MISSING: "red",
-}
-
-
-class PageSource(Enum):
-    """Where page content came from, or would come from if installed (ADR-0027).
-
-    One column serves both readings -- State already disambiguates which
-    applies, since `ok`/`outdated` describe a page that resolves and
-    `available` describes one that would if installed.
-    """
-
-    MANIAC = "maniac"
-    VENDOR = "vendor"
-    UPSTREAM = "upstream"
-    SYSTEM = "system"
-    NONE = ""
-
-
-_STATE_COLUMN_WIDTH = max(
-    len("checking…"), *(len(state.value) for state in ActionState)
-)
-_STREAMING_SOURCE_WIDTH = max(len(source.value) for source in PageSource)
-_TOOL_COLUMN_MAX_WIDTH = 24
-_UPSTREAM_COLUMN_WIDTH = 24
-
-
-LOCAL_CLASSIFY_WORKERS = 8
-UPSTREAM_PROBE_WORKERS = 8
-
-
-@dataclass(frozen=True, slots=True)
-class ToolRow:
-    """One binary's reachability. `package` groups siblings for the table view only."""
-
-    tool: str
-    package: str
-    provider: str
-    state: ActionState
-    source: PageSource
-    upstream: RepoSource | None
-    managed: bool = False
-    page_path: Path | None = None
-    page_uri: str | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class _LocalClassification:
-    state: ActionState
-    source: PageSource
-    managed: bool
-    page_path: Path | None
-    page_uri: str | None = None
-
-
-def _strip_compression(path: Path) -> Path:
-    """Strip a trailing compression suffix, if `manpages._opener_for` recognizes one.
-
-    Derives the recognized suffixes by asking `_opener_for` itself rather
-    than a second hardcoded list (`manpages.py:557-569`) that could drift
-    from it: a suffix is compressed exactly when `_opener_for` picks a
-    decompressing opener over the plain-`open` default.
-    """
-    if _opener_for(path) is not open:
-        return path.with_suffix("")
-    return path
-
-
-def _same_page(entry_path: Path, installed_path: Path) -> bool:
-    """Whether a manifest entry and a `man -w` result name the same page.
-
-    `man -w` may return a compressed path where the manifest recorded an
-    uncompressed one (or vice versa), and either side may be a symlink, so
-    both are resolved (`pathcache.resolve_cached`) and stripped of a
-    compression suffix before comparison.
-    """
-    return _strip_compression(resolve_cached(entry_path)) == _strip_compression(
-        resolve_cached(installed_path)
-    )
-
-
-def _under_root(path: Path, root: Path) -> bool:
-    """Whether a resolved page path sits under an installation's root."""
-    try:
-        return resolve_cached(path).is_relative_to(resolve_cached(root))
-    except (OSError, ValueError):
-        return False
-
-
-def _managed_source(entry: manifest.Entry) -> PageSource:
-    """Return the content provenance recorded for a reachable managed page."""
-    return {
-        manifest.Tier.INSTALL_ROOT: PageSource.VENDOR,
-        manifest.Tier.REPOSITORY: PageSource.UPSTREAM,
-        manifest.Tier.SYNTHESIS: PageSource.MANIAC,
-    }[entry.tier]
-
-
-def _installed_source(
-    entry: manifest.Entry | None,
-    installed: Path,
-    inst: "Installation | None",
-    owned: bool,
-) -> PageSource:
-    """Return the provenance of a page that `man` resolves."""
-    if owned:
-        assert entry is not None
-        return _managed_source(entry)
-    if inst is not None and _under_root(installed, inst.root):
-        return PageSource.VENDOR
-    return PageSource.SYSTEM
-
-
-def _managed_page_state(
-    entry: manifest.Entry,
-    inst: "Installation | None",
-    tool: str,
-    cfg: Config,
-    provider_target_current: bool,
-) -> ActionState:
-    """Return a managed page's state from positive version evidence only."""
-    if entry.version is None:
-        return ActionState.OK
-    current_version = (
-        inst.version if inst is not None else get_version([tool], config=cfg)
-    )
-    if (
-        current_version is not None
-        and entry.version != current_version
-        and not provider_target_current
-    ):
-        return ActionState.OUTDATED
-    return ActionState.OK
-
-
-def _external_page_state(installed: Path, inst: "Installation") -> ActionState:
-    """Return the verified state for an external page with package provenance."""
-    freshness = verify_external_page(
-        installed, package=inst.package, version=inst.version
-    )
-    return {
-        ExternalPageFreshness.MATCH: ActionState.OK,
-        ExternalPageFreshness.MISMATCH: ActionState.OUTDATED,
-        ExternalPageFreshness.UNVERIFIED: ActionState.UNVERIFIED,
-    }[freshness]
-
-
-def _resolved_page_classification(
-    provider: "Provider | None",
-    inst: "Installation | None",
-    tool: str,
-    cfg: Config,
-    entry: manifest.Entry | None,
-    installed: Path,
-    owned: bool,
-    provider_target_current: bool,
-) -> _LocalClassification:
-    """Classify the page that `man` resolved for a binary."""
-    source = _installed_source(entry, installed, inst, owned)
-    if owned:
-        assert entry is not None
-        return _LocalClassification(
-            _managed_page_state(entry, inst, tool, cfg, provider_target_current),
-            source,
-            True,
-            installed,
-            entry.source_uri,
-        )
-    if provider is not None and inst is not None and source is PageSource.SYSTEM:
-        return _LocalClassification(
-            _external_page_state(installed, inst), source, False, installed
-        )
-    return _LocalClassification(ActionState.OK, source, False, installed)
-
-
-def _unresolved_page_classification(
-    provider: "Provider | None", inst: "Installation | None"
-) -> _LocalClassification:
-    """Classify a binary for which `man` resolves no page."""
-    if provider is not None and inst is not None:
-        page = select_primary_manpage(provider.local_docs(inst), inst.binary)
-        if page is not None:
-            return _LocalClassification(
-                ActionState.AVAILABLE, PageSource.VENDOR, False, page
-            )
-    return _LocalClassification(ActionState.MISSING, PageSource.NONE, False, None)
-
-
-def _classify(
-    provider: "Provider | None",
-    inst: "Installation | None",
-    tool: str,
-    cfg: Config,
-    entries: Mapping[str, manifest.Entry] | None = None,
-) -> _LocalClassification:
-    """Decide one binary's state and page source by whether `man` resolves it (ADR-0026).
-
-    Reverses `status`'s prior rule of consulting the manifest alone: `man
-    -w` is checked first, and the manifest is consulted only to tell a
-    MANIAC-owned page apart from one `man` would resolve regardless (a
-    distro page, or one a user hand-placed). A manifest entry whose file
-    exists but which `man` does not resolve is therefore no longer reported
-    MANIAC-owned -- ownership requires reachability now, not only a record.
-    """
-    installed = find_installed_manpage_path("man", tool)
-    # A bulk list reads this immutable snapshot once. Keep the lookup fallback
-    # for direct callers and the single-tool classification tests.
-    entry = (
-        entries.get(tool) if entries is not None else manifest.lookup(tool, config=cfg)
-    )
-    owned = (
-        entry is not None
-        and (entry.path.exists() or entry.path.is_symlink())
-        and installed is not None
-        and _same_page(entry.path, installed)
-    )
-    provider_target_freshness = _provider_target_freshness(
-        provider, inst, entry.target if entry is not None else None
-    )
-    provider_target_outdated = (
-        entry is not None
-        and entry.provider_target
-        and provider_target_freshness is False
-    )
-    provider_target_current = (
-        entry is not None
-        and entry.provider_target
-        and provider_target_freshness is True
-    )
-
-    if provider_target_outdated:
-        return _LocalClassification(
-            ActionState.OUTDATED, PageSource.VENDOR, True, entry.path, entry.source_uri
-        )
-
-    if installed is None:
-        return _unresolved_page_classification(provider, inst)
-    return _resolved_page_classification(
-        provider,
-        inst,
-        tool,
-        cfg,
-        entry,
-        installed,
-        owned,
-        provider_target_current,
-    )
-
-
-def _provider_target_freshness(
-    provider: "Provider | None", inst: "Installation | None", target: Path | None
-) -> bool | None:
-    """Return a provider-specific target freshness verdict when one exists."""
-    if inst is None or target is None or not isinstance(provider, DirectPageProvider):
-        return None
-    return provider.is_direct_page_target_current(inst, target)
-
-
-def _resolve_upstream(
-    provider: "Provider | None", inst: "Installation | None", *, config: Config
-) -> RepoSource | None:
-    """Resolve `inst`'s upstream repository."""
-    if provider is None or inst is None:
-        return None
-    source = registry.resolve_source(inst, config=config, provider=provider)
-    return (
-        documentation_source(source, config.documentation_repository_overrides)
-        if source is not None
-        else None
-    )
-
-
-def _probe_upstream(
-    source: RepoSource, inst: "Installation", cfg: Config
-) -> tuple[Path, str | None] | None:
-    """Return tier 2's version-matched manpage for one unresolved row."""
-    try:
-        page = discover_repo_manpage(
-            source,
-            inst.binary,
-            cache_dir=cfg.cache_dir,
-            config=cfg,
-            version=inst.version,
-        )
-        if page is None:
-            return None
-        uri = (
-            page.absolute().as_uri()
-            if source.is_local
-            else discovered_manpage_uri(page)
-        )
-        return page, uri
-    except (OSError, UnicodeError) as error:
-        # Repository probing is supplementary to the local reachability result.
-        logger.debug(
-            "Error probing upstream manpage",
-            tool=inst.binary,
-            source=source.target,
-            error=str(error),
-        )
-        return None
-
-
-def _is_upstream_eligible(row: ToolRow, inst: "Installation | None") -> bool:
-    """Whether one completed local row needs the version-matched remote check."""
-    return (
-        (
-            (row.state is ActionState.MISSING and row.source is PageSource.NONE)
-            or (row.source is PageSource.UPSTREAM and row.page_uri is None)
-        )
-        and row.upstream is not None
-        and inst is not None
-        and inst.version is not None
-    )
-
-
-def _classify_and_resolve(
-    provider: "Provider | None",
-    inst: "Installation | None",
-    tool: str,
-    cfg: Config,
-    entries: Mapping[str, manifest.Entry],
-) -> tuple[_LocalClassification, RepoSource | None]:
-    """Classify locally and resolve repository identity independently."""
-    result = _classify(provider, inst, tool, cfg, entries)
-    upstream = _resolve_upstream(provider, inst, config=cfg)
-    return result, upstream
-
-
-def _probe_key(source: RepoSource, inst: "Installation") -> tuple[str, str, str]:
-    """Identity of one version-pinned availability probe."""
-    return (source.clone_url or source.target, inst.version or "", inst.binary)
-
-
-def _build_inventory(
-    tools: list[str] | None,
-    on_discovery_start: Callable[[int], None] | None,
-    on_discovery_scan: Callable[[], None] | None,
-) -> tuple[list[tuple["Provider | None", "Installation | None", str]], bool]:
-    """Return requested or discovered candidates and whether discovery ran."""
-    if tools:
-        candidates = []
-        for tool in dict.fromkeys(tools):
-            # No `resolution.discover_repo(tool)` fallback when `found` is
-            # None: it shares `find_installation`'s own bin-path resolution.
-            found = resolution.find_installation(tool)
-            provider, inst = found if found else (None, None)
-            candidates.append((provider, inst, tool))
-        return candidates, False
-
-    discovered = sorted(
-        resolution.enumerate_installations(
-            on_start=on_discovery_start,
-            on_scan=on_discovery_scan,
-        ),
-        key=lambda item: item[1].binary,
-    )
-    return [(provider, inst, inst.binary) for provider, inst in discovered], True
-
-
-def _initial_rows(
-    candidates: list[tuple["Provider | None", "Installation | None", str]],
-) -> list[ToolRow]:
-    """Build the stable row skeleton before local classification begins."""
-    return [
-        ToolRow(
-            tool=tool,
-            package=inst.package if inst is not None else tool,
-            provider=provider.name if provider is not None else "",
-            state=ActionState.MISSING,
-            source=PageSource.NONE,
-            upstream=None,
-        )
-        for provider, inst, tool in candidates
-    ]
-
-
-def _row_from_local_classification(
-    candidate: tuple["Provider | None", "Installation | None", str],
-    classified: _LocalClassification,
-    upstream: RepoSource | None,
-) -> ToolRow:
-    """Apply local classification and repository identity to one skeleton row."""
-    provider, inst, tool = candidate
-    return ToolRow(
-        tool=tool,
-        package=inst.package if inst is not None else tool,
-        provider=provider.name if provider is not None else "",
-        state=classified.state,
-        source=classified.source,
-        upstream=upstream,
-        managed=classified.managed,
-        page_path=classified.page_path,
-        page_uri=classified.page_uri,
-    )
-
-
-def _with_probe_result(row: ToolRow, page: tuple[Path, str | None] | None) -> ToolRow:
-    """Apply one completed upstream page to an eligible row."""
-    if page is None:
-        return row
-    path, uri = page
-    if row.state is ActionState.MISSING and row.source is PageSource.NONE:
-        return replace(
-            row,
-            state=ActionState.AVAILABLE,
-            source=PageSource.UPSTREAM,
-            page_path=path,
-            page_uri=uri,
-        )
-    if row.source is PageSource.UPSTREAM:
-        return replace(row, page_uri=uri)
-    return row
-
-
-def _apply_probe_result(
-    rows: list[ToolRow],
-    indexes: list[int],
-    page: tuple[Path, str | None] | None,
-    on_row_scan: Callable[[], None] | None,
-    on_upstream_rows: Callable[[list[ToolRow], set[int]], None] | None,
-) -> None:
-    """Publish a completed deduplicated probe group atomically."""
-    for index in indexes:
-        rows[index] = _with_probe_result(rows[index], page)
-    if on_row_scan is not None:
-        for _ in indexes:
-            on_row_scan()
-    if on_upstream_rows is not None:
-        on_upstream_rows(rows.copy(), set(indexes))
-
-
-@dataclass(slots=True)
-class _RowCoordinator:
-    """Own coordinator-side row state while local and upstream work overlap."""
-
-    candidates: list[tuple["Provider | None", "Installation | None", str]]
-    rows: list[ToolRow]
-    local_rows: list[ToolRow]
-    on_row_scan: Callable[[], None] | None
-    on_local_row: Callable[[list[ToolRow], int, bool], None] | None
-    on_upstream_rows: Callable[[list[ToolRow], set[int]], None] | None
-    probe_indexes: dict[tuple[str, str, str], list[int]]
-    probe_results: dict[tuple[str, str, str], tuple[Path, str | None] | None]
-    active_probe_keys: set[tuple[str, str, str]]
-    local_eligible: set[int]
-
-    def complete_local(
-        self,
-        index: int,
-        classified: _LocalClassification,
-        upstream: RepoSource | None,
-    ) -> tuple[tuple[str, str, str], RepoSource, "Installation"] | None:
-        """Record one local result and return its new upstream probe, if any."""
-        _, inst, _ = self.candidates[index]
-        row = _row_from_local_classification(
-            self.candidates[index], classified, upstream
-        )
-        self.rows[index] = row
-        self.local_rows[index] = row
-        pending_probe = _is_upstream_eligible(row, inst)
-        launch = None
-        if pending_probe:
-            assert upstream is not None
-            assert inst is not None
-            key = _probe_key(upstream, inst)
-            self.probe_indexes.setdefault(key, []).append(index)
-            self.local_eligible.add(index)
-            if key in self.probe_results:
-                _apply_probe_result(
-                    self.rows,
-                    [index],
-                    self.probe_results[key],
-                    self.on_row_scan,
-                    self.on_upstream_rows,
-                )
-                pending_probe = False
-            elif key not in self.active_probe_keys:
-                self.active_probe_keys.add(key)
-                launch = (key, upstream, inst)
-        elif self.on_row_scan is not None:
-            self.on_row_scan()
-        if self.on_local_row is not None:
-            self.on_local_row(self.rows.copy(), index, pending_probe)
-        return launch
-
-    def complete_probe(
-        self,
-        key: tuple[str, str, str],
-        page: tuple[Path, str | None] | None,
-    ) -> None:
-        """Record one completed probe and publish all rows sharing its key."""
-        self.probe_results[key] = page
-        _apply_probe_result(
-            self.rows,
-            self.probe_indexes[key],
-            page,
-            self.on_row_scan,
-            self.on_upstream_rows,
-        )
-
-
-def _schedule_local_classifications(
-    executor: ThreadPoolExecutor,
-    candidates: list[tuple["Provider | None", "Installation | None", str]],
-    cfg: Config,
-    entries: Mapping[str, manifest.Entry],
-) -> dict[Future[tuple[_LocalClassification, RepoSource | None]], int]:
-    """Submit every independent local classification to the bounded pool."""
-    return {
-        executor.submit(
-            _classify_and_resolve, provider, inst, tool, cfg, entries
-        ): index
-        for index, (provider, inst, tool) in enumerate(candidates)
-    }
-
-
-def _next_completed_futures(
-    local_pending: Mapping[Future[Any], int],
-    probe_pending: Mapping[Future[Any], tuple[str, str, str]],
-    on_idle: Callable[[], None] | None,
-) -> set[Future[Any]] | None:
-    """Wait for work, notifying the coordinator when the workers are quiet."""
-    done, _ = wait(
-        [*local_pending, *probe_pending],
-        timeout=0.25,
-        return_when=FIRST_COMPLETED,
-    )
-    if done:
-        return done
-    if on_idle is not None:
-        on_idle()
-    return None
-
-
-def _complete_local_futures(
-    done: set[Future[Any]],
-    local_pending: dict[Future[tuple[_LocalClassification, RepoSource | None]], int],
-    coordinator: _RowCoordinator,
-) -> list[tuple[tuple[str, str, str], RepoSource, "Installation"]]:
-    """Record finished local work in stable row order and collect new probes."""
-    launches = []
-    for future in sorted(
-        (future for future in done if future in local_pending),
-        key=local_pending.__getitem__,
-    ):
-        index = local_pending.pop(future)
-        classified, upstream = future.result()
-        launch = coordinator.complete_local(index, classified, upstream)
-        if launch is not None:
-            launches.append(launch)
-    return launches
-
-
-def _launch_upstream_probes(
-    launches: list[tuple[tuple[str, str, str], RepoSource, "Installation"]],
-    probe_executor: ThreadPoolExecutor,
-    probe_pending: dict[Future[tuple[Path, str | None] | None], tuple[str, str, str]],
-    cfg: Config,
-) -> None:
-    """Start probes only after their local callback has observed `checking`."""
-    for key, upstream, inst in launches:
-        probe_pending[probe_executor.submit(_probe_upstream, upstream, inst, cfg)] = key
-
-
-def _publish_initial_rows(
-    local_pending: Mapping[Future[Any], int],
-    initial_sent: bool,
-    coordinator: _RowCoordinator,
-    on_initial_rows: Callable[[list[ToolRow], set[int]], None] | None,
-) -> bool:
-    """Publish the local-only snapshot exactly once, once all local work ends."""
-    if local_pending or initial_sent:
-        return initial_sent
-    if on_initial_rows is not None:
-        on_initial_rows(
-            coordinator.local_rows.copy(), coordinator.local_eligible.copy()
-        )
-    return True
-
-
-def _complete_probe_futures(
-    done: set[Future[Any]],
-    probe_pending: dict[Future[tuple[Path, str | None] | None], tuple[str, str, str]],
-    coordinator: _RowCoordinator,
-) -> None:
-    """Publish every already-completed upstream probe after local coordination."""
-    for future in [future for future in done if future in probe_pending]:
-        key = probe_pending.pop(future)
-        coordinator.complete_probe(key, future.result())
-
-
-def compute_rows(
-    tools: list[str] | None = None,
-    config: Config | None = None,
-    *,
-    on_discovery_start: Callable[[int], None] | None = None,
-    on_discovery_scan: Callable[[], None] | None = None,
-    on_row_start: Callable[[int], None] | None = None,
-    on_row_scan: Callable[[], None] | None = None,
-    on_skeleton: Callable[[list[ToolRow]], None] | None = None,
-    on_local_row: Callable[[list[ToolRow], int, bool], None] | None = None,
-    on_initial_rows: Callable[[list[ToolRow], set[int]], None] | None = None,
-    on_upstream_rows: Callable[[list[ToolRow], set[int]], None] | None = None,
-    on_idle: Callable[[], None] | None = None,
-) -> list[ToolRow]:
-    """One row per binary: every provider-detected installation, or exactly the named tools.
-
-    With no names, walks `$PATH` (`resolution.enumerate_installations`) and
-    reports every binary some provider claims. With names, resolves
-    exactly those, unfiltered; a name no provider claims still gets a row
-    (`MISSING`, unless `man` or the manifest says otherwise) rather than
-    nothing, per ADR-0013.
-
-    The eight `on_*` callbacks, all `None` by default, are purely additive
-    instrumentation for a caller with a console in scope (the CLI command);
-    every other caller, including tests, omits them and sees no behaviour
-    change. `on_discovery_*` passes straight through to
-    `resolution.enumerate_installations` (skipped entirely on the `tools`
-    path, which never calls it); `on_row_*` wraps this function's own
-    per-row `_classify` loop, whichever path runs it.
-
-    `on_skeleton` receives the complete, alphabetized provider-derived inventory
-    before local classification.
-    `on_local_row` fills one row and says whether its tier-2 probe is pending.
-    `on_initial_rows` receives the fully local snapshot for compatible callers.
-    `on_upstream_rows` receives one snapshot per deduplicated probe group.
-    `on_idle` runs on the coordinator while worker futures remain pending.
-    They keep terminal renderers out of worker-owned mutable state; callers that
-    omit them retain the original blocking API.
-
-    Local `man -w` queries run through a bounded executor. As each locally
-    unresolved row becomes ready, its version-pinned tier-2 probe enters a
-    separate bounded executor; the coordinator alone mutates rows and calls
-    render callbacks, preserving their stable order and thread affinity.
-    """
-    cfg = config or Config()
-    # Entries are frozen dataclasses; the proxy prevents a worker from
-    # accidentally changing the single read snapshot while it classifies.
-    entries = MappingProxyType(manifest.load(cfg))
-
-    candidates, discovered = _build_inventory(
-        tools, on_discovery_start, on_discovery_scan
-    )
-    rows = _initial_rows(candidates)
-    if discovered and on_skeleton is not None:
-        on_skeleton(rows.copy())
-    if on_row_start is not None:
-        on_row_start(len(rows))
-
-    # Keep a local-only snapshot for callers that use the older initial
-    # callback. Upstream completions may legitimately arrive before the last
-    # local `man -w`, but cannot change this snapshot.
-    local_rows = rows.copy()
-    local_pending: dict[Future[tuple[_LocalClassification, RepoSource | None]], int]
-    probe_pending: dict[
-        Future[tuple[Path, str | None] | None], tuple[str, str, str]
-    ] = {}
-    coordinator = _RowCoordinator(
-        candidates=candidates,
-        rows=rows,
-        local_rows=local_rows,
-        on_row_scan=on_row_scan,
-        on_local_row=on_local_row,
-        on_upstream_rows=on_upstream_rows,
-        probe_indexes={},
-        probe_results={},
-        active_probe_keys=set(),
-        local_eligible=set(),
-    )
-    initial_sent = False
-
-    with (
-        ThreadPoolExecutor(max_workers=LOCAL_CLASSIFY_WORKERS) as local_executor,
-        ThreadPoolExecutor(max_workers=UPSTREAM_PROBE_WORKERS) as probe_executor,
-    ):
-        local_pending = _schedule_local_classifications(
-            local_executor, candidates, cfg, entries
-        )
-
-        while local_pending or probe_pending:
-            done = _next_completed_futures(local_pending, probe_pending, on_idle)
-            if done is None:
-                continue
-            # Resolve local futures before completed probes. A duplicate that
-            # became ready in the same turn joins the single-flight group.
-            launches = _complete_local_futures(done, local_pending, coordinator)
-
-            # The local callback must get one `checking` frame before a fast
-            # cache-backed probe can publish its terminal result.
-            _launch_upstream_probes(launches, probe_executor, probe_pending, cfg)
-            initial_sent = _publish_initial_rows(
-                local_pending, initial_sent, coordinator, on_initial_rows
-            )
-            _complete_probe_futures(done, probe_pending, coordinator)
-
-    return rows
 
 
 def _bare_names(rows: list[ToolRow]) -> list[str]:
@@ -928,24 +190,11 @@ def _source_cell(row: ToolRow) -> Any:
     return text
 
 
-def _filter_rows(
-    rows: list[ToolRow],
-    *,
-    outdated: bool,
-    unverified: bool = False,
-    available: bool,
-    missing: bool,
-    managed: bool,
-) -> list[ToolRow]:
-    """Narrow `rows` by State and independent MANIAC ownership filters.
-
-    No flag set at all means no filtering. `--available --missing` unions
-    within the State axis to every row worth acting on; `--managed
-    --outdated` intersects across axes to MANIAC's own stale pages. There
-    is no `--ok` flag (ADR-0018): it would select exactly the rows needing
-    no action.
-    """
-    state_axis = {
+def _selected_states(
+    *, outdated: bool, unverified: bool, available: bool, missing: bool
+) -> frozenset[ActionState]:
+    """The State axis the flags select; empty means the axis is unconstrained."""
+    return frozenset(
         state
         for state, flag in (
             (ActionState.OUTDATED, outdated),
@@ -954,13 +203,24 @@ def _filter_rows(
             (ActionState.MISSING, missing),
         )
         if flag
-    }
-    if not state_axis and not managed:
+    )
+
+
+def _filter_rows(
+    rows: list[ToolRow], *, states: frozenset[ActionState], managed: bool
+) -> list[ToolRow]:
+    """Narrow `rows` by State and the independent MANIAC ownership filter.
+
+    No flag set at all means no filtering. `--available --missing` unions
+    within the State axis to every row worth acting on; `--managed
+    --outdated` intersects across axes to MANIAC's own stale pages.
+    """
+    if not states and not managed:
         return rows
     return [
         row
         for row in rows
-        if (not state_axis or row.state in state_axis) and (not managed or row.managed)
+        if (not states or row.state in states) and (not managed or row.managed)
     ]
 
 
@@ -992,7 +252,10 @@ def _list_table(rows: list[ToolRow]) -> Table:
 
 
 def _streaming_table(
-    rows: list[ToolRow], pending: set[int], *, maximum_rows: int | None = None
+    rows: list[ToolRow] | RowSnapshot,
+    pending: set[int],
+    *,
+    maximum_rows: int | None = None,
 ) -> Any:
     """One fixed row per binary, or a fixed-height leading slice while it updates."""
     from rich.text import Text
@@ -1078,13 +341,13 @@ class _StreamingList:
         self._reporter = reporter
         self._live: Live | None = None
         self._pending: set[int] = set()
-        self._rows: list[ToolRow] = []
+        self._rows: list[ToolRow] | RowSnapshot = []
         self._last_refresh = 0.0
         self._alternate_screen = False
         self._row_limit: int | None = None
         self._dirty = False
 
-    def _live_row_limit(self, rows: list[ToolRow]) -> int | None:
+    def _live_row_limit(self, rows: list[ToolRow] | RowSnapshot) -> int | None:
         """Leading data-row capacity, reserving one row for overflow when needed."""
         rich_console = getattr(self._console, "_instance", self._console)
         # A one-line table row has five fixed lines: title, top border, header,
@@ -1095,7 +358,7 @@ class _StreamingList:
             return None
         return max(1, full_capacity - 1)
 
-    def skeleton(self, rows: list[ToolRow]) -> None:
+    def skeleton(self, rows: list[ToolRow] | RowSnapshot) -> None:
         self._reporter.stop()
         self._row_limit = self._live_row_limit(rows)
         self._alternate_screen = self._row_limit is not None
@@ -1114,14 +377,16 @@ class _StreamingList:
         # refresh so it cannot immediately repaint the same geometry.
         self._last_refresh = monotonic()
 
-    def local(self, rows: list[ToolRow], index: int, upstream_pending: bool) -> None:
+    def local(
+        self, rows: list[ToolRow] | RowSnapshot, index: int, upstream_pending: bool
+    ) -> None:
         self._rows = rows
         if not upstream_pending:
             self._pending.discard(index)
         self._dirty = True
         self._publish(final=not self._pending)
 
-    def upstream(self, rows: list[ToolRow], indexes: set[int]) -> None:
+    def upstream(self, rows: list[ToolRow] | RowSnapshot, indexes: set[int]) -> None:
         self._rows = rows
         self._pending.difference_update(indexes)
         self._dirty = True
@@ -1163,6 +428,57 @@ class _StreamingList:
             self._live.stop()
             self._live = None
         return completed and self._alternate_screen
+
+
+class _TerminalObserver(InventoryObserver):
+    """Route one inventory run's events to the progress bar and the live table.
+
+    Both sinks are optional: a pipe gets neither, a filtered terminal call
+    gets only the progress bar, and the streaming inventory view gets both.
+    """
+
+    def __init__(
+        self, reporter: _ProgressReporter | None, renderer: _StreamingList | None
+    ) -> None:
+        self._reporter = reporter
+        self._renderer = renderer
+        # The skeleton hands feedback to the live table. Do not keep counting
+        # a hidden progress task behind it.
+        self._row_progress = reporter if renderer is None else None
+
+    def discovery_started(self, total: int) -> None:
+        if self._reporter is not None:
+            self._reporter.on_phase_start(total)
+
+    def discovery_scanned(self) -> None:
+        if self._reporter is not None:
+            self._reporter.on_scan()
+
+    def rows_started(self, total: int) -> None:
+        if self._row_progress is not None:
+            self._row_progress.on_phase_start(total)
+
+    def row_scanned(self) -> None:
+        if self._row_progress is not None:
+            self._row_progress.on_scan()
+
+    def inventory_ready(self, rows: RowSnapshot) -> None:
+        if self._renderer is not None:
+            self._renderer.skeleton(rows)
+
+    def row_classified(
+        self, rows: RowSnapshot, index: int, upstream_pending: bool
+    ) -> None:
+        if self._renderer is not None:
+            self._renderer.local(rows, index, upstream_pending)
+
+    def upstream_group_ready(self, rows: RowSnapshot, indexes: set[int]) -> None:
+        if self._renderer is not None:
+            self._renderer.upstream(rows, indexes)
+
+    def idle(self) -> None:
+        if self._renderer is not None:
+            self._renderer.idle()
 
 
 @app.command(name="list")
@@ -1213,21 +529,19 @@ def list_tools(
     ] = False,
 ) -> None:
     """Report each binary's manpage reachability states."""
+    states = _selected_states(
+        outdated=outdated,
+        unverified=unverified,
+        available=available,
+        missing=missing,
+    )
     interactive = not names and console.is_terminal
     # A filter selects final-state membership, so a provisional row could lie
     # by appearing or disappearing. Keep those calls blocking; the unfiltered
     # terminal inventory is the path that streams in place.
-    streaming = (
-        interactive
-        and not tools
-        and not any((outdated, unverified, available, missing, managed))
-    )
+    streaming = interactive and not tools and not states and not managed
     reporter = _ProgressReporter(console) if interactive else None
     renderer = _StreamingList(console, reporter) if streaming and reporter else None
-
-    def discovery_start(total: int) -> None:
-        if reporter is not None:
-            reporter.on_phase_start(total)
 
     completed = False
     normal_final = False
@@ -1235,18 +549,7 @@ def list_tools(
         rows = compute_rows(
             tools,
             config=get_config(ctx),
-            on_discovery_start=discovery_start if interactive else None,
-            on_discovery_scan=reporter.on_scan if reporter else None,
-            # The skeleton stops the streaming progress display. Do not keep
-            # updating its hidden task while the table owns feedback.
-            on_row_start=reporter.on_phase_start
-            if reporter and not streaming
-            else None,
-            on_row_scan=reporter.on_scan if reporter and not streaming else None,
-            on_skeleton=renderer.skeleton if renderer else None,
-            on_local_row=renderer.local if renderer else None,
-            on_upstream_rows=renderer.upstream if renderer else None,
-            on_idle=renderer.idle if renderer else None,
+            observer=_TerminalObserver(reporter, renderer),
         )
         completed = True
     finally:
@@ -1254,14 +557,8 @@ def list_tools(
             normal_final = renderer.stop(completed=completed)
         if reporter is not None:
             reporter.stop()
-    rows = _filter_rows(
-        rows,
-        outdated=outdated,
-        unverified=unverified,
-        available=available,
-        missing=missing,
-        managed=managed,
-    )
+
+    rows = _filter_rows(rows, states=states, managed=managed)
     if normal_final:
         # Alt-screen Live deliberately disappears on success; leave one complete,
         # fixed-row table in the normal scrollback instead.
