@@ -73,6 +73,37 @@ def checksum_of(path: str | Path) -> str:
     return digest.hexdigest()
 
 
+def expected_target_path(entry: Entry) -> Path:
+    """Return a recorded target resolved from its manpath entry."""
+    assert entry.target is not None
+    return (
+        entry.target if entry.target.is_absolute() else entry.path.parent / entry.target
+    )
+
+
+def is_expected_link(entry: Entry) -> bool:
+    """Whether a manpath entry still points literally to its recorded target."""
+    if entry.target is None or not entry.path.is_symlink():
+        return False
+    try:
+        if entry.path.readlink() != entry.target:
+            return False
+    except OSError:
+        return False
+    return expected_target_path(entry).exists()
+
+
+def is_maniac_owned_target(target: Path | None, config: Config) -> bool:
+    """Whether a target belongs to MANIAC's durable output storage."""
+    if target is None:
+        return False
+    try:
+        target.absolute().relative_to(config.output_dir.absolute())
+    except ValueError:
+        return False
+    return True
+
+
 def _manifest_path(config: Config | None) -> Path:
     return (config or Config()).manifest_path
 
@@ -197,6 +228,7 @@ def load(config: Config | None = None) -> dict[str, Entry]:
     if not path.exists():
         entries = _seed_from_headers(config)
         _migrate_links(entries, config)
+        _migrate_install_root_links(entries, config)
         _save(path, entries)
         return entries
 
@@ -216,7 +248,10 @@ def load(config: Config | None = None) -> dict[str, Entry]:
         entry = _row_to_entry(row)
         if entry is not None:
             entries[tool] = entry
-    if _migrate_links(entries, config):
+    migrated = _migrate_links(entries, config)
+    if _migrate_install_root_links(entries, config):
+        migrated = True
+    if migrated:
         _save(path, entries)
     return entries
 
@@ -265,6 +300,83 @@ def _migrate_links(entries: dict[str, Entry], config: Config | None) -> bool:
             continue
         entries[tool] = replace(entry, target=target)
         migrated = True
+    return migrated
+
+
+def _migrate_install_root_links(
+    entries: dict[str, Entry], config: Config | None
+) -> bool:
+    """Replace safely identified durable vendor copies with direct provider links."""
+    from .sources.manpages import find_install_root_manpages, select_primary_manpage
+    from .sources.pathcache import resolve_cached
+
+    cfg = config or Config()
+    target_users: dict[Path, int] = {}
+    for entry in entries.values():
+        if entry.target is None:
+            continue
+        target = expected_target_path(entry).absolute()
+        if is_maniac_owned_target(target, cfg):
+            target_users[target] = target_users.get(target, 0) + 1
+
+    migrated = False
+    for tool, entry in entries.items():
+        if (
+            entry.tier is not Tier.INSTALL_ROOT
+            or entry.provider_target
+            or not is_expected_link(entry)
+        ):
+            continue
+        old_target = expected_target_path(entry)
+        if not is_maniac_owned_target(old_target, cfg):
+            continue
+        try:
+            if checksum_of(old_target) != entry.checksum:
+                continue
+            root = Path(entry.source).expanduser()
+            if not root.is_dir():
+                continue
+            page = select_primary_manpage(find_install_root_manpages(root, tool), tool)
+            if page is None:
+                continue
+            resolved_root = resolve_cached(root)
+            resolve_cached(page).relative_to(resolved_root)
+            if is_maniac_owned_target(page, cfg):
+                continue
+            page_checksum = checksum_of(page)
+        except (OSError, ValueError):
+            continue
+
+        try:
+            temporary_link = entry.path.with_name(f".{entry.path.name}.maniac.tmp")
+            temporary_link.symlink_to(page.absolute())
+            temporary_link.replace(entry.path)
+        except OSError as error:
+            logger.warning(
+                "Retained durable vendor manpage after migration failure",
+                tool=tool,
+                path=str(entry.path),
+                error=str(error),
+            )
+            continue
+
+        entries[tool] = replace(
+            entry,
+            checksum=page_checksum,
+            target=page.absolute(),
+            provider_target=True,
+        )
+        migrated = True
+        if target_users[old_target.absolute()] == 1:
+            try:
+                old_target.unlink()
+            except OSError as error:
+                logger.warning(
+                    "Retained superseded durable vendor target",
+                    tool=tool,
+                    path=str(old_target),
+                    error=str(error),
+                )
     return migrated
 
 

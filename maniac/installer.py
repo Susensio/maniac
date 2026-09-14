@@ -88,7 +88,7 @@ def install_manpage(
         owned = (
             existing is not None
             and existing.path == dest_file
-            and _is_expected_link(existing)
+            and manifest.is_expected_link(existing)
         )
         if owned:
             # Reinstalling over our own page: carry the prior backup forward
@@ -176,27 +176,6 @@ def _durable_target(src: Path, cfg: Config, *, durable_source: bool) -> Path:
     return target
 
 
-def _is_expected_link(entry: Entry) -> bool:
-    """Whether the recorded manpath entry still points to its recorded target."""
-    if entry.target is None or not entry.path.is_symlink():
-        return False
-    try:
-        link_target = entry.path.readlink()
-    except OSError:
-        return False
-    if link_target != entry.target:
-        return False
-    return _expected_target_path(entry).exists()
-
-
-def _expected_target_path(entry: Entry) -> Path:
-    """Return the recorded target as resolved from its manpath entry."""
-    assert entry.target is not None
-    return (
-        entry.target if entry.target.is_absolute() else entry.path.parent / entry.target
-    )
-
-
 @dataclass
 class UninstallResult:
     """Outcome of an `uninstall_manpage()` call."""
@@ -248,16 +227,17 @@ def uninstall_manpage(
         manifest.forget(tool_name, config=cfg)
     elif (
         entry.target is None
-        or not _is_expected_link(entry)
+        or not manifest.is_expected_link(entry)
         or (
             not force
             and not entry.provider_target
-            and manifest.checksum_of(_expected_target_path(entry)) != entry.checksum
+            and manifest.checksum_of(manifest.expected_target_path(entry))
+            != entry.checksum
         )
     ):
         modified_kept = entry.path
     else:
-        target = _expected_target_path(entry)
+        target = manifest.expected_target_path(entry)
         installed_file = entry.path
         installed_file.unlink()
         logger.info("Removed installed manpage", path=str(installed_file))
@@ -274,7 +254,7 @@ def uninstall_manpage(
 
         if (
             not entry.provider_target
-            and _is_maniac_owned_target(target, cfg)
+            and manifest.is_maniac_owned_target(target, cfg)
             and target.exists()
         ):
             target.unlink()
@@ -305,17 +285,6 @@ def uninstall_manpage(
     return UninstallResult(
         removed=removed_paths, foreign_kept=foreign_kept, modified_kept=modified_kept
     )
-
-
-def _is_maniac_owned_target(target: Path | None, cfg: Config) -> bool:
-    """Whether `target` belongs to MANIAC's durable output storage."""
-    if target is None:
-        return False
-    try:
-        target.absolute().relative_to(cfg.output_dir.absolute())
-    except ValueError:
-        return False
-    return True
 
 
 def list_installed_manpages(

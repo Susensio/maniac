@@ -350,6 +350,81 @@ def test_migration_retains_changed_legacy_copy(tmp_path: Path) -> None:
     assert not cfg.output_dir.exists()
 
 
+def test_migration_relinks_an_unmodified_vendor_copy_to_its_provider_page(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "provider" / "tool" / "1.0.0"
+    provider_page = root / "share" / "man" / "man1" / "tool.1"
+    provider_page.parent.mkdir(parents=True)
+    provider_page.write_text(".TH TOOL 1\n", encoding="utf-8")
+    man_dir = tmp_path / "man1"
+    man_dir.mkdir()
+    installed = man_dir / "tool.1"
+    durable_target = tmp_path / "data" / "tool.1"
+    durable_target.parent.mkdir()
+    durable_target.write_text(
+        provider_page.read_text(encoding="utf-8"), encoding="utf-8"
+    )
+    installed.symlink_to(durable_target)
+    cfg = Config(
+        manifest_path=tmp_path / "state" / "installed.json",
+        man_dir=man_dir,
+        output_dir=durable_target.parent,
+    )
+    manifest.record(
+        "tool",
+        installed,
+        Tier.INSTALL_ROOT,
+        str(root),
+        manifest.checksum_of(durable_target),
+        target=durable_target,
+        config=cfg,
+    )
+
+    entry = manifest.load(config=cfg)["tool"]
+
+    assert installed.readlink() == provider_page.absolute()
+    assert entry.target == provider_page.absolute()
+    assert entry.provider_target is True
+    assert entry.checksum == manifest.checksum_of(provider_page)
+    assert not durable_target.exists()
+
+
+def test_migration_retains_a_modified_vendor_copy(tmp_path: Path) -> None:
+    root = tmp_path / "provider" / "tool" / "1.0.0"
+    provider_page = root / "share" / "man" / "man1" / "tool.1"
+    provider_page.parent.mkdir(parents=True)
+    provider_page.write_text(".TH TOOL 1 provider\n", encoding="utf-8")
+    man_dir = tmp_path / "man1"
+    man_dir.mkdir()
+    installed = man_dir / "tool.1"
+    durable_target = tmp_path / "data" / "tool.1"
+    durable_target.parent.mkdir()
+    durable_target.write_text(".TH TOOL 1 user changed\n", encoding="utf-8")
+    installed.symlink_to(durable_target)
+    cfg = Config(
+        manifest_path=tmp_path / "state" / "installed.json",
+        man_dir=man_dir,
+        output_dir=durable_target.parent,
+    )
+    manifest.record(
+        "tool",
+        installed,
+        Tier.INSTALL_ROOT,
+        str(root),
+        manifest.checksum_of(provider_page),
+        target=durable_target,
+        config=cfg,
+    )
+
+    entry = manifest.load(config=cfg)["tool"]
+
+    assert installed.readlink() == durable_target
+    assert entry.target == durable_target
+    assert entry.provider_target is False
+    assert durable_target.exists()
+
+
 def test_migration_relocates_a_stray_backup_out_of_man_dir(tmp_path: Path) -> None:
     """A `.maniac_bak` sibling of a header-carrying page is moved into `backup_dir`
     and attributed to that page's manifest entry, instead of left in `man_dir`."""
