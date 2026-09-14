@@ -72,9 +72,20 @@ when ADR-0024's streaming skeleton is built -- the skeleton carries every binary
 precisely so rows stay stable while results land. Collapsing during streaming would make
 rows rearrange as they arrive.
 
-The decision is to stream ungrouped and collapse once at completion, in the final render
-that already exists separately from the live one. Both the normal-final and the
-alternate-screen paths must collapse; the live table is unchanged.
+The decision was to stream ungrouped and collapse once at completion, in the final render
+that already exists separately from the live one. `ae6750d` implements it: the normal-screen
+Live is marked transient so the grouped table replaces it rather than following an ungrouped
+copy, and the alternate-screen path already discarded its own frames, so one branch covers
+both. The live table is unchanged and never regroups mid-run.
+
+On the live inventory this collapses 68 rows to 53, with every binary accounted for, and
+`list --available` now renders the same shape for the same tools. No group member disagreed
+with its representative on state, source or upstream.
+
+Grouping the default view made a known label defect the common case rather than an edge one
+(`python (7 binaries) | missing` above `python (2 binaries) | unverified`), and exposed that
+a collapsed row's Source link points only at the representative's page. Both are in
+`docs/BACKLOG.md` under "Next round".
 
 ### Wave C -- not started
 
