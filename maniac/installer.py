@@ -57,6 +57,7 @@ def install_manpage(
     version: str | None = None,
     source_uri: str | None = None,
     durable_source: bool = False,
+    provider_target: bool = False,
     config: Config | None = None,
 ) -> Path:
     """Link a manpath entry to a durable page with conflict guard and backup.
@@ -71,6 +72,8 @@ def install_manpage(
     src = Path(source_file)
     if durable_source and tier is not Tier.INSTALL_ROOT:
         raise ValueError("Only install-root pages may link directly to their source")
+    if provider_target and not durable_source:
+        raise ValueError("A provider target must link directly to its source")
     checksum = manifest.checksum_of(src)
     cfg = config or Config()
     dest_dir = Path(target_dir).expanduser() if target_dir else cfg.man_dir
@@ -131,6 +134,7 @@ def install_manpage(
                 version=previous_entry.version,
                 source_uri=previous_entry.source_uri,
                 target=previous_entry.target,
+                provider_target=previous_entry.provider_target,
                 config=cfg,
             )
         else:
@@ -146,6 +150,7 @@ def install_manpage(
         version=version,
         source_uri=source_uri,
         target=target,
+        provider_target=provider_target,
         config=cfg,
     )
     logger.info("Installed manpage", path=str(dest_file))
@@ -246,6 +251,7 @@ def uninstall_manpage(
         or not _is_expected_link(entry)
         or (
             not force
+            and not entry.provider_target
             and manifest.checksum_of(_expected_target_path(entry)) != entry.checksum
         )
     ):

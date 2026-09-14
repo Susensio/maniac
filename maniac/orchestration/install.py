@@ -163,13 +163,18 @@ def _try_install_root(
     if page is None:
         return None
 
+    latest_target = getattr(provider, "latest_manpage_target", lambda *_: None)(
+        inst, page
+    )
     installed_path = install_manpage(
-        page,
+        latest_target or page,
         inst.binary,
         Tier.INSTALL_ROOT,
         str(inst.root),
         force=force,
         version=inst.version,
+        durable_source=latest_target is not None,
+        provider_target=latest_target is not None,
         config=cfg,
     )
     detail = "upstream manpage from install root"

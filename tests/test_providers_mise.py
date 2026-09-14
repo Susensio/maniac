@@ -1,6 +1,9 @@
 """Tests for `MiseProvider` (ADR-0015 Stage 2): detection and resolution."""
 
+from dataclasses import replace
 from pathlib import Path
+
+import pytest
 
 from maniac.config import Config
 from maniac.models import RepoSource
@@ -68,6 +71,59 @@ def test_detect_rejects_an_install_with_no_version_segment(tmp_path: Path) -> No
     bin_path.touch()
 
     assert mise.MiseProvider().detect(bin_path) is None
+
+
+def test_latest_manpage_target_uses_a_validated_alias(tmp_path: Path) -> None:
+    bin_path = _make_mise_install(tmp_path, "tool", "1.0.0", "tool")
+    provider = mise.MiseProvider()
+    inst = provider.detect(bin_path)
+    assert inst is not None
+    page = inst.root / "share" / "man" / "man1" / "tool.1"
+    page.parent.mkdir(parents=True)
+    page.write_text(".TH TOOL 1\n", encoding="utf-8")
+    latest = inst.root.parent / "latest"
+    latest.symlink_to(inst.root.name)
+
+    assert (
+        provider.latest_manpage_target(inst, page) == latest / "share/man/man1/tool.1"
+    )
+
+
+@pytest.mark.parametrize("alias_target", [None, "other"])
+def test_latest_manpage_target_falls_back_without_a_matching_alias(
+    tmp_path: Path, alias_target: str | None
+) -> None:
+    bin_path = _make_mise_install(tmp_path, "tool", "1.0.0", "tool")
+    provider = mise.MiseProvider()
+    inst = provider.detect(bin_path)
+    assert inst is not None
+    page = inst.root / "share" / "man" / "man1" / "tool.1"
+    page.parent.mkdir(parents=True)
+    page.write_text(".TH TOOL 1\n", encoding="utf-8")
+    if alias_target is not None:
+        (inst.root.parent / alias_target).mkdir()
+        (inst.root.parent / "latest").symlink_to(alias_target)
+
+    assert provider.latest_manpage_target(inst, page) is None
+
+
+def test_latest_manpage_target_rejects_a_binary_outside_the_alias_root(
+    tmp_path: Path,
+) -> None:
+    bin_path = _make_mise_install(tmp_path, "tool", "1.0.0", "tool")
+    provider = mise.MiseProvider()
+    inst = provider.detect(bin_path)
+    assert inst is not None
+    page = inst.root / "share" / "man" / "man1" / "tool.1"
+    page.parent.mkdir(parents=True)
+    page.write_text(".TH TOOL 1\n", encoding="utf-8")
+    (inst.root.parent / "latest").symlink_to(inst.root.name)
+    outside_binary = tmp_path / "outside" / "tool"
+    outside_binary.parent.mkdir()
+    outside_binary.touch()
+    inst = replace(inst, real_path=outside_binary)
+
+    assert provider.latest_manpage_target(inst, page) is None
 
 
 def test_resolve_source_wraps_resolve_from_mise(tmp_path: Path, monkeypatch) -> None:

@@ -49,6 +49,8 @@ class Entry:
     `target` is the expected target of the owned manpath symlink.  It is
     absent only on entries written before ADR-0028 that migration could not
     safely convert.
+    `provider_target` marks a validated provider-managed target whose bytes
+    may advance independently of MANIAC.
     """
 
     path: Path
@@ -59,6 +61,7 @@ class Entry:
     version: str | None = None
     source_uri: str | None = None
     target: Path | None = None
+    provider_target: bool = False
 
 
 def checksum_of(path: str | Path) -> str:
@@ -84,6 +87,7 @@ def _entry_to_row(entry: Entry) -> dict[str, Any]:
         "version": entry.version,
         "source_uri": entry.source_uri,
         "target": str(entry.target) if entry.target is not None else None,
+        "provider_target": entry.provider_target,
     }
 
 
@@ -116,6 +120,7 @@ def _row_to_entry(row: Any) -> Entry | None:
             version=row.get("version"),
             source_uri=source_uri,
             target=Path(raw_target) if isinstance(raw_target, str) else None,
+            provider_target=row.get("provider_target") is True,
         )
     except (KeyError, TypeError, ValueError):
         return None
@@ -288,6 +293,7 @@ def record(
     version: str | None = None,
     source_uri: str | None = None,
     target: Path | None = None,
+    provider_target: bool = False,
 ) -> None:
     """Record `tool`'s installed page and its expected manpath-link target."""
     manifest_path = _manifest_path(config)
@@ -301,6 +307,7 @@ def record(
         version=version,
         source_uri=source_uri,
         target=target,
+        provider_target=provider_target,
     )
     _save(manifest_path, entries)
 

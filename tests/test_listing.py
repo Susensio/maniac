@@ -1913,6 +1913,61 @@ def test_classify_outdated_when_recorded_version_differs_from_installed(
     )
 
 
+@pytest.mark.parametrize("replacement_version", [None, "2.0.0"])
+def test_classify_outdated_when_mise_latest_alias_drifts(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    replacement_version: str | None,
+) -> None:
+    root = tmp_path / ".local" / "share" / "mise" / "installs" / "tool" / "1.0.0"
+    binary = root / "bin" / "tool"
+    binary.parent.mkdir(parents=True)
+    binary.touch()
+    bin_path = tmp_path / ".local" / "bin" / "tool"
+    bin_path.parent.mkdir(parents=True)
+    bin_path.symlink_to(binary)
+    provider = mise_module.MiseProvider()
+    inst = provider.detect(bin_path)
+    assert inst is not None
+    page = root / "share" / "man" / "man1" / "tool.1"
+    page.parent.mkdir(parents=True)
+    page.write_text(".TH TOOL 1\n", encoding="utf-8")
+    latest = root.parent / "latest"
+    latest.symlink_to(root.name)
+    alias_page = latest / "share" / "man" / "man1" / "tool.1"
+    cfg = _config(tmp_path)
+    installed = cfg.man_dir / "tool.1"
+    installed.parent.mkdir(parents=True)
+    installed.symlink_to(alias_page)
+    manifest.record(
+        "tool",
+        installed,
+        Tier.INSTALL_ROOT,
+        str(root),
+        manifest.checksum_of(alias_page),
+        version="1.0.0",
+        target=alias_page,
+        provider_target=True,
+        config=cfg,
+    )
+    latest.unlink()
+    if replacement_version is not None:
+        other_root = root.parent / replacement_version
+        other_page = other_root / "share" / "man" / "man1" / "tool.1"
+        other_page.parent.mkdir(parents=True)
+        other_page.write_text(".TH TOOL 1\n", encoding="utf-8")
+        latest.symlink_to(other_root.name)
+    monkeypatch.setattr(
+        "maniac.cli.listing.find_installed_manpage_path",
+        lambda man_bin, tool_name: installed,
+    )
+
+    assert _classification_pair(provider, inst, "tool", cfg) == (
+        ActionState.OUTDATED,
+        PageSource.VENDOR,
+    )
+
+
 def test_classify_ok_when_entry_records_no_version(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

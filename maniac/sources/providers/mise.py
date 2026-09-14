@@ -106,6 +106,38 @@ class MiseProvider:
     def local_docs(self, inst: Installation) -> list[Path]:
         return find_install_root_manpages(inst.root, inst.binary)
 
+    def latest_manpage_target(self, inst: Installation, page: Path) -> Path | None:
+        """Return a validated global `latest` alias path for one vendor page."""
+        try:
+            root = resolve_cached(inst.root)
+            resolve_cached(inst.real_path).relative_to(root)
+            relative_page = resolve_cached(page).relative_to(root)
+        except (OSError, ValueError):
+            return None
+        latest = inst.root.parent / "latest"
+        if not latest.is_symlink() or resolve_cached(latest) != root:
+            return None
+        return latest / relative_page
+
+    def has_current_latest_manpage_target(
+        self, inst: Installation, target: Path
+    ) -> bool:
+        """Whether a recorded alias target still follows this installation."""
+        latest = inst.root.parent / "latest"
+        try:
+            root = resolve_cached(inst.root)
+            resolve_cached(inst.real_path).relative_to(root)
+            relative_page = target.relative_to(latest)
+        except (OSError, ValueError):
+            return False
+        if not latest.is_symlink() or resolve_cached(latest) != root:
+            return False
+        try:
+            resolve_cached(latest / relative_page).relative_to(root)
+        except (OSError, ValueError):
+            return False
+        return (latest / relative_page).exists()
+
     @classmethod
     def _resolve_composed_source(
         cls, parent: Installation, config: Config

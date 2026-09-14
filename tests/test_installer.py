@@ -108,6 +108,37 @@ def test_install_root_direct_link_requires_explicit_durable_source(
     assert not cfg.output_dir.exists()
 
 
+def test_uninstall_removes_an_updated_provider_target_but_keeps_its_source(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "mise" / "latest" / "share" / "man" / "man1" / "tool.1"
+    source.parent.mkdir(parents=True)
+    source.write_text(".TH TOOL 1 old", encoding="utf-8")
+    cfg = Config(
+        man_dir=tmp_path / "man1",
+        output_dir=tmp_path / "durable",
+        manifest_path=tmp_path / "state" / "installed.json",
+    )
+
+    installed = install_manpage(
+        source,
+        "tool",
+        Tier.INSTALL_ROOT,
+        "mise-root",
+        durable_source=True,
+        provider_target=True,
+        config=cfg,
+    )
+    source.write_text(".TH TOOL 1 updated", encoding="utf-8")
+
+    result = uninstall_manpage("tool", config=cfg)
+
+    assert result.modified_kept is None
+    assert installed in result.removed
+    assert not installed.exists()
+    assert source.exists()
+
+
 def test_install_manpage_maniac_overwrite(tmp_path: Path) -> None:
     """A page the manifest already attributes to `tool` is ours to overwrite, no `--force`."""
     target_dir = tmp_path / "man1"

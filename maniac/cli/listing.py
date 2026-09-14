@@ -230,7 +230,7 @@ def _classify(
     )
     owned = (
         entry is not None
-        and entry.path.exists()
+        and (entry.path.exists() or entry.path.is_symlink())
         and installed is not None
         and _same_page(entry.path, installed)
     )
@@ -270,9 +270,18 @@ def _classify(
             and current_version is not None
             and entry.version != current_version
         )
+        provider_target_outdated = (
+            owned
+            and entry is not None
+            and entry.provider_target
+            and inst is not None
+            and not _has_current_provider_target(provider, inst, entry.target)
+        )
         if owned:
             return _LocalClassification(
-                ActionState.OUTDATED if outdated else ActionState.OK,
+                ActionState.OUTDATED
+                if outdated or provider_target_outdated
+                else ActionState.OK,
                 source,
                 True,
                 installed,
@@ -293,6 +302,16 @@ def _classify(
             )
         return _LocalClassification(ActionState.OK, source, False, installed)
 
+    if (
+        entry is not None
+        and entry.provider_target
+        and inst is not None
+        and not _has_current_provider_target(provider, inst, entry.target)
+    ):
+        return _LocalClassification(
+            ActionState.OUTDATED, PageSource.VENDOR, True, entry.path, entry.source_uri
+        )
+
     if provider is not None and inst is not None:
         page = select_primary_manpage(provider.local_docs(inst), inst.binary)
         if page is not None:
@@ -300,6 +319,14 @@ def _classify(
                 ActionState.AVAILABLE, PageSource.VENDOR, False, page
             )
     return _LocalClassification(ActionState.MISSING, PageSource.NONE, False, None)
+
+
+def _has_current_provider_target(
+    provider: "Provider | None", inst: "Installation", target: Path | None
+) -> bool:
+    """Whether a provider's recorded external target still follows `inst`."""
+    checker = getattr(provider, "has_current_latest_manpage_target", None)
+    return target is not None and checker is not None and checker(inst, target)
 
 
 def _resolve_upstream(
