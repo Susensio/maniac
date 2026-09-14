@@ -234,17 +234,18 @@ def _classify(
         and installed is not None
         and _same_page(entry.path, installed)
     )
+    provider_target_freshness = _provider_target_freshness(
+        provider, inst, entry.target if entry is not None else None
+    )
     provider_target_outdated = (
         entry is not None
         and entry.provider_target
-        and inst is not None
-        and not _has_current_provider_target(provider, inst, entry.target)
+        and provider_target_freshness is False
     )
     provider_target_current = (
         entry is not None
         and entry.provider_target
-        and inst is not None
-        and not provider_target_outdated
+        and provider_target_freshness is True
     )
 
     if provider_target_outdated:
@@ -320,12 +321,14 @@ def _classify(
     return _LocalClassification(ActionState.MISSING, PageSource.NONE, False, None)
 
 
-def _has_current_provider_target(
-    provider: "Provider | None", inst: "Installation", target: Path | None
-) -> bool:
-    """Whether a provider's recorded external target still follows `inst`."""
+def _provider_target_freshness(
+    provider: "Provider | None", inst: "Installation | None", target: Path | None
+) -> bool | None:
+    """Return a provider-specific target freshness verdict when one exists."""
     checker = getattr(provider, "has_current_latest_manpage_target", None)
-    return target is not None and checker is not None and checker(inst, target)
+    if inst is None or target is None or checker is None:
+        return None
+    return checker(inst, target)
 
 
 def _resolve_upstream(

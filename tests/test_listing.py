@@ -2016,6 +2016,38 @@ def test_classify_outdated_for_an_unaliased_mise_provider_target(
     )
 
 
+def test_classify_ok_for_a_generic_direct_provider_target(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    root = tmp_path / "provider" / "tool" / "1.0.0"
+    page = root / "share" / "man" / "man1" / "tool.1"
+    page.parent.mkdir(parents=True)
+    page.write_text(".TH TOOL 1\n", encoding="utf-8")
+    cfg = _config(tmp_path)
+    installed = cfg.man_dir / "tool.1"
+    installed.parent.mkdir(parents=True)
+    installed.symlink_to(page)
+    manifest.record(
+        "tool",
+        installed,
+        Tier.INSTALL_ROOT,
+        str(root),
+        manifest.checksum_of(page),
+        version="1.0.0",
+        target=page,
+        provider_target=True,
+        config=cfg,
+    )
+    monkeypatch.setattr(
+        "maniac.cli.listing.find_installed_manpage_path",
+        lambda man_bin, tool_name: installed,
+    )
+
+    assert _classification_pair(
+        _FakeProvider(), _installation(root=root, version="1.0.0"), "tool", cfg
+    ) == (ActionState.OK, PageSource.VENDOR)
+
+
 def test_classify_ok_when_mise_latest_and_binary_advance_together(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

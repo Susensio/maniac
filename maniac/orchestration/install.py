@@ -26,6 +26,7 @@ from ..sources.manpages import (
     read_manpage_source,
     select_primary_manpage,
 )
+from ..sources.pathcache import resolve_cached
 from ..sources.providers.base import Provider
 
 __all__ = ["InstallOutcome", "InstallRefused", "Tier", "run_install"]
@@ -163,10 +164,12 @@ def _try_install_root(
     if page is None:
         return None
 
-    latest_target = getattr(provider, "latest_manpage_target", lambda *_: None)(
-        inst, page
+    provider_owned = _is_direct_provider_page(page, inst)
+    latest_target = (
+        getattr(provider, "latest_manpage_target", lambda *_: None)(inst, page)
+        if provider_owned
+        else None
     )
-    provider_owned = provider.name == "mise" or latest_target is not None
     installed_path = install_manpage(
         latest_target or page,
         inst.binary,
@@ -189,6 +192,15 @@ def _try_install_root(
         source_path=page,
         installed_path=installed_path,
     )
+
+
+def _is_direct_provider_page(page: Path, inst: Installation) -> bool:
+    """Whether a resolved vendor page is contained by its inspected root."""
+    try:
+        resolve_cached(page).relative_to(resolve_cached(inst.root))
+    except (OSError, ValueError):
+        return False
+    return True
 
 
 def _try_repository(
