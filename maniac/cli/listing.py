@@ -491,16 +491,23 @@ class _StreamingList:
             self._last_refresh = now
 
     def stop(self, *, completed: bool = True) -> bool:
-        """Stop Live and say whether a completed table belongs on the normal screen."""
+        """Stop Live and say whether the grouped final table should now be printed.
+
+        Every live frame is ungrouped, because ADR-0024 fixes row count and
+        order for the table's life. None of them survives the stop: an
+        alternate screen drops its own, and a normal-screen table is made
+        transient so the grouped table replaces it instead of following an
+        ungrouped one down the scrollback.
+        """
         if self._live is not None:
             if completed:
+                # Flushed even though it is about to be discarded: the live
+                # table's own contract ends with every row final.
                 self._publish(final=True)
-            if not completed and not self._alternate_screen:
-                # Rich otherwise persists its final (and incomplete) frame on failure.
-                self._live.transient = True
+            self._live.transient = not self._alternate_screen
             self._live.stop()
             self._live = None
-        return completed and self._alternate_screen
+        return completed
 
 
 class _TerminalObserver(InventoryObserver):
@@ -617,7 +624,7 @@ def list_tools(
     renderer = _StreamingList(console, reporter) if streaming and reporter else None
 
     completed = False
-    normal_final = False
+    final_table = not streaming
     try:
         rows = compute_rows(
             tools,
@@ -627,14 +634,12 @@ def list_tools(
         completed = True
     finally:
         if renderer is not None:
-            normal_final = renderer.stop(completed=completed)
+            final_table = renderer.stop(completed=completed)
         if reporter is not None:
             reporter.stop()
 
     rows = _filter_rows(rows, states=states, managed=managed)
-    if normal_final:
-        # Alt-screen Live deliberately disappears on success; leave one complete,
-        # fixed-row table in the normal scrollback instead.
-        console.print(_streaming_table(rows, set(), terminal_width=console.size.width))
-    elif not streaming:
+    if final_table:
+        # One render for every mode, so a streamed run ends in the same
+        # collapsed shape a filtered or piped one has always had.
         _render_list(console, rows, names=names)

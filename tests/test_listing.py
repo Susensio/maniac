@@ -787,6 +787,64 @@ def test_streaming_upstream_width_does_not_change_as_rows_arrive(
     assert widths == {_UPSTREAM_COLUMN_MAX_WIDTH}
 
 
+def test_streaming_list_never_collapses_siblings_while_results_land(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ADR-0024: siblings stay one row each for the live table's whole life."""
+    tables: list[Any] = []
+
+    class FakeLive:
+        transient = False
+
+        def __init__(self, renderable: Any, **kwargs: object) -> None:
+            tables.append(renderable)
+
+        def start(self) -> None:
+            return None
+
+        def update(self, renderable: Any, *, refresh: bool) -> None:
+            tables.append(renderable)
+
+        def refresh(self) -> None:
+            return None
+
+        def stop(self) -> None:
+            return None
+
+    class FakeReporter:
+        def stop(self) -> None:
+            return None
+
+    monkeypatch.setattr("maniac.cli.listing.Live", FakeLive)
+    renderer = _StreamingList(
+        Console(file=io.StringIO(), width=160, height=40), FakeReporter()
+    )
+    siblings = ("pandoc", "pandoc-lua", "pandoc-server")
+    unresolved = [
+        ToolRow(binary, "pandoc", "fake", ActionState.MISSING, PageSource.NONE, None)
+        for binary in siblings
+    ]
+    resolved = [
+        ToolRow(
+            binary,
+            "pandoc",
+            "fake",
+            ActionState.AVAILABLE,
+            PageSource.UPSTREAM,
+            RepoSource(name=binary, target="jgm/pandoc", is_local=False),
+        )
+        for binary in siblings
+    ]
+
+    renderer.skeleton(unresolved)
+    renderer.upstream(resolved, {0, 1, 2})
+    renderer.stop()
+
+    assert len(tables) > 1
+    for table in tables:
+        assert [str(cell) for cell in table.columns[0]._cells] == list(siblings)
+
+
 def test_streaming_list_keeps_provisional_rows_when_computation_fails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -832,34 +890,82 @@ def test_streaming_list_keeps_provisional_rows_when_computation_fails(
     assert "alpha (2 binaries)" not in final
 
 
-def test_cli_streaming_leaves_live_table_as_the_only_final_render(
+def test_cli_streaming_discards_the_live_frames_for_one_final_render(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """`list` must not print a duplicate ordinary table after stopping Live."""
+    """The grouped final render replaces the live table; it never follows it."""
+    transients: list[bool] = []
+
+    class FakeLive:
+        def __init__(self, renderable: object, **kwargs: object) -> None:
+            self.transient = False
+
+        def start(self) -> None:
+            return None
+
+        def update(self, renderable: object, *, refresh: bool) -> None:
+            return None
+
+        def refresh(self) -> None:
+            return None
+
+        def stop(self) -> None:
+            transients.append(self.transient)
+
     monkeypatch.setattr(
         cli_module.console, "_instance", Console(force_terminal=True, no_color=True)
     )
     monkeypatch.setattr(cli_module, "Config", lambda: _config(tmp_path))
+    monkeypatch.setattr("maniac.cli.listing.Live", FakeLive)
     monkeypatch.setattr(
         "maniac.listing.inventory.resolution.enumerate_installations",
         lambda on_start=None, on_scan=None: (
-            on_start and on_start(0),
-            [],
+            on_start and on_start(1),
+            [(_FakeProvider(), _installation(binary="gum"))],
         )[-1],
     )
-    renders = 0
+    renders: list[Any] = []
 
-    def unexpected_render(*args: object, **kwargs: object) -> None:
-        nonlocal renders
-        renders += 1
+    def record_render(*args: Any, **kwargs: Any) -> None:
+        renders.append(args[1])
 
-    monkeypatch.setattr("maniac.cli.listing._render_list", unexpected_render)
+    monkeypatch.setattr("maniac.cli.listing._render_list", record_render)
 
     result = runner.invoke(app, ["list"])
 
     assert result.exit_code == 0
-    assert renders == 0
-    assert "No tools to report." in result.output
+    # The short table is on the normal screen, so Rich must be told to erase it.
+    assert transients == [True]
+    assert [row.tool for row in renders[0]] == ["gum"]
+
+
+def test_cli_streaming_groups_sibling_binaries_once_the_run_completes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Unfiltered `list` ends in the same collapsed shape a filtered call has."""
+    output = io.StringIO()
+    monkeypatch.setattr(
+        cli_module.console,
+        "_instance",
+        Console(file=output, force_terminal=True, no_color=True, width=120),
+    )
+    monkeypatch.setattr(cli_module, "Config", lambda: _config(tmp_path))
+    provider = _FakeProvider()
+    monkeypatch.setattr(
+        "maniac.listing.inventory.resolution.enumerate_installations",
+        lambda on_start=None, on_scan=None: [
+            (provider, _installation(binary=binary, package="pandoc"))
+            for binary in ("pandoc", "pandoc-lua", "pandoc-server")
+        ],
+    )
+
+    result = runner.invoke(app, ["list"])
+
+    assert result.exit_code == 0
+    final = output.getvalue()
+    # Live frames are transient, so only the grouped table survives the run.
+    assert final.rindex("pandoc (3 binaries)") > final.rindex("Manpage Reachability")
+    assert "pandoc-lua" not in final[final.rindex("Manpage Reachability") :]
 
 
 def test_cli_streaming_stops_row_progress_after_the_skeleton(
