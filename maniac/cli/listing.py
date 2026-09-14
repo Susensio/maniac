@@ -234,6 +234,23 @@ def _classify(
         and installed is not None
         and _same_page(entry.path, installed)
     )
+    provider_target_outdated = (
+        entry is not None
+        and entry.provider_target
+        and inst is not None
+        and not _has_current_provider_target(provider, inst, entry.target)
+    )
+    provider_target_current = (
+        entry is not None
+        and entry.provider_target
+        and inst is not None
+        and not provider_target_outdated
+    )
+
+    if provider_target_outdated:
+        return _LocalClassification(
+            ActionState.OUTDATED, PageSource.VENDOR, True, entry.path, entry.source_uri
+        )
 
     if installed is not None:
         if owned:
@@ -269,19 +286,11 @@ def _classify(
             and entry.version is not None
             and current_version is not None
             and entry.version != current_version
-        )
-        provider_target_outdated = (
-            owned
-            and entry is not None
-            and entry.provider_target
-            and inst is not None
-            and not _has_current_provider_target(provider, inst, entry.target)
+            and not provider_target_current
         )
         if owned:
             return _LocalClassification(
-                ActionState.OUTDATED
-                if outdated or provider_target_outdated
-                else ActionState.OK,
+                ActionState.OUTDATED if outdated else ActionState.OK,
                 source,
                 True,
                 installed,
@@ -301,16 +310,6 @@ def _classify(
                 ActionState.UNVERIFIED, source, False, installed
             )
         return _LocalClassification(ActionState.OK, source, False, installed)
-
-    if (
-        entry is not None
-        and entry.provider_target
-        and inst is not None
-        and not _has_current_provider_target(provider, inst, entry.target)
-    ):
-        return _LocalClassification(
-            ActionState.OUTDATED, PageSource.VENDOR, True, entry.path, entry.source_uri
-        )
 
     if provider is not None and inst is not None:
         page = select_primary_manpage(provider.local_docs(inst), inst.binary)

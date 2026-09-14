@@ -3,6 +3,7 @@
 import io
 import threading
 import time
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 from urllib.error import URLError
@@ -1957,13 +1958,75 @@ def test_classify_outdated_when_mise_latest_alias_drifts(
         other_page.parent.mkdir(parents=True)
         other_page.write_text(".TH TOOL 1\n", encoding="utf-8")
         latest.symlink_to(other_root.name)
+    system_page = tmp_path / "usr" / "share" / "man" / "man1" / "tool.1"
+    system_page.parent.mkdir(parents=True)
+    system_page.write_text(".TH TOOL 1 system\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "maniac.cli.listing.find_installed_manpage_path",
+        lambda man_bin, tool_name: (
+            system_page if replacement_version is None else installed
+        ),
+    )
+
+    assert _classification_pair(provider, inst, "tool", cfg) == (
+        ActionState.OUTDATED,
+        PageSource.VENDOR,
+    )
+
+
+def test_classify_ok_when_mise_latest_and_binary_advance_together(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    root = tmp_path / ".local" / "share" / "mise" / "installs" / "tool" / "1.0.0"
+    binary = root / "bin" / "tool"
+    binary.parent.mkdir(parents=True)
+    binary.touch()
+    bin_path = tmp_path / ".local" / "bin" / "tool"
+    bin_path.parent.mkdir(parents=True)
+    bin_path.symlink_to(binary)
+    provider = mise_module.MiseProvider()
+    inst = provider.detect(bin_path)
+    assert inst is not None
+    page = root / "share" / "man" / "man1" / "tool.1"
+    page.parent.mkdir(parents=True)
+    page.write_text(".TH TOOL 1\n", encoding="utf-8")
+    latest = root.parent / "latest"
+    latest.symlink_to(root.name)
+    alias_page = latest / "share" / "man" / "man1" / "tool.1"
+    cfg = _config(tmp_path)
+    installed = cfg.man_dir / "tool.1"
+    installed.parent.mkdir(parents=True)
+    installed.symlink_to(alias_page)
+    manifest.record(
+        "tool",
+        installed,
+        Tier.INSTALL_ROOT,
+        str(root),
+        manifest.checksum_of(alias_page),
+        version="1.0.0",
+        target=alias_page,
+        provider_target=True,
+        config=cfg,
+    )
+    replacement_root = root.parent / "2.0.0"
+    replacement_binary = replacement_root / "bin" / "tool"
+    replacement_binary.parent.mkdir(parents=True)
+    replacement_binary.touch()
+    replacement_page = replacement_root / "share" / "man" / "man1" / "tool.1"
+    replacement_page.parent.mkdir(parents=True)
+    replacement_page.write_text(".TH TOOL 1 new\n", encoding="utf-8")
+    latest.unlink()
+    latest.symlink_to(replacement_root.name)
+    inst = replace(
+        inst, root=replacement_root, real_path=replacement_binary, version="2.0.0"
+    )
     monkeypatch.setattr(
         "maniac.cli.listing.find_installed_manpage_path",
         lambda man_bin, tool_name: installed,
     )
 
     assert _classification_pair(provider, inst, "tool", cfg) == (
-        ActionState.OUTDATED,
+        ActionState.OK,
         PageSource.VENDOR,
     )
 

@@ -272,7 +272,11 @@ def uninstall_manpage(
             removed_paths.append(installed_file)
         manifest.forget(tool_name, config=cfg)
 
-        if _is_maniac_owned_target(target, cfg) and target.exists():
+        if (
+            not entry.provider_target
+            and _is_maniac_owned_target(target, cfg)
+            and target.exists()
+        ):
             target.unlink()
             removed_paths.append(target)
 

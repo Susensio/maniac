@@ -116,7 +116,7 @@ def test_uninstall_removes_an_updated_provider_target_but_keeps_its_source(
     source.write_text(".TH TOOL 1 old", encoding="utf-8")
     cfg = Config(
         man_dir=tmp_path / "man1",
-        output_dir=tmp_path / "durable",
+        output_dir=tmp_path / "mise",
         manifest_path=tmp_path / "state" / "installed.json",
     )
 
