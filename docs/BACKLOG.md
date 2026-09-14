@@ -3,6 +3,40 @@
 Open work with no single line to mark.
 `rg -n 'BUG:|TODO:'` lists the rest.
 
+## Next round
+
+Yielded by the 2026-09-14 architecture wave (ADR-0033, ADR-0034, ADR-0035).
+These are findings the work surfaced and deliberately did not take; they are first, not filed.
+
+### Correctness
+
+- Report the superseded durable copy that an `INSTALL_ROOT` uninstall deletes.
+  Uninstall's own `reconcile()` runs ADR-0032's migration first, which relinks the entry to its provider page, sets `provider_target`, and unlinks the MANIAC copy itself.
+  That deletion never reaches `result.removed`, so uninstall removes a file it does not report.
+  Found while pinning `discard_durable_target`; the removal is correct, the silence is not.
+- Assert `lifecycle.link_manpath_entry`'s atomic replacement, not just its end state.
+  Current tests pin that the manpath entry ends as the right symlink; nothing pins that a pre-existing entry is replaced atomically rather than unlinked and recreated.
+  Needs an interleaving harness the project does not yet have.
+
+### Structure
+
+- Thread probe definitiveness back as a return value instead of `docs.cache`'s module-level `_lookup_state` thread-local.
+  ADR-0033's split made that cross-module channel visible without removing it: `cache` writes it and `repository` reads it.
+  Removing it touches every probe signature, so it was left out of the split deliberately.
+- Replace `installer.install_manpage`'s and `manifest.record`'s eleven-parameter signatures with one entry record.
+  Both describe the same installed page and drifted into parallel positional lists; ADR-0034 moved their coordination but not their shape.
+  Do not raise ruff's `max-args` to make the finding go away; the parameter lists are the defect.
+- Split `sources/docs/release._fetch_and_materialize_release_asset`'s direct-asset and archive-asset flows.
+  They are two flows sharing one function, which is why it still carries seven returns after ADR-0033.
+
+### Coverage
+
+- Give `cli/listing._provider_target_freshness`, `_build_inventory`, `_try_install_root` and `_try_repository` direct unit tests.
+  They are reached only through `compute_rows` and `run_install` today, so a change in their own behavior need not fail anything.
+  ADR-0035 made the freshness capability explicit, which makes these locally testable for the first time.
+- Split `tests/test_docs.py` to mirror the five modules behind the ADR-0033 facade.
+  It is 1301 lines against a package whose patch targets are now per-module; the split rehomed the targets but not the file.
+
 ## Bugs and correctness
 
 - Distinguish a definitive tier-2 absence from a transient repository probe failure.
@@ -25,12 +59,6 @@ Open work with no single line to mark.
 
 ### Architecture review follow-up
 
-- Break discovery/resolution's upward imports and Mise class-global callback wiring with a dependency-neutral path resolver and an explicitly passed provider registry or resolver context.
-  `resolution.py` currently installs the composed-source resolver on `MiseProvider` at import time, so composition depends on process-global state rather than the resolver that initiated it.
-- Define provider capabilities as typed contracts or capability objects instead of optional `getattr` methods and peer-provider helpers.
-  The base provider contract covers detection, source resolution, and local docs, while callers also conditionally ask for direct provider-page targets.
-  Make that optional capability explicit, including its ownership and freshness semantics, rather than widening the caller with `getattr`.
-  Registry composition must own cross-provider source resolution; a provider may describe its parent installation but must not need peer-provider knowledge or a class-global callback to resolve it.
 - Centralize verified source selection in one candidate service carrying tier, pages, provenance URI, version match, and target ownership.
   Install, listing, and manifest reconciliation must consume that result rather than each reimplementing root containment and repository eligibility.
 - Defer upstream identity resolution in `list` until local evidence leaves it necessary, as ADR-0025 requires.
@@ -47,15 +75,6 @@ Open work with no single line to mark.
 
 ### Maintainability
 
-- Thread probe definitiveness back as a return value instead of `docs.cache`'s module-level `_lookup_state` thread-local.
-  ADR-0033's split made that cross-module channel visible without removing it: `cache` writes it and `repository` reads it.
-  Removing it touches every probe signature, so it was left out of the split deliberately.
-- Replace `installer.install_manpage`'s and `manifest.record`'s eleven-parameter signatures with one entry record.
-  Both describe the same installed page and drifted into parallel positional lists; ADR-0034 moved their coordination but not their shape.
-- Split `sources/docs/release._fetch_and_materialize_release_asset`'s direct-asset and archive-asset flows.
-  They are two flows sharing one function, which is why it still carries seven returns after ADR-0033.
-- Split `tests/test_docs.py` to mirror the five modules behind the ADR-0033 facade.
-  It is 1301 lines against a package whose patch targets are now per-module; the split rehomed the targets but not the file.
 - Decide whether `Config` binds XDG paths per instance or intentionally at import time, then make discovery consistent.
   Current frozen module globals make ordinary environment monkeypatches ineffective after import; this is a configuration-lifecycle decision deserving an ADR.
 - Extend installation-derived package metadata fallback beyond npm for Python, Cargo, Go, and Homebrew.
