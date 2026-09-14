@@ -2,26 +2,67 @@
 
 ## In flight: architecture review follow-up
 
-The 2026-09-14 architecture review's backlog items are being worked in waves, each wave
-running in isolated worktrees and merged back here once green.
+Master is at `4b9202e`. `just check` is green at 584 tests as of `a64a56c`; the two
+commits after it touch only `CLAUDE.md` and `docs/`.
 
-Wave A (dispatched):
-- Split `sources/docs.py` into repository acquisition, release retrieval, cache, page
-  selection and extraction behind one facade.
-- Break discovery/resolution's upward imports and Mise's import-time class-global callback;
-  make the optional provider-page capability an explicit typed contract.
-- Make manifest loading pure serialization and move reconciliation into one lifecycle
-  service shared by install, uninstall and explicit reconcile.
+### Wave A -- landed and verified together
 
-Wave B (blocked on A): listing inventory/rendering separation plus deferred upstream
-identity in `list`; one resolved-tool context threaded through all install tiers.
+All three items are on master and were verified as one tree, not merely one at a time:
+584 tests, `just check` exit 0, and no import-time class mutation.
 
-Wave C (blocked on B): one verified-source candidate service; validated `RepoSource`
-variants.
+- `d40db9b` split `sources/docs.py` (1272 lines) into a `sources/docs/` package. ADR-0033.
+- `ceca643` made manifest loading pure deserialization and moved reconciliation into
+  `maniac/lifecycle.py`. ADR-0034. This closed a real defect: `maniac list` could rewrite
+  the user's manpath as a side effect of deserializing JSON.
+- `dae0011` replaced provider `getattr` probing with typed Protocols and removed Mise's
+  import-time class-global resolver callback. ADR-0035.
+- `cbdebee` pinned `lifecycle.discard_durable_target`'s ownership contract, which an audit
+  found was executed by tests but never asserted.
 
-Every wave is pure restructuring: no observable behavior change, and the ADR-encoded
-invariants (0016, 0019, 0023, 0024, 0025, 0027, 0028, 0029-0032) are preserved, not
-re-decided.
+### Wave B -- dispatched, NOT yet collected
+
+Two agents were dispatched and the session stopped before their work was taken onto
+master. Their commits, if any, live on worktree branches and are reachable but orphaned
+from `master`. Collect them before starting anything new.
+
+- `worktree-agent-a1c56d97b120448f5` -- listing inventory seam. Separates candidate
+  enumeration, local classification, bounded upstream probes, deduplication and ordered row
+  snapshots from Rich rendering and the Typer command; also defers upstream identity
+  resolution in `list` per ADR-0025. Branched from `c00bb5e`, which was later amended to
+  `a64a56c`; the base is no longer on master, so cherry-pick rather than merge.
+  Its brief required a test counting resolution calls for a reachable or vendor-page row
+  and asserting zero.
+- `worktree-agent-ad20e941879e4d550` -- one resolved-tool context threaded through all
+  install tiers. Branched from `a64a56c`. Its brief required a test proving
+  `discover_repo()` and `find_installation()` each run once, not twice, during an install
+  reaching tier 3.
+
+Both were told mid-flight that no interface is frozen before 1.0.0, so their diffs may be
+wider than their original briefs implied. Check whether each actually committed: a
+developer agent leaves work uncommitted deliberately when it could not land green, and
+says so in its report, which this session did not receive.
+
+To collect one: `git cherry-pick <branch tip>` onto master, then re-run `just check` on the
+combined tree with an explicit expected test count -- green in isolation is not green
+combined, which is why every Wave A merge was verified that way. Then write the ADR for the
+seam it establishes and close its entry under "Architecture review follow-up".
+
+### Wave C -- not started
+
+Two entries remain under "Architecture review follow-up" after Wave B: one verified-source
+candidate service carrying tier, pages, provenance URI, version match and target ownership;
+and validated local/remote `RepoSource` variants replacing the correlated string fields.
+
+### Housekeeping
+
+`backup-pre-rewrite` (`916213a`) holds the pre-collapse history and can be deleted once the
+collapsed history is trusted. The four Wave A worktree branches are fully merged and can go
+too. One worktree admin directory under `.claude/worktrees/` resisted removal and needs
+`git worktree prune` from a clean state.
+
+Every wave is pure restructuring: observable behavior is unchanged and verified, while
+shape is free. The ADR-encoded invariants (0016, 0019, 0023, 0024, 0025, 0027, 0028,
+0029-0035) are preserved, not re-decided.
 
 ADR-0029 now follows a Mise `latest` vendor manpage only when that alias and the executable both resolve under the exact inspected install root.
 Every verified install-root vendor page otherwise links directly to its concrete provider page rather than copying it into MANIAC storage.
