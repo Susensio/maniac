@@ -1,6 +1,6 @@
 # Implementation State
 
-Implementation in flight: under ADR-0031, link any install-root vendor page verified beneath its selected provider root directly instead of copying it into MANIAC storage.
+Implementation in flight: migrate eligible old install-root copies to ADR-0031 direct provider links under ADR-0032, then conduct the requested full architecture and `just code-review` reviews.
 
 ADR-0029 now follows a Mise `latest` vendor manpage only when that alias and the executable both resolve under the exact inspected install root.
 Other layouts materialize the page under MANIAC storage.
