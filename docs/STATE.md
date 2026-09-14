@@ -1,6 +1,27 @@
 # Implementation State
 
-No implementation is currently in flight.
+## In flight: architecture review follow-up
+
+The 2026-09-14 architecture review's backlog items are being worked in waves, each wave
+running in isolated worktrees and merged back here once green.
+
+Wave A (dispatched):
+- Split `sources/docs.py` into repository acquisition, release retrieval, cache, page
+  selection and extraction behind one facade.
+- Break discovery/resolution's upward imports and Mise's import-time class-global callback;
+  make the optional provider-page capability an explicit typed contract.
+- Make manifest loading pure serialization and move reconciliation into one lifecycle
+  service shared by install, uninstall and explicit reconcile.
+
+Wave B (blocked on A): listing inventory/rendering separation plus deferred upstream
+identity in `list`; one resolved-tool context threaded through all install tiers.
+
+Wave C (blocked on B): one verified-source candidate service; validated `RepoSource`
+variants.
+
+Every wave is pure restructuring: no observable behavior change, and the ADR-encoded
+invariants (0016, 0019, 0023, 0024, 0025, 0027, 0028, 0029-0032) are preserved, not
+re-decided.
 
 ADR-0029 now follows a Mise `latest` vendor manpage only when that alias and the executable both resolve under the exact inspected install root.
 Every verified install-root vendor page otherwise links directly to its concrete provider page rather than copying it into MANIAC storage.
