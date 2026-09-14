@@ -78,24 +78,6 @@ These are findings the work surfaced and deliberately did not take; they are fir
 
 ## Refactors and architecture
 
-### Architecture review follow-up
-
-Waves A and B are landed (ADR-0033 to ADR-0038).
-Wave C's validated repository-source variants landed first as ADR-0039, so the remaining
-candidate service can consume that type without editing the same call sites twice.
-
-- Centralize verified source selection in one candidate service carrying tier, pages,
-  provenance URI, version match, and target ownership.
-  Install, listing, and manifest reconciliation must consume that result rather than each
-  reimplementing root containment and repository eligibility.
-  The three consumers are `orchestration/install.py` (`_try_install_root`, `_try_repository`),
-  the listing classification and upstream modules, and `lifecycle.py`'s reconciliation.
-  Root containment is the rule ADR-0031 depends on -- a page is provider-owned when it
-  resolves beneath the inspected install root -- and it is currently re-derived in each.
-  This is the largest remaining entry: it spans three subsystems that Waves A and B have
-  just restructured, so it should be scoped on its own rather than batched with anything
-  else. Waves A and B each cost roughly 600k subagent tokens; this is comparable on its own.
-
 ### Maintainability
 
 - Decide whether `Config` binds XDG paths per instance or intentionally at import time, then make discovery consistent.

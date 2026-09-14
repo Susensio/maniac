@@ -2,8 +2,7 @@
 
 ## Architecture review follow-up
 
-Waves A and B of the 2026-09-14 architecture review are landed and verified. Wave C is in
-progress.
+Waves A, B and C of the 2026-09-14 architecture review are landed and verified.
 
 ### Wave A -- landed
 
@@ -87,7 +86,7 @@ Grouping the default view made a known label defect the common case rather than 
 a collapsed row's Source link points only at the representative's page. Both are in
 `docs/BACKLOG.md` under "Next round".
 
-### Wave C -- in progress
+### Wave C -- landed
 
 `25fa718` replaced `RepoSource`'s correlated strings with validated local and remote
 variants. ADR-0039.
@@ -98,8 +97,15 @@ Remote construction derives the only permitted clone URL from the identity, pres
 Verified at 601 tests, `just check` exit 0, plus an independent impact review and a focused
 architecture re-audit of direct construction.
 
-One entry remains under "Architecture review follow-up": the verified-source candidate
-service carrying tier, pages, provenance URI, version match and target ownership.
+`9368b2a` centralized verified source evidence in `sources.candidates`. ADR-0040.
+Install-root and repository candidates carry explicit primary pages, per-page provenance,
+version evidence and validated target ownership without centralizing consumer policy.
+Install retains tier order, listing retains reachable-page classification and remote-probe
+coordination, and lifecycle retains its conservative historical migration guards.
+Verified at 604 tests, `just check` exit 0, plus an independent impact review and an
+architecture audit across all three consumers.
+
+No entries remain under "Architecture review follow-up".
 The docs-facade cleanup in "Next round" is now unblocked, its callers no longer being
 edited.
 
