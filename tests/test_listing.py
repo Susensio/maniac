@@ -18,6 +18,7 @@ from typer.testing import CliRunner
 import maniac.cli as cli_module
 from maniac.cli import app
 from maniac.cli.listing import (
+    _UPSTREAM_COLUMN_MAX_WIDTH,
     _filter_rows,
     _grouped_for_display,
     _list_table,
@@ -401,7 +402,9 @@ def test_streaming_table_bounds_tall_live_rows_without_rendering_inventory() -> 
         for index in range(1000)
     ]
 
-    table = _streaming_table(rows, set(range(len(rows))), maximum_rows=10)
+    table = _streaming_table(
+        rows, set(range(len(rows))), terminal_width=80, maximum_rows=10
+    )
 
     assert len(table.rows) == 11
     assert str(table.columns[0]._cells[-1]) == "… 990 more tools"
@@ -547,7 +550,9 @@ def test_streaming_table_keeps_column_geometry_for_long_upstreams() -> None:
         ),
         ToolRow("short", "short", "fake", ActionState.MISSING, PageSource.NONE, None),
     ]
-    checking = _streaming_table(rows, {0, 1})
+    checking = _streaming_table(
+        rows, {0, 1}, terminal_width=120, upstream_width=_UPSTREAM_COLUMN_MAX_WIDTH
+    )
     resolved_rows = [
         ToolRow(
             "long-tool-name",
@@ -563,7 +568,12 @@ def test_streaming_table_keeps_column_geometry_for_long_upstreams() -> None:
         ),
         rows[1],
     ]
-    resolved = _streaming_table(resolved_rows, {1})
+    resolved = _streaming_table(
+        resolved_rows,
+        {1},
+        terminal_width=120,
+        upstream_width=_UPSTREAM_COLUMN_MAX_WIDTH,
+    )
 
     checking_columns = checking.columns
     resolved_columns = resolved.columns
@@ -577,7 +587,7 @@ def test_streaming_table_keeps_column_geometry_for_long_upstreams() -> None:
     assert checking_columns[0].width == len("long-tool-name")
     assert checking_columns[1].width == len(ActionState.UNVERIFIED.value)
     assert checking_columns[2].width == len("upstream")
-    assert checking_columns[3].width == 24
+    assert checking_columns[3].width == _UPSTREAM_COLUMN_MAX_WIDTH
     assert not checking.expand
 
     output = io.StringIO()
@@ -597,7 +607,7 @@ def test_streaming_table_renders_unverified_without_truncation() -> None:
         )
     ]
 
-    table = _streaming_table(rows, set())
+    table = _streaming_table(rows, set(), terminal_width=80)
     output = io.StringIO()
     Console(file=output, force_terminal=True, no_color=True, width=80).print(table)
 
@@ -619,14 +629,17 @@ def test_list_tables_cap_upstream_width_and_keep_ellipsis_stable() -> None:
             is_local=False,
         ),
     )
-    tables = [_streaming_table([row], set()), _list_table([row])]
+    tables = [
+        _streaming_table([row], set(), terminal_width=120),
+        _list_table([row], terminal_width=120),
+    ]
 
     for table in tables:
         assert not table.expand
-        assert table.columns[3].width == 24
+        assert table.columns[3].width == _UPSTREAM_COLUMN_MAX_WIDTH
 
     renders = []
-    for width in (80, 100):
+    for width in (120, 160):
         output = io.StringIO()
         Console(
             file=output,
@@ -637,11 +650,141 @@ def test_list_tables_cap_upstream_width_and_keep_ellipsis_stable() -> None:
         ).print(tables[0])
         renders.append(output.getvalue())
 
-    assert all("owner/very-long-upstrea…" in render for render in renders)
     assert all(
-        len(next(line for line in render.splitlines() if line.startswith("┌"))) < 80
+        "owner/very-long-upstream-name-very-long-upstrea…" in render
         for render in renders
     )
+    assert all(
+        len(next(line for line in render.splitlines() if line.startswith("┌"))) < 120
+        for render in renders
+    )
+
+
+def test_list_table_sizes_upstream_to_its_widest_value() -> None:
+    """The reported defect: a 37-character identity was cut to 24."""
+    widest = "redhat-developer/yaml-language-server"
+    rows = [
+        ToolRow(
+            "yaml-language-server",
+            "yaml-language-server",
+            "fake",
+            ActionState.MISSING,
+            PageSource.NONE,
+            RepoSource(name="yaml-language-server", target=widest, is_local=False),
+        ),
+        ToolRow(
+            "rg",
+            "rg",
+            "fake",
+            ActionState.MISSING,
+            PageSource.NONE,
+            RepoSource(name="rg", target="BurntSushi/ripgrep", is_local=False),
+        ),
+    ]
+
+    table = _list_table(rows, terminal_width=160)
+
+    assert table.columns[3].width == len(widest)
+    assert not table.expand
+
+    output = io.StringIO()
+    Console(file=output, force_terminal=True, no_color=True, width=160).print(table)
+    assert widest in output.getvalue()
+    assert "…" not in output.getvalue()
+
+
+def test_list_table_never_narrows_upstream_below_its_header() -> None:
+    rows = [ToolRow("tool", "tool", "fake", ActionState.MISSING, PageSource.NONE, None)]
+
+    assert _list_table(rows, terminal_width=160).columns[3].width == len("Upstream")
+
+
+def test_list_table_renders_a_local_upstream_as_a_linked_path() -> None:
+    path = Path.home() / "Projects" / "claude2agents"
+    rows = [
+        ToolRow(
+            "claude2agents",
+            "claude2agents",
+            "fake",
+            ActionState.MISSING,
+            PageSource.NONE,
+            RepoSource(
+                name="claude2agents",
+                target=f"LOCAL:{path}",
+                is_local=True,
+                local_path=path,
+            ),
+        )
+    ]
+
+    table = _list_table(rows, terminal_width=160)
+    output = io.StringIO()
+    Console(file=output, force_terminal=True, no_color=True, width=160).print(table)
+    rendered = output.getvalue()
+
+    assert "LOCAL:" not in rendered
+    assert "~/Projects/claude2agents" in rendered
+    assert path.as_uri() in rendered
+    assert table.columns[3].width == len("~/Projects/claude2agents")
+
+
+def test_streaming_upstream_width_does_not_change_as_rows_arrive(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ADR-0024: the live table's geometry is fixed before any identity exists."""
+    tables: list[Any] = []
+
+    class FakeLive:
+        def __init__(self, renderable: Any, **kwargs: object) -> None:
+            tables.append(renderable)
+
+        def start(self) -> None:
+            return None
+
+        def update(self, renderable: Any, *, refresh: bool) -> None:
+            tables.append(renderable)
+
+        def refresh(self) -> None:
+            return None
+
+        def stop(self) -> None:
+            return None
+
+    class FakeReporter:
+        def stop(self) -> None:
+            return None
+
+    monkeypatch.setattr("maniac.cli.listing.Live", FakeLive)
+    renderer = _StreamingList(
+        Console(file=io.StringIO(), width=160, height=40), FakeReporter()
+    )
+    unresolved = [
+        ToolRow(name, name, "fake", ActionState.MISSING, PageSource.NONE, None)
+        for name in ("alpha", "beta")
+    ]
+    resolved = [
+        ToolRow(
+            "alpha",
+            "alpha",
+            "fake",
+            ActionState.MISSING,
+            PageSource.NONE,
+            RepoSource(
+                name="alpha",
+                target="redhat-developer/yaml-language-server",
+                is_local=False,
+            ),
+        ),
+        unresolved[1],
+    ]
+
+    renderer.skeleton(unresolved)
+    renderer.upstream(resolved, {0})
+    renderer.stop()
+
+    assert len(tables) > 1
+    widths = {table.columns[3].width for table in tables}
+    assert widths == {_UPSTREAM_COLUMN_MAX_WIDTH}
 
 
 def test_streaming_list_keeps_provisional_rows_when_computation_fails(

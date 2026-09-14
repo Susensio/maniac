@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 from rich.console import Console
+from rich.text import Text
 from typer.testing import CliRunner
 
 import maniac.cli as cli_module
@@ -154,6 +155,68 @@ def test_repo_cell_link_does_not_include_table_padding() -> None:
     assert segments[target_index + 1].text.isspace()
     padding_style = segments[target_index + 1].style
     assert padding_style is None or padding_style.link is None
+
+
+def test_repo_cell_local_source_links_the_path_without_the_prefix(
+    tmp_path: Path,
+) -> None:
+    """The stored `LOCAL:` prefix is provenance, not something a reader needs."""
+    cell = _repo_cell(
+        RepoSource(
+            name="yadm",
+            target=f"LOCAL:{tmp_path}",
+            is_local=True,
+            local_path=tmp_path,
+        )
+    )
+
+    assert cell.plain == str(tmp_path)
+    assert "LOCAL:" not in cell.plain
+    assert len(cell.spans) == 1
+    assert cell.spans[0].start == 0
+    assert cell.spans[0].end == len(cell)
+    assert cell.spans[0].style.link == tmp_path.as_uri()
+
+
+def test_repo_cell_local_source_abbreviates_home_but_links_the_real_path() -> None:
+    path = Path.home() / "Projects" / "claude2agents"
+    cell = _repo_cell(
+        RepoSource(
+            name="claude2agents",
+            target=f"LOCAL:{path}",
+            is_local=True,
+            local_path=path,
+        )
+    )
+
+    assert cell.plain == "~/Projects/claude2agents"
+    assert cell.spans[0].style.link == path.as_uri()
+
+
+def test_repo_cell_local_source_stays_distinct_without_colour() -> None:
+    """Colour is gone in a pipe, under NO_COLOR and for a colourblind reader.
+
+    The leading `~` carries the distinction on its own; italic repeats it in
+    a second non-hue channel wherever styling survives.
+    """
+    path = Path.home() / "Projects" / "claude2agents"
+    local = _repo_cell(
+        RepoSource(name="c2a", target=f"LOCAL:{path}", is_local=True, local_path=path)
+    )
+    remote = _repo_cell(
+        RepoSource(name="rg", target="BurntSushi/ripgrep", is_local=False)
+    )
+
+    assert local.spans[0].style.italic
+    console = Console(file=io.StringIO(), force_terminal=True, no_color=True, width=60)
+
+    def plain_render(cell: Text) -> str:
+        return "".join(
+            segment.text for segment in console.render(cell) if segment.text.strip()
+        )
+
+    assert plain_render(local).startswith("~/")
+    assert not plain_render(remote).startswith(("~", "/"))
 
 
 def test_repo_cell_non_github_backend_prefix_renders_as_plain_text() -> None:

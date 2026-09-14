@@ -43,7 +43,13 @@ _STATE_COLUMN_WIDTH = max(
 )
 _STREAMING_SOURCE_WIDTH = max(len(source.value) for source in PageSource)
 _TOOL_COLUMN_MAX_WIDTH = 24
-_UPSTREAM_COLUMN_WIDTH = 24
+# Wide enough for the longest realistic repository identity -- GitHub caps an
+# owner at 39 characters and the widest "owner/repo" on a live inventory here
+# is 37 -- and for a home-relative checkout path. Still a cap, so the column
+# never grows with the terminal.
+_UPSTREAM_COLUMN_MAX_WIDTH = 48
+# Four columns of single-space padding on each side, plus five box rules.
+_TABLE_CHROME_WIDTH = 13
 
 
 class _ProgressReporter:
@@ -168,6 +174,34 @@ def _upstream_cell(upstream: RepoSource | None) -> Any:
     return _repo_cell(upstream, blank_when_unresolvable=True)
 
 
+def _tool_column_width(labels: list[str]) -> int:
+    """Widest Tool label, capped, and never below the header."""
+    return min(
+        _TOOL_COLUMN_MAX_WIDTH, max([len("Tool"), *(len(label) for label in labels)])
+    )
+
+
+def _upstream_budget(tool_labels: list[str], terminal_width: int) -> int:
+    """Columns Upstream may take: the cap, less whatever the terminal cannot spare.
+
+    Upstream yields first because it is the one column whose ellipsis is
+    expected; letting the cap push the table past the terminal makes Rich
+    shrink State instead, truncating `unverified` and `checking…`.
+    """
+    fixed = (
+        _tool_column_width(tool_labels)
+        + _STATE_COLUMN_WIDTH
+        + _STREAMING_SOURCE_WIDTH
+        + _TABLE_CHROME_WIDTH
+    )
+    return max(len("Upstream"), min(_UPSTREAM_COLUMN_MAX_WIDTH, terminal_width - fixed))
+
+
+def _upstream_width(cells: list[Any], budget: int) -> int:
+    """Widest rendered Upstream cell within `budget`, never below the header."""
+    return min(budget, max([len("Upstream"), *(len(cell.plain) for cell in cells)]))
+
+
 def _source_cell(row: ToolRow) -> Any:
     """Render page provenance, linked to the selected or reachable page."""
     from rich.style import Style
@@ -224,8 +258,12 @@ def _filter_rows(
     ]
 
 
-def _list_table(rows: list[ToolRow]) -> Table:
+def _list_table(rows: list[ToolRow], *, terminal_width: int) -> Table:
     """Build the ordinary, completed list table."""
+    rendered = [
+        (label, row, _upstream_cell(row.upstream))
+        for label, row in _grouped_for_display(rows)
+    ]
     table = Table(title="Manpage Reachability")
     table.add_column(
         "Tool",
@@ -238,16 +276,19 @@ def _list_table(rows: list[ToolRow]) -> Table:
     table.add_column("Source", width=_STREAMING_SOURCE_WIDTH, no_wrap=True)
     table.add_column(
         "Upstream",
-        width=_UPSTREAM_COLUMN_WIDTH,
+        width=_upstream_width(
+            [cell for _, _, cell in rendered],
+            _upstream_budget([label for label, _, _ in rendered], terminal_width),
+        ),
         no_wrap=True,
         overflow="ellipsis",
     )
 
-    for label, row in _grouped_for_display(rows):
+    for label, row, upstream in rendered:
         state = (
             f"[{_STATE_COLOR[row.state]}]{row.state.value}[/{_STATE_COLOR[row.state]}]"
         )
-        table.add_row(label, state, _source_cell(row), _upstream_cell(row.upstream))
+        table.add_row(label, state, _source_cell(row), upstream)
     return table
 
 
@@ -255,17 +296,29 @@ def _streaming_table(
     rows: list[ToolRow] | RowSnapshot,
     pending: set[int],
     *,
+    terminal_width: int,
     maximum_rows: int | None = None,
+    upstream_width: int | None = None,
 ) -> Any:
-    """One fixed row per binary, or a fixed-height leading slice while it updates."""
+    """One fixed row per binary, or a fixed-height leading slice while it updates.
+
+    `upstream_width` pins the Upstream column for a live table, whose widest
+    value is unknowable when the skeleton is built (ADR-0025 resolves upstream
+    identity after the rows exist). Omitted, the column is sized to content,
+    which is correct only once every row is final.
+    """
     from rich.text import Text
 
     if not rows:
         return Text("No tools to report.", style="yellow")
     visible_rows = rows if maximum_rows is None else rows[:maximum_rows]
-    tool_width = min(
-        _TOOL_COLUMN_MAX_WIDTH, max(len("Tool"), *(len(row.tool) for row in rows))
-    )
+    upstream_cells = [_upstream_cell(row.upstream) for row in visible_rows]
+    tool_labels = [row.tool for row in rows]
+    if upstream_width is None:
+        upstream_width = _upstream_width(
+            upstream_cells, _upstream_budget(tool_labels, terminal_width)
+        )
+    tool_width = _tool_column_width(tool_labels)
     table = Table(title="Manpage Reachability")
     table.add_column(
         "Tool", style="cyan", width=tool_width, no_wrap=True, overflow="ellipsis"
@@ -284,11 +337,13 @@ def _streaming_table(
     )
     table.add_column(
         "Upstream",
-        width=_UPSTREAM_COLUMN_WIDTH,
+        width=upstream_width,
         no_wrap=True,
         overflow="ellipsis",
     )
-    for index, row in enumerate(visible_rows):
+    for index, (row, upstream) in enumerate(
+        zip(visible_rows, upstream_cells, strict=True)
+    ):
         state = (
             "[dim]checking…[/dim]"
             if index in pending
@@ -296,7 +351,7 @@ def _streaming_table(
                 f"[{_STATE_COLOR[row.state]}]{row.state.value}[/{_STATE_COLOR[row.state]}]"
             )
         )
-        table.add_row(row.tool, state, _source_cell(row), _upstream_cell(row.upstream))
+        table.add_row(row.tool, state, _source_cell(row), upstream)
     hidden_rows = len(rows) - len(visible_rows)
     if hidden_rows:
         table.add_row(
@@ -330,7 +385,7 @@ def _render_list(
         target_console.print("[yellow]No tools to report.[/yellow]")
         return
 
-    target_console.print(_list_table(rows))
+    target_console.print(_list_table(rows, terminal_width=target_console.size.width))
 
 
 class _StreamingList:
@@ -345,6 +400,8 @@ class _StreamingList:
         self._last_refresh = 0.0
         self._alternate_screen = False
         self._row_limit: int | None = None
+        self._terminal_width = 0
+        self._upstream_width = len("Upstream")
         self._dirty = False
 
     def _live_row_limit(self, rows: list[ToolRow] | RowSnapshot) -> int | None:
@@ -360,11 +417,22 @@ class _StreamingList:
 
     def skeleton(self, rows: list[ToolRow] | RowSnapshot) -> None:
         self._reporter.stop()
+        rich_console = getattr(self._console, "_instance", self._console)
+        self._upstream_width = _upstream_budget(
+            [row.tool for row in rows], rich_console.size.width
+        )
+        self._terminal_width = rich_console.size.width
         self._row_limit = self._live_row_limit(rows)
         self._alternate_screen = self._row_limit is not None
         self._live = Live(
-            _streaming_table(rows, set(range(len(rows))), maximum_rows=self._row_limit),
-            console=getattr(self._console, "_instance", self._console),
+            _streaming_table(
+                rows,
+                set(range(len(rows))),
+                terminal_width=self._terminal_width,
+                maximum_rows=self._row_limit,
+                upstream_width=self._upstream_width,
+            ),
+            console=rich_console,
             auto_refresh=False,
             screen=self._alternate_screen,
             vertical_overflow="crop" if self._alternate_screen else "ellipsis",
@@ -406,7 +474,12 @@ class _StreamingList:
             _streaming_table(
                 self._rows,
                 self._pending,
+                terminal_width=self._terminal_width,
                 maximum_rows=self._row_limit,
+                # Reserved at skeleton time and held for the table's life:
+                # ADR-0024's fixed geometry outranks fitting the column to
+                # identities that only arrive later.
+                upstream_width=self._upstream_width,
             ),
             refresh=False,
         )
@@ -562,6 +635,6 @@ def list_tools(
     if normal_final:
         # Alt-screen Live deliberately disappears on success; leave one complete,
         # fixed-row table in the normal scrollback instead.
-        console.print(_streaming_table(rows, set()))
+        console.print(_streaming_table(rows, set(), terminal_width=console.size.width))
     elif not streaming:
         _render_list(console, rows, names=names)

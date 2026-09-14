@@ -4,6 +4,38 @@ from pathlib import Path
 from typing import Any
 
 
+def _home_relative(path: Path) -> str:
+    """Path string with `$HOME` collapsed to `~`, or unchanged when outside it."""
+    home = Path.home()
+    if path == home:
+        return "~"
+    try:
+        return f"~/{path.relative_to(home)}"
+    except ValueError:
+        return str(path)
+
+
+def _local_cell(source: Any) -> Any:
+    """Render a local checkout as a `file://` link to its path.
+
+    The stored `LOCAL:` prefix is dropped: a leading `~` or `/` already
+    says local, and it is that leading character -- not the colour -- that
+    tells a local row from a remote `owner/repo` under `NO_COLOR`, in a
+    pipe, and for a colourblind reader. Italic repeats the distinction in a
+    second, non-hue channel for terminals that keep styling.
+    """
+    from rich.style import Style
+    from rich.text import Text
+
+    path = source.local_path or Path(source.target.removeprefix("LOCAL:"))
+    text = Text(_home_relative(path))
+    style = Style(color="yellow", italic=True)
+    if path.is_absolute():
+        style += Style(link=path.as_uri())
+    text.stylize(style, 0, len(text))
+    return text
+
+
 def _repo_cell(source: Any, *, blank_when_unresolvable: bool = False) -> Any:
     """Render a discovered repository as a terminal link or an explicit fallback.
 
@@ -17,6 +49,9 @@ def _repo_cell(source: Any, *, blank_when_unresolvable: bool = False) -> Any:
 
     if not source.is_local and source.target == source.name:
         return Text("" if blank_when_unresolvable else "Unknown", style="dim")
+
+    if source.is_local:
+        return _local_cell(source)
 
     clone_url = source.clone_url
     if clone_url is None:
