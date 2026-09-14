@@ -795,10 +795,14 @@ def test_round_trip_repository(tmp_path: Path) -> None:
 
     installed = install_manpage(src, "tool", Tier.REPOSITORY, "owner/repo")
     assert installed.exists()
+    durable_target = Config().output_dir / "tool.1"
+    assert durable_target.exists()
 
     result = uninstall_manpage("tool")
     assert installed in result.removed
     assert not installed.exists()
+    assert durable_target in result.removed
+    assert not durable_target.exists()
     assert manifest_module.lookup("tool") is None
 
 
