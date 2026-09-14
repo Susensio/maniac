@@ -1,6 +1,16 @@
 # Implementation State
 
-Implementation in flight: use validated Mise `latest` aliases for globally selected vendor manuals, surface later alias drift as `outdated`, and preserve provider-owned target update semantics during uninstall under ADR-0029.
+No implementation is currently in flight.
+
+ADR-0029 now follows a Mise `latest` vendor manpage only when that alias and the executable both resolve under the exact inspected install root.
+Other layouts materialize the page under MANIAC storage.
+Coordinated global Mise upgrades remain `ok`, while a missing, divergent, or unusable alias is `outdated` even when `man` falls through to a system page.
+Uninstall removes the MANIAC link but never a provider-owned target, including when its configured output directory encloses that target.
+
+A live disposable Mise probe confirmed that activation is cwd-sensitive: its project selected `bat@0.25.0` and exported a project marker, while `$HOME` selected the global `bat@0.26.1` and cleared that marker.
+MANIAC's login-path child runs from `$HOME`, so its successful normal path selects the global direct-`latest` PATH layout.
+The development system has no populated Mise shim directory, leaving shim discovery unverified.
+When the login-path child cannot initialize its user environment, it currently falls back to the caller's inherited PATH and can therefore reintroduce project activation; that hardening work is recorded in the backlog.
 
 ADR-0028 changed every new managed manpath entry into a manifest-tracked symbolic link.
 Generated, repository, and currently unqualified vendor pages materialize durably under MANIAC data storage rather than linking into the disposable cache or a versioned provider root.

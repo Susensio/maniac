@@ -7,10 +7,15 @@ Immediate order after the completed list/provenance work:
 1. Distinguish a definitive tier-2 absence from a transient probe failure, then prevent the latter from silently falling through to synthesis; the remaining product choice is an interactive confirmation versus uniform refusal with explicit `--generate` as the override.
 2. Make every page in an upstream release bundle uninstall as one managed unit, including checksum protection and restoration of each displaced vendor page.
 3. Admit bounded documentation roots inside monorepos, using OpenCode's versioned English docs as the first real fixture.
-4. Let vendor pages link directly to a verified provider-upgrade-stable target.
-   ADR-0028 now materializes vendor pages durably rather than guessing that a versioned provider root will survive an upgrade.
-   No current provider exposes the required lifecycle evidence.
-5. Review `_classify` (34), `extract_docs_from_dir` (26), and `check_standard_sections` (28) when their behaviour is next touched; they exceed the cognitive threshold but not Ruff's McCabe threshold of 15.
+4. Add verified provider-upgrade-stable targets only where a provider exposes lifecycle evidence.
+   Mise's validated global `latest` alias is implemented under ADR-0029; other providers must not inherit that path convention.
+5. Harden global Mise discovery against project activation and support shim layouts deliberately.
+   A live disposable project proved that `mise activate` is cwd-sensitive: it selected `bat@0.25.0` and exported a project marker, while `$HOME` selected the global `bat@0.26.1` and removed that marker.
+   MANIAC's successful login-shell path runs from `$HOME`, which correctly selects the global direct-`installs/<tool>/latest/...` PATH layout, but its failure fallback returns the caller's inherited PATH and can leak project activation.
+   Decide whether a failed global-path probe must refuse global inventory or use a separately constructed safe fallback rather than silently trusting that inherited PATH.
+   The development system has no populated Mise shim directory; exercise real shim resolution before deciding whether MANIAC should resolve a shim through a Mise query executed at `$HOME` or handle it another way.
+   `mise which` alone is not that answer because it is cwd-sensitive; the live `mise which -C $HOME bat` result is an alias-path answer and still needs the same root validation as ADR-0029.
+6. Review `_classify` (34), `extract_docs_from_dir` (26), and `check_standard_sections` (28) when their behaviour is next touched; they exceed the cognitive threshold but not Ruff's McCabe threshold of 15.
 
 ## Recovered from an unrecorded session (2026-09-09)
 
