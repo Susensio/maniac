@@ -12,7 +12,8 @@ from pathlib import Path
 from ..config import Config
 from ..logging import logger
 from ..models import Installation, RepoSource
-from ..sources.docs import discover_repo_manpage, discovered_manpage_uri
+from ..sources.docs import discover_repo_manpage
+from ..sources.docs.pages import discovered_manpage_uri
 from ..sources.documentation import documentation_source
 from ..sources.providers.registry import registry
 from .models import ActionState, Candidate, PageSource, ToolRow

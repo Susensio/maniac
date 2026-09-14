@@ -19,7 +19,8 @@ from ..logging import logger
 from ..manifest import Tier
 from ..models import DocFile, PipelineResult
 from ..sources.crawler import find_subcommands, format_help_block, get_version
-from ..sources.docs import fetch_and_extract_docs, format_docs_section
+from ..sources.docs import fetch_and_extract_docs
+from ..sources.docs.extraction import format_docs_section
 from .context import ResolvedTool
 
 __all__ = ["synthesize"]

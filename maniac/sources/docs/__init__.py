@@ -12,19 +12,13 @@ from ...config import Config
 from ...models import DocFile, RepoSource
 from ..manpages import find_repo_manpage
 from . import cache, extraction, pages, release, repository
-from .extraction import MAX_TOTAL_DOC_CHARS, extract_docs_from_dir, format_docs_section
-from .pages import _Probe, _ProbeResult, discovered_manpage_uri
-from .repository import resolve_repo_dir
+from .extraction import MAX_TOTAL_DOC_CHARS
+from .pages import _Probe, _ProbeResult
 
 __all__ = [
-    "MAX_TOTAL_DOC_CHARS",
     "discover_repo_manpage",
     "discover_repo_manpages",
-    "discovered_manpage_uri",
-    "extract_docs_from_dir",
     "fetch_and_extract_docs",
-    "format_docs_section",
-    "resolve_repo_dir",
 ]
 
 

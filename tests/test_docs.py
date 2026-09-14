@@ -10,15 +10,14 @@ from maniac.sources.docs import (
     cache,
     discover_repo_manpage,
     discover_repo_manpages,
-    discovered_manpage_uri,
-    extract_docs_from_dir,
     fetch_and_extract_docs,
-    format_docs_section,
     pages,
     release,
     repository,
-    resolve_repo_dir,
 )
+from maniac.sources.docs.extraction import extract_docs_from_dir, format_docs_section
+from maniac.sources.docs.pages import discovered_manpage_uri
+from maniac.sources.docs.repository import resolve_repo_dir
 from maniac.sources.documentation import documentation_source
 
 

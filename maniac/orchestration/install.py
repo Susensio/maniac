@@ -22,7 +22,8 @@ from ..installer import install_manpage
 from ..logging import logger
 from ..manifest import Tier
 from ..models import Installation, PipelineResult
-from ..sources.docs import discover_repo_manpages, discovered_manpage_uri
+from ..sources.docs import discover_repo_manpages
+from ..sources.docs.pages import discovered_manpage_uri
 from ..sources.manpages import (
     manpage_documents,
     read_manpage_source,
