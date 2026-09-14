@@ -19,18 +19,11 @@ from pathlib import Path
 from ..config import Config
 from ..exceptions import ManiacError
 from ..installer import install_manpage
-from ..logging import logger
 from ..manifest import Tier
-from ..models import Installation, PipelineResult
+from ..models import PipelineResult
+from ..sources.candidates import select_install_root, select_repository
 from ..sources.docs import discover_repo_manpages
-from ..sources.docs.pages import discovered_manpage_uri
-from ..sources.manpages import (
-    manpage_documents,
-    read_manpage_source,
-    select_primary_manpage,
-)
-from ..sources.pathcache import resolve_bin_path, resolve_cached
-from ..sources.providers.base import DirectPageProvider
+from ..sources.pathcache import resolve_bin_path
 from .context import ResolvedTool, resolve_tool
 
 __all__ = ["InstallOutcome", "InstallRefused", "Tier", "run_install"]
@@ -148,25 +141,18 @@ def _try_install_root(tool: ResolvedTool, *, force: bool) -> InstallOutcome | No
     provider, inst = tool.provider, tool.installation
     if provider is None or inst is None:
         return None
-    page = select_primary_manpage(provider.local_docs(inst), inst.binary)
-    if page is None:
+    candidate = select_install_root(provider, inst)
+    if candidate is None:
         return None
-
-    provider_owned = _is_direct_provider_page(page, inst)
-    direct_target = (
-        provider.direct_page_target(inst, page)
-        if provider_owned and isinstance(provider, DirectPageProvider)
-        else None
-    )
     installed_path = install_manpage(
-        direct_target or page,
+        candidate.final_target,
         inst.binary,
         Tier.INSTALL_ROOT,
         str(inst.root),
         force=force,
         version=inst.version,
-        durable_source=provider_owned,
-        provider_target=provider_owned,
+        durable_source=candidate.provider_owned,
+        provider_target=candidate.provider_owned,
         config=tool.config,
     )
     detail = "upstream manpage from install root"
@@ -177,18 +163,9 @@ def _try_install_root(tool: ResolvedTool, *, force: bool) -> InstallOutcome | No
         tool=inst.binary,
         tier=Tier.INSTALL_ROOT,
         detail=detail,
-        source_path=page,
+        source_path=candidate.discovered_page,
         installed_path=installed_path,
     )
-
-
-def _is_direct_provider_page(page: Path, inst: Installation) -> bool:
-    """Whether a resolved vendor page is contained by its inspected root."""
-    try:
-        resolve_cached(page).relative_to(resolve_cached(inst.root))
-    except (OSError, ValueError):
-        return False
-    return True
 
 
 def _try_repository(tool: ResolvedTool, *, force: bool) -> InstallOutcome | None:
@@ -209,40 +186,31 @@ def _try_repository(tool: ResolvedTool, *, force: bool) -> InstallOutcome | None
         return None
     cfg = tool.config
 
-    pages = discover_repo_manpages(
-        source, inst.binary, cache_dir=tool.cache_dir, config=cfg, version=inst.version
+    candidate = select_repository(
+        source,
+        inst.binary,
+        cache_dir=tool.cache_dir,
+        config=cfg,
+        version=inst.version,
+        discover=discover_repo_manpages,
     )
-    if not pages:
-        return None
-
-    page = pages[0]
-    content = read_manpage_source(page)
-    if not manpage_documents(content, inst.binary):
-        logger.debug(
-            "Tier-2 page does not name the binary it claims to document",
-            tool=inst.binary,
-            path=str(page),
-        )
+    if candidate is None:
         return None
 
     installed_path: Path | None = None
-    for candidate in pages:
+    for page in candidate.pages:
         installed = install_manpage(
-            candidate,
-            _manpage_owner(candidate),
+            page.path,
+            _manpage_owner(page.path),
             Tier.REPOSITORY,
             source.identity,
-            target_dir=_manpage_directory(candidate, cfg),
+            target_dir=_manpage_directory(page.path, cfg),
             force=force,
             version=inst.version,
-            source_uri=(
-                candidate.absolute().as_uri()
-                if source.is_local
-                else discovered_manpage_uri(candidate)
-            ),
+            source_uri=page.uri,
             config=cfg,
         )
-        if candidate == page:
+        if page == candidate.primary:
             installed_path = installed
     assert installed_path is not None
     detail = f"upstream manpage from repository ({inst.version})   [no synthesis]"
@@ -250,7 +218,7 @@ def _try_repository(tool: ResolvedTool, *, force: bool) -> InstallOutcome | None
         tool=inst.binary,
         tier=Tier.REPOSITORY,
         detail=detail,
-        source_path=page,
+        source_path=candidate.primary.path,
         installed_path=installed_path,
     )
 

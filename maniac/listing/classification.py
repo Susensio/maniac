@@ -14,11 +14,11 @@ from pathlib import Path
 
 from .. import manifest
 from ..config import Config
+from ..sources.candidates import select_install_root
 from ..sources.crawler import get_version
 from ..sources.manpages import (
     _opener_for,
     find_installed_manpage_path,
-    select_primary_manpage,
 )
 from ..sources.packages import ExternalPageFreshness, verify_external_page
 from ..sources.pathcache import resolve_cached
@@ -152,10 +152,13 @@ def _unresolved_page_classification(candidate: Candidate) -> LocalClassification
     """Classify a binary for which `man` resolves no page."""
     provider, inst = candidate.provider, candidate.installation
     if provider is not None and inst is not None:
-        page = select_primary_manpage(provider.local_docs(inst), inst.binary)
-        if page is not None:
+        source = select_install_root(provider, inst)
+        if source is not None:
             return LocalClassification(
-                ActionState.AVAILABLE, PageSource.VENDOR, False, page
+                ActionState.AVAILABLE,
+                PageSource.VENDOR,
+                False,
+                source.primary.path,
             )
     return LocalClassification(ActionState.MISSING, PageSource.NONE, False, None)
 

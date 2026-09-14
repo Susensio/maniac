@@ -11,7 +11,8 @@ from pathlib import Path
 
 from ..config import Config
 from ..logging import logger
-from ..models import Installation, LocalRepoSource, RepoSource
+from ..models import Installation, RepoSource
+from ..sources.candidates import select_repository
 from ..sources.docs import discover_repo_manpage
 from ..sources.docs.pages import discovered_manpage_uri
 from ..sources.documentation import documentation_source
@@ -67,21 +68,18 @@ def probe_upstream(
 ) -> ProbePage | None:
     """Return tier 2's version-matched manpage for one unresolved row."""
     try:
-        page = discover_repo_manpage(
+        candidate = select_repository(
             source,
             inst.binary,
             cache_dir=cfg.cache_dir,
             config=cfg,
             version=inst.version,
+            discover=discover_repo_manpage,
+            page_uri=discovered_manpage_uri,
         )
-        if page is None:
+        if candidate is None:
             return None
-        uri = (
-            page.absolute().as_uri()
-            if isinstance(source, LocalRepoSource)
-            else discovered_manpage_uri(page)
-        )
-        return page, uri
+        return candidate.primary.path, candidate.primary.uri
     except (OSError, UnicodeError) as error:
         # Repository probing is supplementary to the local reachability result.
         logger.debug(
