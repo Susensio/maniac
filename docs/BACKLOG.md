@@ -13,7 +13,7 @@ Immediate order after the completed list/provenance work:
    Decide whether a failed global-path probe must refuse global inventory or use a separately constructed safe fallback rather than silently trusting that inherited PATH.
    The development system has no populated Mise shim directory; exercise real shim resolution before deciding whether MANIAC should resolve a shim through a Mise query executed at `$HOME` or handle it another way.
    `mise which` alone is not that answer because it is cwd-sensitive; the live `mise which -C $HOME bat` result is an alias-path answer and still needs the same root validation as ADR-0029.
-5. Review `_classify` (34), `extract_docs_from_dir` (26), and `check_standard_sections` (28) when their behaviour is next touched; they exceed the cognitive threshold but not Ruff's McCabe threshold of 15.
+5. Refactor the `just code-review` cognitive-complexity hotspots: `_classify` (39), `compute_rows` (41), `_migrate_install_root_links` (29), `uninstall_manpage` (27), `extract_docs_from_dir` (26), and `check_standard_sections` (28).
 6. Make manifest loading a pure serialization operation and move legacy/link reconciliation into one explicit lifecycle service shared with installation.
    That service must own provider-page discovery, filesystem transitions, and the `manifest`/`installer` boundary, rather than making `lookup()` mutate user manpath entries through a deferred import cycle.
 7. Serialize manifest load-modify-save operations with a sidecar lock and transactional update API, including reconciliation, so concurrent installs cannot lose an ownership entry.
