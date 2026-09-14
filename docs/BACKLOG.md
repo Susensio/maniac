@@ -25,10 +25,9 @@ These are findings the work surfaced and deliberately did not take; they are fir
 
 ### Structure
 
-- Shrink `sources/docs`'s facade to the operations that actually compose.
-  `__init__` re-exports `resolve_repo_dir`, `discovered_manpage_uri`, `extract_docs_from_dir`, `format_docs_section` and `MAX_TOTAL_DOC_CHARS` only so the old `maniac.sources.docs` import path kept working, which the split was wrongly told to preserve.
-  Callers should import those from the module that owns them, leaving the facade holding `fetch_and_extract_docs` and `discover_repo_manpage(s)`.
-  Blocked until the listing and install-orchestration work lands, because those callers are being edited concurrently.
+- Delete `maniac/sources/__init__.py`'s remaining re-exports if they are as dead as the three already removed.
+  `extract_subcommands`, `find_subcommands`, `format_help_block`, `get_help` and `discover_repo` are re-exported from `crawler` and `resolution`, but every importer reaches for the submodule instead (`from ..sources import resolution`).
+  Three sibling re-exports were confirmed unreferenced and deleted with the facade cleanup; check these the same way rather than assuming.
 - Thread probe definitiveness back as a return value instead of `docs.cache`'s module-level `_lookup_state` thread-local.
   ADR-0033's split made that cross-module channel visible without removing it: `cache` writes it and `repository` reads it.
   Removing it touches every probe signature, so it was left out of the split deliberately.

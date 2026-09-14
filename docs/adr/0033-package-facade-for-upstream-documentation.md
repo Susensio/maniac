@@ -15,7 +15,13 @@ Six functions carried more than five arguments because `(source, binary_name, ca
 ## Decision
 
 `maniac.sources.docs` becomes a package whose `__init__` is the facade.
-Callers in `orchestration`, `cli` and `installer` import the same names they imported before and are unaffected.
+
+The original decision also kept every name importable from the old path, so callers were unaffected.
+That requirement was mistaken -- it came from the brief, not from this decision -- and was removed once `CLAUDE.md` made explicit that no interface is frozen before 1.0.0.
+The facade now exports only `fetch_and_extract_docs`, `discover_repo_manpages` and `discover_repo_manpage`, each of which has a body composing modules that must not import each other.
+`resolve_repo_dir`, `discovered_manpage_uri`, `extract_docs_from_dir`, `format_docs_section` and `MAX_TOTAL_DOC_CHARS` are imported from the modules that own them.
+
+The boundary below survived that correction unchanged, which is the useful evidence: the five-module split was right, and only the compatibility layer wrapped around it was wrong.
 
 Five modules sit behind it in a dependency order that is acyclic by construction: `cache`, then `pages`, then `repository` and its leaf `extraction`, then `release`.
 The travelling argument tuple becomes a frozen `_Probe`, so each module reads as `_Probe` to `_ProbeResult`.
