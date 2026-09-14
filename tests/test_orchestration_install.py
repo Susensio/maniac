@@ -86,6 +86,37 @@ def test_run_install_uses_the_install_root_page_first(
     assert outcome.installed_path == Path("/installed/tool.1")
 
 
+def test_run_install_links_an_unaliased_mise_page_directly(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    root = tmp_path / ".local" / "share" / "mise" / "installs" / "tool" / "1.2.3"
+    page = root / "share" / "man" / "man1" / "tool.1"
+    page.parent.mkdir(parents=True)
+    page.write_text(".TH TOOL 1\n", encoding="utf-8")
+    provider = _FakeProvider(local_docs=[page])
+    provider.name = "mise"
+    inst = _installation(root=root)
+    cfg = Config(
+        man_dir=tmp_path / "man1",
+        output_dir=tmp_path / "maniac",
+        manifest_path=tmp_path / "state" / "installed.json",
+    )
+    monkeypatch.setattr(
+        "maniac.orchestration.install.discovery.find_installation",
+        lambda name, bin_dir=None: (provider, inst),
+    )
+
+    outcome = run_install("tool", config=cfg)
+
+    entry = manifest.lookup("tool", config=cfg)
+    assert outcome.installed_path is not None
+    assert outcome.installed_path.resolve() == page
+    assert entry is not None
+    assert entry.target == page.absolute()
+    assert entry.provider_target is True
+    assert not cfg.output_dir.exists()
+
+
 def test_run_install_falls_through_to_repository_when_no_install_root_page(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

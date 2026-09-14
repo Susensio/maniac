@@ -108,10 +108,10 @@ def test_install_root_direct_link_requires_explicit_durable_source(
     assert not cfg.output_dir.exists()
 
 
-def test_uninstall_removes_an_updated_provider_target_but_keeps_its_source(
+def test_uninstall_removes_a_concrete_provider_target_but_keeps_its_source(
     tmp_path: Path,
 ) -> None:
-    source = tmp_path / "mise" / "latest" / "share" / "man" / "man1" / "tool.1"
+    source = tmp_path / "mise" / "1.0.0" / "share" / "man" / "man1" / "tool.1"
     source.parent.mkdir(parents=True)
     source.write_text(".TH TOOL 1 old", encoding="utf-8")
     cfg = Config(

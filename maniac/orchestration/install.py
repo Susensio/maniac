@@ -166,6 +166,7 @@ def _try_install_root(
     latest_target = getattr(provider, "latest_manpage_target", lambda *_: None)(
         inst, page
     )
+    provider_owned = provider.name == "mise" or latest_target is not None
     installed_path = install_manpage(
         latest_target or page,
         inst.binary,
@@ -173,8 +174,8 @@ def _try_install_root(
         str(inst.root),
         force=force,
         version=inst.version,
-        durable_source=latest_target is not None,
-        provider_target=latest_target is not None,
+        durable_source=provider_owned,
+        provider_target=provider_owned,
         config=cfg,
     )
     detail = "upstream manpage from install root"

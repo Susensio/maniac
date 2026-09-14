@@ -1974,6 +1974,48 @@ def test_classify_outdated_when_mise_latest_alias_drifts(
     )
 
 
+def test_classify_outdated_for_an_unaliased_mise_provider_target(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    root = tmp_path / ".local" / "share" / "mise" / "installs" / "tool" / "1.0.0"
+    binary = root / "bin" / "tool"
+    binary.parent.mkdir(parents=True)
+    binary.touch()
+    bin_path = tmp_path / ".local" / "bin" / "tool"
+    bin_path.parent.mkdir(parents=True)
+    bin_path.symlink_to(binary)
+    provider = mise_module.MiseProvider()
+    inst = provider.detect(bin_path)
+    assert inst is not None
+    page = root / "share" / "man" / "man1" / "tool.1"
+    page.parent.mkdir(parents=True)
+    page.write_text(".TH TOOL 1\n", encoding="utf-8")
+    cfg = _config(tmp_path)
+    installed = cfg.man_dir / "tool.1"
+    installed.parent.mkdir(parents=True)
+    installed.symlink_to(page)
+    manifest.record(
+        "tool",
+        installed,
+        Tier.INSTALL_ROOT,
+        str(root),
+        manifest.checksum_of(page),
+        version="1.0.0",
+        target=page,
+        provider_target=True,
+        config=cfg,
+    )
+    monkeypatch.setattr(
+        "maniac.cli.listing.find_installed_manpage_path",
+        lambda man_bin, tool_name: installed,
+    )
+
+    assert _classification_pair(provider, inst, "tool", cfg) == (
+        ActionState.OUTDATED,
+        PageSource.VENDOR,
+    )
+
+
 def test_classify_ok_when_mise_latest_and_binary_advance_together(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
