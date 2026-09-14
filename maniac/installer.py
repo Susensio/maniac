@@ -192,6 +192,86 @@ class UninstallResult:
     modified_kept: Path | None = None
 
 
+def _foreign_manpage(tool_name: str, cfg: Config) -> Path | None:
+    """Return an unrecorded uncompressed manpath page, if present."""
+    installed_file = cfg.man_dir / f"{tool_name}.1"
+    return installed_file if installed_file.exists() else None
+
+
+def _entry_must_be_kept(entry: Entry, *, force: bool) -> bool:
+    """Whether a manifest entry is no longer safe to remove."""
+    if entry.target is None or not manifest.is_expected_link(entry):
+        return True
+    if force or entry.provider_target:
+        return False
+    target = manifest.expected_target_path(entry)
+    return manifest.checksum_of(target) != entry.checksum
+
+
+def _remove_recorded_manpage(
+    tool_name: str,
+    cfg: Config,
+    *,
+    force: bool,
+    removed_paths: list[Path],
+) -> tuple[Entry | None, Path | None, Path | None]:
+    """Remove a recorded link, returning its entry and any kept-page status."""
+    entry = manifest.lookup(tool_name, config=cfg)
+    if entry is None:
+        return None, _foreign_manpage(tool_name, cfg), None
+    if not _path_exists(entry.path):
+        manifest.forget(tool_name, config=cfg)
+        return entry, None, None
+    if _entry_must_be_kept(entry, force=force):
+        return entry, None, entry.path
+
+    target = manifest.expected_target_path(entry)
+    installed_file = entry.path
+    installed_file.unlink()
+    logger.info("Removed installed manpage", path=str(installed_file))
+    if entry.backup is not None and entry.backup.exists():
+        # shutil.move, not Path.rename: the backup lives under
+        # Config.backup_dir (XDG_STATE_HOME), the page under man_dir
+        # (XDG_DATA_HOME) -- separate mounts raise EXDEV on a bare rename.
+        shutil.move(entry.backup, installed_file)
+        logger.info("Restored vendor backup manpage", path=str(installed_file))
+    else:
+        removed_paths.append(installed_file)
+    manifest.forget(tool_name, config=cfg)
+
+    if (
+        not entry.provider_target
+        and manifest.is_maniac_owned_target(target, cfg)
+        and target.exists()
+    ):
+        target.unlink()
+        removed_paths.append(target)
+    return entry, None, None
+
+
+def _remove_orphaned_roff(
+    tool_name: str, cfg: Config, entry: Entry | None, removed_paths: list[Path]
+) -> None:
+    """Remove the legacy durable roff copy when it is not the recorded target."""
+    stored_roff = cfg.output_dir / f"{tool_name}.1"
+    if stored_roff.exists() and (entry is None or stored_roff != entry.target):
+        stored_roff.unlink()
+        removed_paths.append(stored_roff)
+
+
+def _purge_artifacts(tool_name: str, cfg: Config, removed_paths: list[Path]) -> None:
+    """Remove optional generated sources and intermediates for a tool."""
+    paths = (
+        cfg.output_dir / f"{tool_name}.1.md",
+        cfg.intermediate_dir / f"{tool_name}_context.md",
+        cfg.intermediate_dir / f"{tool_name}_prompt.md",
+    )
+    for path in paths:
+        if path.exists():
+            path.unlink()
+            removed_paths.append(path)
+
+
 def uninstall_manpage(
     tool_name: str,
     purge: bool = False,
@@ -211,76 +291,19 @@ def uninstall_manpage(
     """
     cfg = config or Config()
     removed_paths: list[Path] = []
-    foreign_kept: Path | None = None
-    modified_kept: Path | None = None
-
     # 1. Active installed manpage, wherever the manifest says MANIAC put it --
     # the manifest's recorded path, not a `<tool>.1` guess, is what closes
     # the compressed-page hole (a tier-1 `pandoc.1.gz` was previously
     # unreachable here) (ADR-0017).
-    entry = manifest.lookup(tool_name, config=cfg)
-    if entry is None:
-        installed_file = cfg.man_dir / f"{tool_name}.1"
-        if installed_file.exists():
-            foreign_kept = installed_file
-    elif not _path_exists(entry.path):
-        manifest.forget(tool_name, config=cfg)
-    elif (
-        entry.target is None
-        or not manifest.is_expected_link(entry)
-        or (
-            not force
-            and not entry.provider_target
-            and manifest.checksum_of(manifest.expected_target_path(entry))
-            != entry.checksum
-        )
-    ):
-        modified_kept = entry.path
-    else:
-        target = manifest.expected_target_path(entry)
-        installed_file = entry.path
-        installed_file.unlink()
-        logger.info("Removed installed manpage", path=str(installed_file))
-
-        if entry.backup is not None and entry.backup.exists():
-            # shutil.move, not Path.rename: the backup lives under
-            # Config.backup_dir (XDG_STATE_HOME), the page under man_dir
-            # (XDG_DATA_HOME) -- separate mounts raise EXDEV on a bare rename.
-            shutil.move(entry.backup, installed_file)
-            logger.info("Restored vendor backup manpage", path=str(installed_file))
-        else:
-            removed_paths.append(installed_file)
-        manifest.forget(tool_name, config=cfg)
-
-        if (
-            not entry.provider_target
-            and manifest.is_maniac_owned_target(target, cfg)
-            and target.exists()
-        ):
-            target.unlink()
-            removed_paths.append(target)
+    entry, foreign_kept, modified_kept = _remove_recorded_manpage(
+        tool_name, cfg, force=force, removed_paths=removed_paths
+    )
 
     # 2. XDG data storage (output_dir / <tool>.1)
-    stored_roff = cfg.output_dir / f"{tool_name}.1"
-    if stored_roff.exists() and (entry is None or stored_roff != entry.target):
-        stored_roff.unlink()
-        removed_paths.append(stored_roff)
+    _remove_orphaned_roff(tool_name, cfg, entry, removed_paths)
 
     if purge:
-        stored_md = cfg.output_dir / f"{tool_name}.1.md"
-        if stored_md.exists():
-            stored_md.unlink()
-            removed_paths.append(stored_md)
-
-        inter_ctx = cfg.intermediate_dir / f"{tool_name}_context.md"
-        if inter_ctx.exists():
-            inter_ctx.unlink()
-            removed_paths.append(inter_ctx)
-
-        inter_prompt = cfg.intermediate_dir / f"{tool_name}_prompt.md"
-        if inter_prompt.exists():
-            inter_prompt.unlink()
-            removed_paths.append(inter_prompt)
+        _purge_artifacts(tool_name, cfg, removed_paths)
 
     return UninstallResult(
         removed=removed_paths, foreign_kept=foreign_kept, modified_kept=modified_kept
