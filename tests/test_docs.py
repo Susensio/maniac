@@ -7,12 +7,16 @@ import pytest
 from maniac.config import Config
 from maniac.models import DocFile, RepoSource
 from maniac.sources.docs import (
+    cache,
     discover_repo_manpage,
     discover_repo_manpages,
     discovered_manpage_uri,
     extract_docs_from_dir,
     fetch_and_extract_docs,
     format_docs_section,
+    pages,
+    release,
+    repository,
     resolve_repo_dir,
 )
 from maniac.sources.documentation import documentation_source
@@ -102,8 +106,6 @@ def test_documentation_source_redirects_only_the_exact_tmux_build_repository() -
 def test_fetch_and_extract_docs_includes_github_wiki(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    from maniac.sources import docs as docs_module
-
     def fake_clone(
         clone_url: str, dest_dir: Path, cfg: object, **kwargs: object
     ) -> bool:
@@ -115,7 +117,7 @@ def test_fetch_and_extract_docs_includes_github_wiki(
             (dest_dir / "README.md").write_text("# Repo", encoding="utf-8")
         return True
 
-    monkeypatch.setattr(docs_module, "_clone_repository", fake_clone)
+    monkeypatch.setattr(repository, "_clone_repository", fake_clone)
     source = RepoSource(name="tool", target="owner/tool", is_local=False)
 
     doc_files, matched = fetch_and_extract_docs(source, cache_dir=tmp_path)
@@ -271,7 +273,7 @@ def test_find_matching_tag_prefers_v_prefixed(monkeypatch: pytest.MonkeyPatch) -
     """`gh` tags releases `v2.90.0`; a peeled annotated-tag ref (`^{}`) is stripped."""
     import subprocess
 
-    from maniac.sources.docs import _find_matching_tag
+    from maniac.sources.docs.repository import _find_matching_tag
 
     def fake_run(cmd: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
         assert cmd[:3] == ["git", "ls-remote", "--tags"]
@@ -287,7 +289,7 @@ def test_find_matching_tag_bare_version(monkeypatch: pytest.MonkeyPatch) -> None
     """`pandoc` tags releases bare, `3.10.2` with no `v` prefix."""
     import subprocess
 
-    from maniac.sources.docs import _find_matching_tag
+    from maniac.sources.docs.repository import _find_matching_tag
 
     def fake_run(cmd: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
         return subprocess.CompletedProcess(
@@ -304,7 +306,7 @@ def test_find_matching_tag_no_match_returns_none(
 ) -> None:
     import subprocess
 
-    from maniac.sources.docs import _find_matching_tag
+    from maniac.sources.docs.repository import _find_matching_tag
 
     def fake_run(cmd: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
         return subprocess.CompletedProcess(
@@ -318,8 +320,6 @@ def test_find_matching_tag_no_match_returns_none(
 def test_discovery_resolves_a_tag_once_before_tree_and_release_probes(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    from maniac.sources import docs as docs_module
-
     lookups = 0
 
     def find_tag(*args: object) -> str:
@@ -327,16 +327,16 @@ def test_discovery_resolves_a_tag_once_before_tree_and_release_probes(
         lookups += 1
         return "v1.2.3"
 
-    monkeypatch.setattr(docs_module, "_find_matching_tag", find_tag)
+    monkeypatch.setattr(repository, "_find_matching_tag", find_tag)
     monkeypatch.setattr(
-        docs_module,
+        repository,
         "_discover_remote_manpage_result",
-        lambda *args: docs_module._ProbeResult([], True),
+        lambda *args: pages._ProbeResult([], True),
     )
     monkeypatch.setattr(
-        docs_module,
+        release,
         "_discover_github_release_manpages_result",
-        lambda *args: docs_module._ProbeResult([], True),
+        lambda *args: pages._ProbeResult([], True),
     )
     source = RepoSource(name="tool", target="owner/tool", is_local=False)
 
@@ -347,25 +347,23 @@ def test_discovery_resolves_a_tag_once_before_tree_and_release_probes(
 def test_versioned_probe_cache_skips_network_for_positive_and_negative_results(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    from maniac.sources import docs as docs_module
-
     source = RepoSource(name="tool", target="owner/tool", is_local=False)
     page = tmp_path / "manpages" / "key" / "tool.1"
     page.parent.mkdir(parents=True)
     page.write_text(".TH TOOL 1\n", encoding="utf-8")
-    monkeypatch.setattr(docs_module, "_find_matching_tag", lambda *args: "v1.2.3")
+    monkeypatch.setattr(repository, "_find_matching_tag", lambda *args: "v1.2.3")
     monkeypatch.setattr(
-        docs_module,
+        repository,
         "_discover_remote_manpage_result",
-        lambda *args: docs_module._ProbeResult([page], True),
+        lambda *args: pages._ProbeResult([page], True),
     )
     assert discover_repo_manpages(source, "tool", tmp_path, version="1.2.3") == [page]
 
     monkeypatch.setattr(
-        docs_module, "_find_matching_tag", lambda *args: pytest.fail("network used")
+        repository, "_find_matching_tag", lambda *args: pytest.fail("network used")
     )
     monkeypatch.setattr(
-        docs_module,
+        repository,
         "_discover_remote_manpage_result",
         lambda *args: pytest.fail("network used"),
     )
@@ -373,13 +371,13 @@ def test_versioned_probe_cache_skips_network_for_positive_and_negative_results(
 
     missing = RepoSource(name="missing", target="owner/missing", is_local=False)
     monkeypatch.setattr(
-        docs_module,
+        repository,
         "_find_matching_tag_cached_result",
         lambda *args: (None, True),
     )
     assert discover_repo_manpages(missing, "missing", tmp_path, version="1.2.3") == []
     monkeypatch.setattr(
-        docs_module,
+        repository,
         "_find_matching_tag_cached_result",
         lambda *args: pytest.fail("network used"),
     )
@@ -389,8 +387,6 @@ def test_versioned_probe_cache_skips_network_for_positive_and_negative_results(
 def test_definitive_versioned_probe_miss_skips_tree_and_release_on_second_call(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    from maniac.sources import docs as docs_module
-
     source = RepoSource(name="tool", target="owner/tool", is_local=False)
     tree_calls = 0
     release_calls = 0
@@ -398,29 +394,29 @@ def test_definitive_versioned_probe_miss_skips_tree_and_release_on_second_call(
     def tree(*args: object) -> object:
         nonlocal tree_calls
         tree_calls += 1
-        return docs_module._ProbeResult([], True)
+        return pages._ProbeResult([], True)
 
-    def release(*args: object) -> object:
+    def release_probe(*args: object) -> object:
         nonlocal release_calls
         release_calls += 1
-        return docs_module._ProbeResult([], True)
+        return pages._ProbeResult([], True)
 
-    monkeypatch.setattr(docs_module, "_find_matching_tag", lambda *args: "v1.2.3")
-    monkeypatch.setattr(docs_module, "_discover_remote_manpage_result", tree)
+    monkeypatch.setattr(repository, "_find_matching_tag", lambda *args: "v1.2.3")
+    monkeypatch.setattr(repository, "_discover_remote_manpage_result", tree)
     monkeypatch.setattr(
-        docs_module, "_discover_github_release_manpages_result", release
+        release, "_discover_github_release_manpages_result", release_probe
     )
 
     assert discover_repo_manpages(source, "tool", tmp_path, version="1.2.3") == []
     assert (tree_calls, release_calls) == (1, 1)
 
     monkeypatch.setattr(
-        docs_module,
+        repository,
         "_discover_remote_manpage_result",
         lambda *args: pytest.fail("tree used"),
     )
     monkeypatch.setattr(
-        docs_module,
+        release,
         "_discover_github_release_manpages_result",
         lambda *args: pytest.fail("release used"),
     )
@@ -430,28 +426,26 @@ def test_definitive_versioned_probe_miss_skips_tree_and_release_on_second_call(
 def test_expired_definitive_probe_miss_refreshes(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    from maniac.sources import docs as docs_module
-
     now = 1000.0
     calls = 0
 
     def tree(*args: object) -> object:
         nonlocal calls
         calls += 1
-        return docs_module._ProbeResult([], True)
+        return pages._ProbeResult([], True)
 
-    monkeypatch.setattr(docs_module.time, "time", lambda: now)
-    monkeypatch.setattr(docs_module, "_find_matching_tag", lambda *args: "v1.2.3")
-    monkeypatch.setattr(docs_module, "_discover_remote_manpage_result", tree)
+    monkeypatch.setattr(cache.time, "time", lambda: now)
+    monkeypatch.setattr(repository, "_find_matching_tag", lambda *args: "v1.2.3")
+    monkeypatch.setattr(repository, "_discover_remote_manpage_result", tree)
     monkeypatch.setattr(
-        docs_module,
+        release,
         "_discover_github_release_manpages_result",
-        lambda *args: docs_module._ProbeResult([], True),
+        lambda *args: pages._ProbeResult([], True),
     )
     source = RepoSource(name="tool", target="owner/tool", is_local=False)
 
     assert discover_repo_manpages(source, "tool", tmp_path, version="1.2.3") == []
-    now += docs_module._NEGATIVE_CACHE_TTL + 1
+    now += cache._NEGATIVE_CACHE_TTL + 1
     assert discover_repo_manpages(source, "tool", tmp_path, version="1.2.3") == []
     assert calls == 2
 
@@ -459,8 +453,6 @@ def test_expired_definitive_probe_miss_refreshes(
 def test_release_metadata_revalidates_after_a_definitive_probe_miss_expires(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    from maniac.sources import docs as docs_module
-
     now = 1000.0
     metadata_calls = 0
 
@@ -476,46 +468,44 @@ def test_release_metadata_revalidates_after_a_definitive_probe_miss_expires(
             )
         return b".TH TOOL 1\n"
 
-    monkeypatch.setattr(docs_module.time, "time", lambda: now)
-    monkeypatch.setattr(docs_module, "_find_matching_tag", lambda *args: "v1.2.3")
+    monkeypatch.setattr(cache.time, "time", lambda: now)
+    monkeypatch.setattr(repository, "_find_matching_tag", lambda *args: "v1.2.3")
     monkeypatch.setattr(
-        docs_module,
+        repository,
         "_discover_remote_manpage_result",
-        lambda *args: docs_module._ProbeResult([], True),
+        lambda *args: pages._ProbeResult([], True),
     )
-    monkeypatch.setattr(docs_module, "_download", download)
+    monkeypatch.setattr(cache, "_download", download)
     source = RepoSource(name="tool", target="owner/tool", is_local=False)
 
     assert discover_repo_manpages(source, "tool", tmp_path, version="1.2.3") == []
-    now += docs_module._NEGATIVE_CACHE_TTL - 1
+    now += cache._NEGATIVE_CACHE_TTL - 1
     assert discover_repo_manpages(source, "tool", tmp_path, version="1.2.3") == []
     assert metadata_calls == 1
 
     now += 2
-    pages = discover_repo_manpages(source, "tool", tmp_path, version="1.2.3")
+    found = discover_repo_manpages(source, "tool", tmp_path, version="1.2.3")
 
-    assert [page.name for page in pages] == ["tool.1"]
+    assert [page.name for page in found] == ["tool.1"]
     assert metadata_calls == 2
 
 
 def test_transient_probe_failure_is_not_cached(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    from maniac.sources import docs as docs_module
-
     tree_calls = 0
 
     def tree(*args: object) -> object:
         nonlocal tree_calls
         tree_calls += 1
-        return docs_module._ProbeResult([], False)
+        return pages._ProbeResult([], False)
 
-    monkeypatch.setattr(docs_module, "_find_matching_tag", lambda *args: "v1.2.3")
-    monkeypatch.setattr(docs_module, "_discover_remote_manpage_result", tree)
+    monkeypatch.setattr(repository, "_find_matching_tag", lambda *args: "v1.2.3")
+    monkeypatch.setattr(repository, "_discover_remote_manpage_result", tree)
     monkeypatch.setattr(
-        docs_module,
+        release,
         "_discover_github_release_manpages_result",
-        lambda *args: docs_module._ProbeResult([], False),
+        lambda *args: pages._ProbeResult([], False),
     )
     source = RepoSource(name="tool", target="owner/tool", is_local=False)
 
@@ -527,25 +517,23 @@ def test_transient_probe_failure_is_not_cached(
 def test_tree_failure_does_not_cache_a_definitive_release_miss(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    from maniac.sources import docs as docs_module
-
     tree_calls = 0
     release_calls = 0
 
     def tree(*args: object) -> object:
         nonlocal tree_calls
         tree_calls += 1
-        return docs_module._ProbeResult([], False)
+        return pages._ProbeResult([], False)
 
-    def release(*args: object) -> object:
+    def release_probe(*args: object) -> object:
         nonlocal release_calls
         release_calls += 1
-        return docs_module._ProbeResult([], True)
+        return pages._ProbeResult([], True)
 
-    monkeypatch.setattr(docs_module, "_find_matching_tag", lambda *args: "v1.2.3")
-    monkeypatch.setattr(docs_module, "_discover_remote_manpage_result", tree)
+    monkeypatch.setattr(repository, "_find_matching_tag", lambda *args: "v1.2.3")
+    monkeypatch.setattr(repository, "_discover_remote_manpage_result", tree)
     monkeypatch.setattr(
-        docs_module, "_discover_github_release_manpages_result", release
+        release, "_discover_github_release_manpages_result", release_probe
     )
     source = RepoSource(name="tool", target="owner/tool", is_local=False)
 
@@ -561,8 +549,6 @@ def test_github_release_not_found_is_a_definitive_probe_miss(
     from email.message import Message
     from urllib.error import HTTPError
 
-    from maniac.sources import docs as docs_module
-
     calls = 0
 
     def missing(*args: object, **kwargs: object) -> object:
@@ -572,33 +558,31 @@ def test_github_release_not_found_is_a_definitive_probe_miss(
             "https://api.github.com/release", status, "missing", Message(), None
         )
 
-    monkeypatch.setattr(docs_module, "urlopen", missing)
+    monkeypatch.setattr(cache, "urlopen", missing)
     source = RepoSource(name="tool", target="owner/tool", is_local=False)
     cfg = Config(cache_dir=tmp_path)
 
-    result = docs_module._discover_github_release_manpages_result(
-        source, "tool", tmp_path, cfg, "1.2.3", "v1.2.3"
+    result = release._discover_github_release_manpages_result(
+        pages._Probe(source, "tool", tmp_path, cfg, "1.2.3", "v1.2.3")
     )
 
-    assert result == docs_module._ProbeResult([], True)
+    assert result == pages._ProbeResult([], True)
     assert calls == 1
 
 
 def test_malformed_release_metadata_does_not_cache_the_probe(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    from maniac.sources import docs as docs_module
-
     tree_calls = 0
 
     def tree(*args: object) -> object:
         nonlocal tree_calls
         tree_calls += 1
-        return docs_module._ProbeResult([], True)
+        return pages._ProbeResult([], True)
 
-    monkeypatch.setattr(docs_module, "_find_matching_tag", lambda *args: "v1.2.3")
-    monkeypatch.setattr(docs_module, "_discover_remote_manpage_result", tree)
-    monkeypatch.setattr(docs_module, "_download", lambda *args: b"[]")
+    monkeypatch.setattr(repository, "_find_matching_tag", lambda *args: "v1.2.3")
+    monkeypatch.setattr(repository, "_discover_remote_manpage_result", tree)
+    monkeypatch.setattr(cache, "_download", lambda *args: b"[]")
     source = RepoSource(name="tool", target="owner/tool", is_local=False)
 
     assert discover_repo_manpages(source, "tool", tmp_path, version="1.2.3") == []
@@ -612,8 +596,6 @@ def test_concurrent_definitive_probe_misses_are_single_flight(
     from concurrent.futures import ThreadPoolExecutor
     from threading import Event, Lock
 
-    from maniac.sources import docs as docs_module
-
     calls = 0
     calls_lock = Lock()
     tree_started = Event()
@@ -625,14 +607,14 @@ def test_concurrent_definitive_probe_misses_are_single_flight(
             calls += 1
         tree_started.set()
         assert release_tree.wait(timeout=2)
-        return docs_module._ProbeResult([], True)
+        return pages._ProbeResult([], True)
 
-    monkeypatch.setattr(docs_module, "_find_matching_tag", lambda *args: "v1.2.3")
-    monkeypatch.setattr(docs_module, "_discover_remote_manpage_result", tree)
+    monkeypatch.setattr(repository, "_find_matching_tag", lambda *args: "v1.2.3")
+    monkeypatch.setattr(repository, "_discover_remote_manpage_result", tree)
     monkeypatch.setattr(
-        docs_module,
+        release,
         "_discover_github_release_manpages_result",
-        lambda *args: docs_module._ProbeResult([], True),
+        lambda *args: pages._ProbeResult([], True),
     )
     source = RepoSource(name="tool", target="owner/tool", is_local=False)
 
@@ -659,8 +641,6 @@ def test_concurrent_binaries_share_tag_and_release_metadata(
 ) -> None:
     from concurrent.futures import ThreadPoolExecutor
 
-    from maniac.sources import docs as docs_module
-
     tag_lookups = 0
     downloads = 0
 
@@ -674,13 +654,13 @@ def test_concurrent_binaries_share_tag_and_release_metadata(
         downloads += 1
         return b'{"assets": []}'
 
-    monkeypatch.setattr(docs_module, "_find_matching_tag", find_tag)
+    monkeypatch.setattr(repository, "_find_matching_tag", find_tag)
     monkeypatch.setattr(
-        docs_module,
+        repository,
         "_discover_remote_manpage_result",
-        lambda *args: docs_module._ProbeResult([], True),
+        lambda *args: pages._ProbeResult([], True),
     )
-    monkeypatch.setattr(docs_module, "_download", download)
+    monkeypatch.setattr(cache, "_download", download)
     source = RepoSource(name="tool", target="owner/tool", is_local=False)
 
     with ThreadPoolExecutor(max_workers=4) as executor:
@@ -701,8 +681,6 @@ def test_concurrent_binaries_share_tag_and_release_metadata(
 def test_expired_negative_tag_cache_refreshes(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    from maniac.sources import docs as docs_module
-
     now = 1000.0
     lookups = 0
 
@@ -713,20 +691,18 @@ def test_expired_negative_tag_cache_refreshes(
         nonlocal lookups
         lookups += 1
 
-    monkeypatch.setattr(docs_module.time, "time", fake_time)
-    monkeypatch.setattr(docs_module, "_find_matching_tag", find_tag)
+    monkeypatch.setattr(cache.time, "time", fake_time)
+    monkeypatch.setattr(repository, "_find_matching_tag", find_tag)
     cfg = Config(cache_dir=tmp_path)
-    assert docs_module._find_matching_tag_cached(tmp_path, "url", "1.2.3", cfg) is None
-    now += docs_module._NEGATIVE_CACHE_TTL + 1
-    assert docs_module._find_matching_tag_cached(tmp_path, "url", "1.2.3", cfg) is None
+    assert repository._find_matching_tag_cached(tmp_path, "url", "1.2.3", cfg) is None
+    now += cache._NEGATIVE_CACHE_TTL + 1
+    assert repository._find_matching_tag_cached(tmp_path, "url", "1.2.3", cfg) is None
     assert lookups == 2
 
 
 def test_transient_tag_lookup_is_not_cached(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    from maniac.sources import docs as docs_module
-
     calls = 0
 
     def fail(*args: object, **kwargs: object) -> object:
@@ -734,18 +710,16 @@ def test_transient_tag_lookup_is_not_cached(
         calls += 1
         raise subprocess.TimeoutExpired("git", 1)
 
-    monkeypatch.setattr(docs_module.subprocess, "run", fail)
+    monkeypatch.setattr(repository.subprocess, "run", fail)
     cfg = Config(cache_dir=tmp_path)
-    assert docs_module._find_matching_tag_cached(tmp_path, "url", "1.2.3", cfg) is None
-    assert docs_module._find_matching_tag_cached(tmp_path, "url", "1.2.3", cfg) is None
+    assert repository._find_matching_tag_cached(tmp_path, "url", "1.2.3", cfg) is None
+    assert repository._find_matching_tag_cached(tmp_path, "url", "1.2.3", cfg) is None
     assert calls == 2
 
 
 def test_nonzero_tag_lookup_is_not_cached(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    from maniac.sources import docs as docs_module
-
     calls = 0
 
     def fail(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
@@ -753,10 +727,10 @@ def test_nonzero_tag_lookup_is_not_cached(
         calls += 1
         return subprocess.CompletedProcess(cmd, 128, stdout="", stderr="offline")
 
-    monkeypatch.setattr(docs_module.subprocess, "run", fail)
+    monkeypatch.setattr(repository.subprocess, "run", fail)
     cfg = Config(cache_dir=tmp_path)
-    assert docs_module._find_matching_tag_cached(tmp_path, "url", "1.2.3", cfg) is None
-    assert docs_module._find_matching_tag_cached(tmp_path, "url", "1.2.3", cfg) is None
+    assert repository._find_matching_tag_cached(tmp_path, "url", "1.2.3", cfg) is None
+    assert repository._find_matching_tag_cached(tmp_path, "url", "1.2.3", cfg) is None
     assert calls == 2
 
 
@@ -767,8 +741,6 @@ def test_definitively_missing_download_is_cached(
     from email.message import Message
     from urllib.error import HTTPError
 
-    from maniac.sources import docs as docs_module
-
     calls = 0
 
     def missing(*args: object, **kwargs: object) -> object:
@@ -776,13 +748,15 @@ def test_definitively_missing_download_is_cached(
         calls += 1
         raise HTTPError("https://example.test/page", status, "missing", Message(), None)
 
-    monkeypatch.setattr(docs_module, "urlopen", missing)
+    monkeypatch.setattr(cache, "urlopen", missing)
     cfg = Config(cache_dir=tmp_path)
     assert (
-        docs_module._download_cached("https://example.test/page", tmp_path, cfg) is None
+        cache._download_cached_result("https://example.test/page", tmp_path, cfg)[0]
+        is None
     )
     assert (
-        docs_module._download_cached("https://example.test/page", tmp_path, cfg) is None
+        cache._download_cached_result("https://example.test/page", tmp_path, cfg)[0]
+        is None
     )
     assert calls == 1
 
@@ -793,8 +767,6 @@ def test_transient_download_is_not_cached(
 ) -> None:
     from email.message import Message
     from urllib.error import HTTPError, URLError
-
-    from maniac.sources import docs as docs_module
 
     calls = 0
 
@@ -807,29 +779,27 @@ def test_transient_download_is_not_cached(
             "https://example.test/page", 503, "unavailable", Message(), None
         )
 
-    monkeypatch.setattr(docs_module, "urlopen", unavailable)
+    monkeypatch.setattr(cache, "urlopen", unavailable)
     cfg = Config(cache_dir=tmp_path)
     assert (
-        docs_module._download_cached("https://example.test/page", tmp_path, cfg) is None
+        cache._download_cached_result("https://example.test/page", tmp_path, cfg)[0]
+        is None
     )
     assert (
-        docs_module._download_cached("https://example.test/page", tmp_path, cfg) is None
+        cache._download_cached_result("https://example.test/page", tmp_path, cfg)[0]
+        is None
     )
     assert calls == 2
 
 
 def test_materialize_page_replaces_an_interrupted_write(tmp_path: Path) -> None:
-    from maniac.sources import docs as docs_module
-
     source = RepoSource(name="tool", target="owner/tool", is_local=False)
-    key = docs_module.sha256(f"{source.target}\0v1\0tool.1".encode()).hexdigest()
+    key = pages.sha256(f"{source.target}\0v1\0tool.1".encode()).hexdigest()
     destination = tmp_path / "manpages" / key / "tool.1"
     destination.parent.mkdir(parents=True)
     destination.write_bytes(b".TH TO")
 
-    page = docs_module._materialize_page(
-        tmp_path, source, "v1", "tool.1", b".TH TOOL 1\n"
-    )
+    page = pages._materialize_page(tmp_path, source, "v1", "tool.1", b".TH TOOL 1\n")
 
     assert page == destination
     assert page.read_bytes() == b".TH TOOL 1\n"
@@ -838,16 +808,14 @@ def test_materialize_page_replaces_an_interrupted_write(tmp_path: Path) -> None:
 def test_malformed_upstream_cache_is_replaced(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    from maniac.sources import docs as docs_module
-
     source = RepoSource(name="tool", target="owner/tool", is_local=False)
     assert source.clone_url is not None
-    path = docs_module._upstream_cache_path(
+    path = cache._upstream_cache_path(
         tmp_path, "probes", "source-uri-v1", source.clone_url, "1.2.3", "tool"
     )
     path.parent.mkdir(parents=True)
     path.write_text("not json", encoding="utf-8")
-    monkeypatch.setattr(docs_module, "_find_matching_tag", lambda *args: None)
+    monkeypatch.setattr(repository, "_find_matching_tag", lambda *args: None)
 
     assert discover_repo_manpages(source, "tool", tmp_path, version="1.2.3") == []
     assert not path.exists()
@@ -857,10 +825,9 @@ def test_resolve_repo_dir_with_version_clones_the_matching_tag(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     from maniac.config import Config
-    from maniac.sources import docs as docs_module
 
     monkeypatch.setattr(
-        docs_module, "_find_matching_tag", lambda url, version, timeout: "v1.2.3"
+        repository, "_find_matching_tag", lambda url, version, timeout: "v1.2.3"
     )
     observed_refs: list[object] = []
 
@@ -872,7 +839,7 @@ def test_resolve_repo_dir_with_version_clones_the_matching_tag(
         (dest_dir / ".git").mkdir()
         return True
 
-    monkeypatch.setattr(docs_module, "_clone_repository", fake_clone)
+    monkeypatch.setattr(repository, "_clone_repository", fake_clone)
     source = RepoSource(name="tool", target="owner/tool", is_local=False)
 
     result = resolve_repo_dir(source, tmp_path, Config(), version="1.2.3")
@@ -886,10 +853,9 @@ def test_resolve_repo_dir_with_version_no_matching_tag_returns_none(
 ) -> None:
     """ADR-0016: an unmatched version is refused, not approximated from the default branch."""
     from maniac.config import Config
-    from maniac.sources import docs as docs_module
 
     monkeypatch.setattr(
-        docs_module, "_find_matching_tag", lambda url, version, timeout: None
+        repository, "_find_matching_tag", lambda url, version, timeout: None
     )
     source = RepoSource(name="tool", target="owner/tool", is_local=False)
 
@@ -900,10 +866,8 @@ def test_fetch_and_extract_docs_with_version_matched_tag(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """ADR-0019: a matching upstream tag makes the docs version-matched."""
-    from maniac.sources import docs as docs_module
-
     monkeypatch.setattr(
-        docs_module, "_find_matching_tag", lambda url, version, timeout: "v1.2.3"
+        repository, "_find_matching_tag", lambda url, version, timeout: "v1.2.3"
     )
 
     def fake_clone(
@@ -914,8 +878,8 @@ def test_fetch_and_extract_docs_with_version_matched_tag(
         (dest_dir / "README.md").write_text("# Tagged", encoding="utf-8")
         return True
 
-    monkeypatch.setattr(docs_module, "_clone_repository", fake_clone)
-    monkeypatch.setattr(docs_module, "_fetch_github_wiki_docs", lambda *a, **kw: [])
+    monkeypatch.setattr(repository, "_clone_repository", fake_clone)
+    monkeypatch.setattr(repository, "_fetch_github_wiki_docs", lambda *a, **kw: [])
     source = RepoSource(name="tool", target="owner/tool", is_local=False)
 
     doc_files, matched = fetch_and_extract_docs(
@@ -934,10 +898,8 @@ def test_fetch_and_extract_docs_with_version_falls_back_when_unmatched(
     False so the caller records no version rather than stamping one nobody
     checked.
     """
-    from maniac.sources import docs as docs_module
-
     monkeypatch.setattr(
-        docs_module, "_find_matching_tag", lambda url, version, timeout: None
+        repository, "_find_matching_tag", lambda url, version, timeout: None
     )
 
     def fake_clone(
@@ -948,8 +910,8 @@ def test_fetch_and_extract_docs_with_version_falls_back_when_unmatched(
         (dest_dir / "README.md").write_text("# Default branch", encoding="utf-8")
         return True
 
-    monkeypatch.setattr(docs_module, "_clone_repository", fake_clone)
-    monkeypatch.setattr(docs_module, "_fetch_github_wiki_docs", lambda *a, **kw: [])
+    monkeypatch.setattr(repository, "_clone_repository", fake_clone)
+    monkeypatch.setattr(repository, "_fetch_github_wiki_docs", lambda *a, **kw: [])
     source = RepoSource(name="tool", target="owner/tool", is_local=False)
 
     doc_files, matched = fetch_and_extract_docs(
@@ -963,10 +925,8 @@ def test_fetch_and_extract_docs_with_version_falls_back_when_unmatched(
 def test_discover_repo_manpage_with_version_fetches_the_exact_tag(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    from maniac.sources import docs as docs_module
-
     monkeypatch.setattr(
-        docs_module, "_find_matching_tag", lambda url, version, timeout: "v1.2.3"
+        repository, "_find_matching_tag", lambda url, version, timeout: "v1.2.3"
     )
 
     fetched: list[list[str]] = []
@@ -977,9 +937,9 @@ def test_discover_repo_manpage_with_version_fetches_the_exact_tag(
         fetched.append([ref_name, fetch_ref])
         return "refs/maniac/tag"
 
-    monkeypatch.setattr(docs_module, "_fetch_bare_ref", fake_fetch)
-    monkeypatch.setattr(docs_module, "_git_stdout", lambda *args: "tool.1\n")
-    monkeypatch.setattr(docs_module, "_git_bytes", lambda *args: b".TH TOOL 1\n")
+    monkeypatch.setattr(repository, "_fetch_bare_ref", fake_fetch)
+    monkeypatch.setattr(repository, "_git_stdout", lambda *args: "tool.1\n")
+    monkeypatch.setattr(repository, "_git_bytes", lambda *args: b".TH TOOL 1\n")
     source = RepoSource(name="tool", target="owner/tool", is_local=False)
 
     manpage = discover_repo_manpage(source, "tool", cache_dir=tmp_path, version="1.2.3")
@@ -994,8 +954,6 @@ def test_discover_repo_manpage_with_version_fetches_the_exact_tag(
 def test_github_release_assets_accept_only_actual_matching_manpage(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    from maniac.sources import docs as docs_module
-
     def archive(members: dict[str, bytes]) -> bytes:
         import io
         import tarfile
@@ -1015,13 +973,13 @@ def test_github_release_assets_accept_only_actual_matching_manpage(
             return archive({"completions/eza.fish": b"complete -c eza"})
         return archive({"man/eza.1": b".TH EZA 1\n"})
 
-    monkeypatch.setattr(docs_module, "_download", fake_download)
+    monkeypatch.setattr(cache, "_download", fake_download)
     monkeypatch.setattr(
-        docs_module,
+        repository,
         "_discover_remote_manpage_result",
-        lambda *args: docs_module._ProbeResult([], True),
+        lambda *args: pages._ProbeResult([], True),
     )
-    monkeypatch.setattr(docs_module, "_find_matching_tag", lambda *args: "v0.23.5")
+    monkeypatch.setattr(repository, "_find_matching_tag", lambda *args: "v0.23.5")
     source = RepoSource(name="eza", target="eza-community/eza", is_local=False)
 
     page = discover_repo_manpage(source, "eza", cache_dir=tmp_path, version="0.23.5")
@@ -1034,8 +992,6 @@ def test_github_release_archive_keeps_valid_companion_manpages(
 ) -> None:
     import io
     import tarfile
-
-    from maniac.sources import docs as docs_module
 
     output = io.BytesIO()
     with tarfile.open(fileobj=output, mode="w:gz") as tar:
@@ -1056,34 +1012,32 @@ def test_github_release_archive_keeps_valid_companion_manpages(
             return b'{"assets": [{"name": "eza-manpages.tar.gz", "size": 5, "browser_download_url": "https://example.test/eza-manpages.tar.gz"}]}'
         return output.getvalue()
 
-    monkeypatch.setattr(docs_module, "_download", fake_download)
+    monkeypatch.setattr(cache, "_download", fake_download)
     monkeypatch.setattr(
-        docs_module,
+        repository,
         "_discover_remote_manpage_result",
-        lambda *args: docs_module._ProbeResult([], True),
+        lambda *args: pages._ProbeResult([], True),
     )
-    monkeypatch.setattr(docs_module, "_find_matching_tag", lambda *args: "v0.23.5")
+    monkeypatch.setattr(repository, "_find_matching_tag", lambda *args: "v0.23.5")
     source = RepoSource(name="eza", target="eza-community/eza", is_local=False)
 
-    pages = discover_repo_manpages(source, "eza", cache_dir=tmp_path, version="0.23.5")
+    found = discover_repo_manpages(source, "eza", cache_dir=tmp_path, version="0.23.5")
 
-    assert [page.name for page in pages] == [
+    assert [page.name for page in found] == [
         "eza.1",
         "eza_colors.5",
         "eza_colors-explanation.5",
     ]
-    assert all(page.parent.parent.name == "manpages" for page in pages)
+    assert all(page.parent.parent.name == "manpages" for page in found)
     assert all(
         discovered_manpage_uri(page) == "https://example.test/eza-manpages.tar.gz"
-        for page in pages
+        for page in found
     )
 
 
 def test_release_probe_skips_large_non_man_archives(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    from maniac.sources import docs as docs_module
-
     requested: list[str] = []
 
     def fake_download(url: str, cfg: object) -> bytes:
@@ -1092,13 +1046,13 @@ def test_release_probe_skips_large_non_man_archives(
             return b'{"assets": [{"name": "eza_x86_64.tar.gz", "size": 780000, "browser_download_url": "https://example.test/linux"}, {"name": "eza.zip", "size": 1500000, "browser_download_url": "https://example.test/zip"}, {"name": "man-0.23.5.tar.gz", "size": 10500, "browser_download_url": "https://example.test/man"}]}'
         return b"not a tar archive"
 
-    monkeypatch.setattr(docs_module, "_download", fake_download)
+    monkeypatch.setattr(cache, "_download", fake_download)
     monkeypatch.setattr(
-        docs_module,
+        repository,
         "_discover_remote_manpage_result",
-        lambda *args: docs_module._ProbeResult([], True),
+        lambda *args: pages._ProbeResult([], True),
     )
-    monkeypatch.setattr(docs_module, "_find_matching_tag", lambda *args: "v0.23.5")
+    monkeypatch.setattr(repository, "_find_matching_tag", lambda *args: "v0.23.5")
     source = RepoSource(name="eza", target="eza-community/eza", is_local=False)
 
     assert (
@@ -1114,15 +1068,13 @@ def test_release_probe_skips_large_non_man_archives(
 def test_malformed_release_asset_degrades_to_missing(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    from maniac.sources import docs as docs_module
-
-    monkeypatch.setattr(docs_module, "_download", lambda *args: b"not a tar archive")
+    monkeypatch.setattr(cache, "_download", lambda *args: b"not a tar archive")
     monkeypatch.setattr(
-        docs_module,
+        repository,
         "_discover_remote_manpage_result",
-        lambda *args: docs_module._ProbeResult([], True),
+        lambda *args: pages._ProbeResult([], True),
     )
-    monkeypatch.setattr(docs_module, "_find_matching_tag", lambda *args: "v1.0")
+    monkeypatch.setattr(repository, "_find_matching_tag", lambda *args: "v1.0")
     source = RepoSource(name="tool", target="owner/tool", is_local=False)
     assert (
         discover_repo_manpage(source, "tool", cache_dir=tmp_path, version="1.0") is None
@@ -1132,15 +1084,13 @@ def test_malformed_release_asset_degrades_to_missing(
 def test_non_object_release_metadata_degrades_to_missing(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    from maniac.sources import docs as docs_module
-
-    monkeypatch.setattr(docs_module, "_download", lambda *args: b"[]")
+    monkeypatch.setattr(cache, "_download", lambda *args: b"[]")
     monkeypatch.setattr(
-        docs_module,
+        repository,
         "_discover_remote_manpage_result",
-        lambda *args: docs_module._ProbeResult([], True),
+        lambda *args: pages._ProbeResult([], True),
     )
-    monkeypatch.setattr(docs_module, "_find_matching_tag", lambda *args: "v1.0")
+    monkeypatch.setattr(repository, "_find_matching_tag", lambda *args: "v1.0")
     source = RepoSource(name="tool", target="owner/tool", is_local=False)
 
     assert (
@@ -1152,9 +1102,7 @@ def test_release_archive_rejects_an_oversized_member(tmp_path: Path) -> None:
     import io
     import tarfile
 
-    from maniac.sources import docs as docs_module
-
-    content = b".TH TOOL 1\n" + b"x" * docs_module._RELEASE_MEMBER_LIMIT
+    content = b".TH TOOL 1\n" + b"x" * pages._RELEASE_MEMBER_LIMIT
     output = io.BytesIO()
     with tarfile.open(fileobj=output, mode="w:gz") as tar:
         info = tarfile.TarInfo("man/tool.1")
@@ -1163,8 +1111,10 @@ def test_release_archive_rejects_an_oversized_member(tmp_path: Path) -> None:
     source = RepoSource(name="tool", target="owner/tool", is_local=False)
 
     assert (
-        docs_module._manpages_from_release_archive(
-            output.getvalue(), source, "tool", tmp_path, "v1.0"
+        release._manpages_from_release_archive(
+            output.getvalue(),
+            pages._Probe(source, "tool", tmp_path, Config(), None),
+            "v1.0",
         )
         == []
     )
@@ -1173,34 +1123,28 @@ def test_release_archive_rejects_an_oversized_member(tmp_path: Path) -> None:
 def test_compressed_manpage_expanding_past_limit_is_rejected(tmp_path: Path) -> None:
     import gzip
 
-    from maniac.sources import docs as docs_module
-
     page = tmp_path / "tool.1.gz"
     with gzip.open(page, "wb") as file:
-        file.write(b".TH TOOL 1\n" + b"x" * docs_module._RELEASE_MEMBER_LIMIT)
+        file.write(b".TH TOOL 1\n" + b"x" * pages._RELEASE_MEMBER_LIMIT)
 
-    assert docs_module._valid_page(page, "tool") is False
+    assert pages._valid_page(page, "tool") is False
 
 
 def test_truncated_compressed_manpage_is_rejected(tmp_path: Path) -> None:
     import gzip
 
-    from maniac.sources import docs as docs_module
-
     page = tmp_path / "tool.1.gz"
     page.write_bytes(gzip.compress(b".TH TOOL 1\n")[:-4])
 
-    assert docs_module._valid_page(page, "tool") is False
+    assert pages._valid_page(page, "tool") is False
 
 
 def test_download_degrades_on_invalid_request_url(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from maniac.sources import docs as docs_module
+    monkeypatch.setattr(cache, "urlopen", lambda *args, **kwargs: None)
 
-    monkeypatch.setattr(docs_module, "urlopen", lambda *args, **kwargs: None)
-
-    assert docs_module._download("\x00", Config()) is None
+    assert cache._download("\x00", Config()) is None
 
 
 def test_clone_configures_sparse_checkout_for_nested_documentation(
@@ -1208,17 +1152,15 @@ def test_clone_configures_sparse_checkout_for_nested_documentation(
 ) -> None:
     from types import SimpleNamespace
 
-    from maniac.sources import docs as docs_module
-
     calls: list[list[str]] = []
 
     def fake_run(command: list[str], **kwargs: object) -> SimpleNamespace:
         calls.append(command)
         return SimpleNamespace(returncode=0, stderr="")
 
-    monkeypatch.setattr(docs_module.subprocess, "run", fake_run)
+    monkeypatch.setattr(repository.subprocess, "run", fake_run)
 
-    assert docs_module._clone_repository(
+    assert repository._clone_repository(
         "https://example.test/tool.git", tmp_path, Config()
     )
     assert calls[1][3:6] == ["sparse-checkout", "set", "--no-cone"]
@@ -1230,7 +1172,6 @@ def test_resolve_repo_dir_reuses_a_valid_versioned_cache_without_network(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, tag: str
 ) -> None:
     from maniac.config import Config
-    from maniac.sources import docs as docs_module
 
     cached_dir = tmp_path / f"tool@{tag}"
     source = RepoSource(name="tool", target="owner/tool", is_local=False)
@@ -1238,12 +1179,12 @@ def test_resolve_repo_dir_reuses_a_valid_versioned_cache_without_network(
     _init_cached_repo(cached_dir, source.clone_url)
 
     monkeypatch.setattr(
-        docs_module,
+        repository,
         "_find_matching_tag",
         lambda *args: pytest.fail("warm cache must skip ls-remote"),
     )
     monkeypatch.setattr(
-        docs_module,
+        repository,
         "_clone_repository",
         lambda *args, **kwargs: pytest.fail("warm cache must skip cloning"),
     )
@@ -1255,13 +1196,12 @@ def test_resolve_repo_dir_discards_a_malformed_versioned_cache(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     from maniac.config import Config
-    from maniac.sources import docs as docs_module
 
     malformed_dir = tmp_path / "tool@v1.2.3"
     malformed_dir.mkdir()
     (malformed_dir / "stray").write_text("not a checkout", encoding="utf-8")
     source = RepoSource(name="tool", target="owner/tool", is_local=False)
-    monkeypatch.setattr(docs_module, "_find_matching_tag", lambda *args: "1.2.3")
+    monkeypatch.setattr(repository, "_find_matching_tag", lambda *args: "1.2.3")
 
     def fake_clone(
         clone_url: str, dest_dir: Path, cfg: object, **kwargs: object
@@ -1271,7 +1211,7 @@ def test_resolve_repo_dir_discards_a_malformed_versioned_cache(
         (dest_dir / ".git").mkdir()
         return True
 
-    monkeypatch.setattr(docs_module, "_clone_repository", fake_clone)
+    monkeypatch.setattr(repository, "_clone_repository", fake_clone)
 
     assert resolve_repo_dir(source, tmp_path, Config(), version="1.2.3") == (
         tmp_path / "tool@1.2.3"
@@ -1282,12 +1222,11 @@ def test_resolve_repo_dir_rejects_cache_from_a_different_repository(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     from maniac.config import Config
-    from maniac.sources import docs as docs_module
 
     cached_dir = tmp_path / "tool@v1.2.3"
     _init_cached_repo(cached_dir, "https://github.com/old/tool.git")
     source = RepoSource(name="tool", target="new/tool", is_local=False)
-    monkeypatch.setattr(docs_module, "_find_matching_tag", lambda *args: "v1.2.3")
+    monkeypatch.setattr(repository, "_find_matching_tag", lambda *args: "v1.2.3")
 
     def fake_clone(
         clone_url: str, dest_dir: Path, cfg: object, **kwargs: object
@@ -1296,6 +1235,6 @@ def test_resolve_repo_dir_rejects_cache_from_a_different_repository(
         _init_cached_repo(dest_dir, clone_url)
         return True
 
-    monkeypatch.setattr(docs_module, "_clone_repository", fake_clone)
+    monkeypatch.setattr(repository, "_clone_repository", fake_clone)
 
     assert resolve_repo_dir(source, tmp_path, Config(), version="1.2.3") == cached_dir
