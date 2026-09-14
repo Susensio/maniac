@@ -1147,7 +1147,9 @@ def test_streaming_list_crops_tall_live_frames_in_an_alternate_screen(
         def stop(self) -> None:
             return None
 
-    console = Console(file=io.StringIO(), force_terminal=True, no_color=True, height=6)
+    console = Console(
+        file=io.StringIO(), force_terminal=True, no_color=True, width=80, height=6
+    )
     monkeypatch.setattr("maniac.cli.listing.Live", FakeLive)
     rows = [
         ToolRow(name, name, "fake", ActionState.MISSING, PageSource.NONE, None)
@@ -2792,7 +2794,9 @@ def test_vendor_source_keyword_links_to_the_local_manpage(tmp_path: Path) -> Non
         page_path=page,
     )
     output = io.StringIO()
-    Console(file=output, force_terminal=True).print(_source_cell(row))
+    Console(file=output, force_terminal=True, color_system="standard").print(
+        _source_cell(row)
+    )
 
     assert page.absolute().as_uri() in output.getvalue()
 
@@ -2810,7 +2814,9 @@ def test_upstream_source_keyword_links_to_the_upstream_manpage() -> None:
         page_uri=uri,
     )
     output = io.StringIO()
-    Console(file=output, force_terminal=True).print(_source_cell(row))
+    Console(file=output, force_terminal=True, color_system="standard").print(
+        _source_cell(row)
+    )
 
     assert uri in output.getvalue()
     assert "file:///cached/tool.1" not in output.getvalue()
