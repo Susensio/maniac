@@ -1,6 +1,6 @@
 # Implementation State
 
-No implementation is currently in flight.
+Implementation in flight: under ADR-0030, link an unaliased Mise vendor page directly to its selected concrete install root instead of copying it into MANIAC storage.
 
 ADR-0029 now follows a Mise `latest` vendor manpage only when that alias and the executable both resolve under the exact inspected install root.
 Other layouts materialize the page under MANIAC storage.
