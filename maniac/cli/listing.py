@@ -206,6 +206,105 @@ def _under_root(path: Path, root: Path) -> bool:
         return False
 
 
+def _managed_source(entry: manifest.Entry) -> PageSource:
+    """Return the content provenance recorded for a reachable managed page."""
+    return {
+        manifest.Tier.INSTALL_ROOT: PageSource.VENDOR,
+        manifest.Tier.REPOSITORY: PageSource.UPSTREAM,
+        manifest.Tier.SYNTHESIS: PageSource.MANIAC,
+    }[entry.tier]
+
+
+def _installed_source(
+    entry: manifest.Entry | None,
+    installed: Path,
+    inst: "Installation | None",
+    owned: bool,
+) -> PageSource:
+    """Return the provenance of a page that `man` resolves."""
+    if owned:
+        assert entry is not None
+        return _managed_source(entry)
+    if inst is not None and _under_root(installed, inst.root):
+        return PageSource.VENDOR
+    return PageSource.SYSTEM
+
+
+def _managed_page_state(
+    entry: manifest.Entry,
+    inst: "Installation | None",
+    tool: str,
+    cfg: Config,
+    provider_target_current: bool,
+) -> ActionState:
+    """Return a managed page's state from positive version evidence only."""
+    if entry.version is None:
+        return ActionState.OK
+    current_version = (
+        inst.version if inst is not None else get_version([tool], config=cfg)
+    )
+    if (
+        current_version is not None
+        and entry.version != current_version
+        and not provider_target_current
+    ):
+        return ActionState.OUTDATED
+    return ActionState.OK
+
+
+def _external_page_state(installed: Path, inst: "Installation") -> ActionState:
+    """Return the verified state for an external page with package provenance."""
+    freshness = verify_external_page(
+        installed, package=inst.package, version=inst.version
+    )
+    return {
+        ExternalPageFreshness.MATCH: ActionState.OK,
+        ExternalPageFreshness.MISMATCH: ActionState.OUTDATED,
+        ExternalPageFreshness.UNVERIFIED: ActionState.UNVERIFIED,
+    }[freshness]
+
+
+def _resolved_page_classification(
+    provider: "Provider | None",
+    inst: "Installation | None",
+    tool: str,
+    cfg: Config,
+    entry: manifest.Entry | None,
+    installed: Path,
+    owned: bool,
+    provider_target_current: bool,
+) -> _LocalClassification:
+    """Classify the page that `man` resolved for a binary."""
+    source = _installed_source(entry, installed, inst, owned)
+    if owned:
+        assert entry is not None
+        return _LocalClassification(
+            _managed_page_state(entry, inst, tool, cfg, provider_target_current),
+            source,
+            True,
+            installed,
+            entry.source_uri,
+        )
+    if provider is not None and inst is not None and source is PageSource.SYSTEM:
+        return _LocalClassification(
+            _external_page_state(installed, inst), source, False, installed
+        )
+    return _LocalClassification(ActionState.OK, source, False, installed)
+
+
+def _unresolved_page_classification(
+    provider: "Provider | None", inst: "Installation | None"
+) -> _LocalClassification:
+    """Classify a binary for which `man` resolves no page."""
+    if provider is not None and inst is not None:
+        page = select_primary_manpage(provider.local_docs(inst), inst.binary)
+        if page is not None:
+            return _LocalClassification(
+                ActionState.AVAILABLE, PageSource.VENDOR, False, page
+            )
+    return _LocalClassification(ActionState.MISSING, PageSource.NONE, False, None)
+
+
 def _classify(
     provider: "Provider | None",
     inst: "Installation | None",
@@ -253,72 +352,18 @@ def _classify(
             ActionState.OUTDATED, PageSource.VENDOR, True, entry.path, entry.source_uri
         )
 
-    if installed is not None:
-        if owned:
-            assert entry is not None
-            source = {
-                manifest.Tier.INSTALL_ROOT: PageSource.VENDOR,
-                manifest.Tier.REPOSITORY: PageSource.UPSTREAM,
-                manifest.Tier.SYNTHESIS: PageSource.MANIAC,
-            }[entry.tier]
-        elif inst is not None and _under_root(installed, inst.root):
-            source = PageSource.VENDOR
-        else:
-            source = PageSource.SYSTEM
-
-        # An unclaimed binary (no provider, no `Installation`) has nothing
-        # to compare `entry.version` against by default -- ask the binary
-        # itself (ADR-0020). Gated on the cheap checks first: only a row
-        # that is owned, carries a recorded version, and has no
-        # `Installation` may pay for the subprocess this triggers.
-        if owned and entry is not None and entry.version is not None and inst is None:
-            current_version = get_version([tool], config=cfg)
-        else:
-            current_version = inst.version if inst is not None else None
-
-        # `outdated` requires positive evidence -- a recorded version that
-        # differs from the installed binary's current one. Absent that
-        # evidence (an unowned page, or `local_lib`'s permanent lack of a
-        # version) a row reads `ok` (ADR-0018): MANIAC is not entitled to
-        # call a page stale it never assessed.
-        outdated = (
-            owned
-            and entry is not None
-            and entry.version is not None
-            and current_version is not None
-            and entry.version != current_version
-            and not provider_target_current
-        )
-        if owned:
-            return _LocalClassification(
-                ActionState.OUTDATED if outdated else ActionState.OK,
-                source,
-                True,
-                installed,
-                entry.source_uri,
-            )
-        if provider is not None and inst is not None and source is PageSource.SYSTEM:
-            freshness = verify_external_page(
-                installed, package=inst.package, version=inst.version
-            )
-            if freshness is ExternalPageFreshness.MATCH:
-                return _LocalClassification(ActionState.OK, source, False, installed)
-            if freshness is ExternalPageFreshness.MISMATCH:
-                return _LocalClassification(
-                    ActionState.OUTDATED, source, False, installed
-                )
-            return _LocalClassification(
-                ActionState.UNVERIFIED, source, False, installed
-            )
-        return _LocalClassification(ActionState.OK, source, False, installed)
-
-    if provider is not None and inst is not None:
-        page = select_primary_manpage(provider.local_docs(inst), inst.binary)
-        if page is not None:
-            return _LocalClassification(
-                ActionState.AVAILABLE, PageSource.VENDOR, False, page
-            )
-    return _LocalClassification(ActionState.MISSING, PageSource.NONE, False, None)
+    if installed is None:
+        return _unresolved_page_classification(provider, inst)
+    return _resolved_page_classification(
+        provider,
+        inst,
+        tool,
+        cfg,
+        entry,
+        installed,
+        owned,
+        provider_target_current,
+    )
 
 
 def _provider_target_freshness(
