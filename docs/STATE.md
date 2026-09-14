@@ -1,6 +1,7 @@
 # Implementation State
 
-No implementation is currently in flight.
+The `uninstall_manpage` maintainability refactor is in flight.
+It is constrained to preserving manifest, link, checksum, backup, compression, purge, and force behavior while reducing the hotspot reported by `just audit`.
 
 ADR-0029 now follows a Mise `latest` vendor manpage only when that alias and the executable both resolve under the exact inspected install root.
 Every verified install-root vendor page otherwise links directly to its concrete provider page rather than copying it into MANIAC storage.
