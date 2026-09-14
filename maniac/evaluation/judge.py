@@ -458,7 +458,7 @@ def _extract_json_object(raw_response: str) -> dict[str, Any]:
         else:
             raise json.JSONDecodeError(
                 "Failed to parse JSON from LLM response", text, 0
-            )
+            ) from None
 
     if not isinstance(data, dict):
         raise json.JSONDecodeError("Parsed JSON is not an object", text, 0)

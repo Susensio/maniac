@@ -364,7 +364,7 @@ def test_load_config_file_rejects_invalid_toml(tmp_path: Path) -> None:
 def test_load_config_file_legacy_yaml_names_new_format(tmp_path: Path) -> None:
     (tmp_path / "config.yaml").write_text("model: gemini/gemini-flash-latest\n")
 
-    with pytest.raises(ValueError, match="config.toml"):
+    with pytest.raises(ValueError, match=r"config\.toml"):
         _load_config_file(tmp_path)
 
 
