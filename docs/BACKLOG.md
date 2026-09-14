@@ -10,6 +10,11 @@ These are findings the work surfaced and deliberately did not take; they are fir
 
 ### Correctness
 
+- Decide what `maniac list` should print when stdout is not a terminal.
+  It currently renders the Tool column alone, because Rich falls back to 80 columns and the
+  other three are dropped; `--names` already exists for the bare-name pipeline case, so this
+  looks like a rendering accident rather than the intended pipe output.
+  Candidates are a plain-text width, a `--plain` mode, or `--json`.
 - Report the superseded durable copy that an `INSTALL_ROOT` uninstall deletes.
   Uninstall's own `reconcile()` runs ADR-0032's migration first, which relinks the entry to its provider page, sets `provider_target`, and unlinks the MANIAC copy itself.
   That deletion never reaches `result.removed`, so uninstall removes a file it does not report.

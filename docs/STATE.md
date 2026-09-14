@@ -1,14 +1,14 @@
 # Implementation State
 
-## In flight: architecture review follow-up
+## Architecture review follow-up
 
-Master is at `4b9202e`. `just check` is green at 584 tests as of `a64a56c`; the two
-commits after it touch only `CLAUDE.md` and `docs/`.
+Waves A and B of the 2026-09-14 architecture review are landed and verified. Wave C has
+not started.
 
-### Wave A -- landed and verified together
+### Wave A -- landed
 
-All three items are on master and were verified as one tree, not merely one at a time:
-584 tests, `just check` exit 0, and no import-time class mutation.
+Verified as one tree, not one at a time: 584 tests, `just check` exit 0, no import-time
+class mutation.
 
 - `d40db9b` split `sources/docs.py` (1272 lines) into a `sources/docs/` package. ADR-0033.
 - `ceca643` made manifest loading pure deserialization and moved reconciliation into
@@ -16,54 +16,68 @@ All three items are on master and were verified as one tree, not merely one at a
   the user's manpath as a side effect of deserializing JSON.
 - `dae0011` replaced provider `getattr` probing with typed Protocols and removed Mise's
   import-time class-global resolver callback. ADR-0035.
-- `cbdebee` pinned `lifecycle.discard_durable_target`'s ownership contract, which an audit
-  found was executed by tests but never asserted.
+- `cbdebee` pinned `lifecycle.discard_durable_target`, which an audit found was executed
+  by tests but never asserted.
 
-### Wave B -- dispatched, NOT yet collected
+### Wave B -- landed
 
-Two agents are working in isolated worktrees. Both stalled once on a session rate limit
-with uncommitted partial work and were resumed from their own transcripts, so neither
-restarted cold. Their commits, when they land, live on worktree branches reachable but
-orphaned from `master`; collect them before starting anything new.
+Verified together at 589 tests, `just check` exit 0.
 
-- `worktree-agent-a1c56d97b120448f5` -- listing inventory seam. Separates candidate
-  enumeration, local classification, bounded upstream probes, deduplication and ordered row
-  snapshots from Rich rendering and the Typer command; also defers upstream identity
-  resolution in `list` per ADR-0025. Branched from `c00bb5e`, which was later amended to
-  `a64a56c`; the base is no longer on master, so cherry-pick rather than merge.
-  Its brief required a test counting resolution calls for a reachable or vendor-page row
-  and asserting zero.
-- `worktree-agent-ad20e941879e4d550` -- one resolved-tool context threaded through all
-  install tiers. Branched from `a64a56c`. Its brief required a test proving
-  `discover_repo()` and `find_installation()` each run once, not twice, during an install
-  reaching tier 3.
+- `135959b` threaded one `ResolvedTool` through every install tier. `run_pipeline` is
+  deleted rather than wrapped; `synthesize` takes 9 arguments where it took 12, and its 58
+  statements are split across six helpers. `resolve_tool` is the only constructor of a
+  `ResolvedTool`, so tier 3 cannot silently re-resolve what it was handed. Proven by a test
+  asserting `find_installation` and `resolve_source` each run once, not twice, with
+  `discover_repo` patched to raise.
+- `e9f8873` split list inventory and classification into a non-CLI `maniac/listing/`
+  package; `cli/listing.py` fell from 1269 to 567 lines and is now a Rich/Typer adapter.
+  `compute_rows` takes 3 arguments where it took 11. The nine `on_*` callbacks became one
+  `InventoryObserver` receiving immutable ordered snapshots, so an observer cannot steer
+  what later rows are classified as.
+- `c411dd8` corrected that package's claim to import no Rich. It does, transitively, via
+  `..logging` to structlog. The seam is clean; the guarantee as written was not.
+- `abe41e7` restored the Upstream column for every row. See below.
 
-Both were told mid-flight that no interface is frozen before 1.0.0, so their diffs may be
-wider than their original briefs implied. Check whether each actually committed: a
-developer agent leaves work uncommitted deliberately when it could not land green, and
-says so in its report, which this session did not receive.
+### Upstream identity is resolved for every row again
 
-To collect one: `git cherry-pick <branch tip>` onto master, then re-run `just check` on the
-combined tree with an explicit expected test count -- green in isolation is not green
-combined, which is why every Wave A merge was verified that way. Then write the ADR for the
-seam it establishes and close its entry under "Architecture review follow-up".
+ADR-0025 deferred both repository identity and the version-matched remote page probe behind
+local evidence, justifying both with one cost argument. The identity half was never
+consistently in force: `0228cc7` populated vendor rows anyway. The refactor implemented
+ADR-0025 as written, blanking them, which made the contradiction visible.
+
+The cost was then measured rather than argued. `compute_rows` over 68 rows, same commit,
+identity deferral on versus off: cold 15.924s against 16.209s; warm 1.161/1.148/1.144
+against 1.161/1.147/1.175. The within-arm spread is 1.5 to 2.4 percent and the difference
+sits inside it. Both arms return 68 rows.
+
+Identity is cheap because `resolve_source` reads `.mise.backend.toml` or an npm layout from
+disk and only falls through to the registry, which is held process-locally behind a
+single-flight lock and cached on disk for an hour -- a few file reads and a dict lookup per
+row, and a registry load any `missing` row pays anyway.
+
+ADR-0036 therefore restores identity for every row and keeps ADR-0025's deferral of the
+remote page probe, which is genuinely per-row network work. `needs_upstream_identity` and
+`_unresolved_locally` were deleted rather than left as pass-throughs.
 
 ### Wave C -- not started
 
-Two entries remain under "Architecture review follow-up" after Wave B: one verified-source
-candidate service carrying tier, pages, provenance URI, version match and target ownership;
-and validated local/remote `RepoSource` variants replacing the correlated string fields.
+Two entries remain under "Architecture review follow-up": one verified-source candidate
+service carrying tier, pages, provenance URI, version match and target ownership; and
+validated local/remote `RepoSource` variants replacing the correlated string fields. The
+docs-facade cleanup in "Next round" is now unblocked, its callers no longer being edited.
+
+Two ADRs are still unwritten: the listing inventory seam and the resolved-tool context.
 
 ### Housekeeping
 
 `backup-pre-rewrite` (`916213a`) holds the pre-collapse history and can be deleted once the
-collapsed history is trusted. The four Wave A worktree branches are fully merged and can go
-too. One worktree admin directory under `.claude/worktrees/` resisted removal and needs
+collapsed history is trusted. The Wave A and B worktree branches are merged and can go. One
+worktree admin directory under `.claude/worktrees/` resisted removal and needs
 `git worktree prune` from a clean state.
 
-Every wave is pure restructuring: observable behavior is unchanged and verified, while
-shape is free. The ADR-encoded invariants (0016, 0019, 0023, 0024, 0025, 0027, 0028,
-0029-0035) are preserved, not re-decided.
+Restructuring leaves observable behavior unchanged and verified, while shape is free
+(`CLAUDE.md`). ADR-encoded invariants 0016, 0019, 0023, 0024, 0027, 0028 and 0029-0035 are
+preserved rather than re-decided; ADR-0025 is superseded in part by ADR-0036.
 
 ADR-0029 now follows a Mise `latest` vendor manpage only when that alias and the executable both resolve under the exact inspected install root.
 Every verified install-root vendor page otherwise links directly to its concrete provider page rather than copying it into MANIAC storage.

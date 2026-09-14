@@ -1,8 +1,12 @@
 # ADR-0025: Pipeline local list facts before upstream probes
 
-Status: Accepted
+Status: Superseded in part by [ADR-0036](0036-resolve-list-identity-for-every-row.md)
 Date: 2026-09-12
 Supersedes in part: [ADR-0018](0018-list-reports-manpage-reachability.md)
+
+ADR-0036 restores upstream identity resolution for every row: the cost this ADR
+avoided was measured and found to be inside run-to-run noise. The deferral of the
+version-matched remote page probe, and every other decision below, still stands.
 
 ## Context
 
