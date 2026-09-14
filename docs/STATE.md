@@ -21,9 +21,10 @@ All three items are on master and were verified as one tree, not merely one at a
 
 ### Wave B -- dispatched, NOT yet collected
 
-Two agents were dispatched and the session stopped before their work was taken onto
-master. Their commits, if any, live on worktree branches and are reachable but orphaned
-from `master`. Collect them before starting anything new.
+Two agents are working in isolated worktrees. Both stalled once on a session rate limit
+with uncommitted partial work and were resumed from their own transcripts, so neither
+restarted cold. Their commits, when they land, live on worktree branches reachable but
+orphaned from `master`; collect them before starting anything new.
 
 - `worktree-agent-a1c56d97b120448f5` -- listing inventory seam. Separates candidate
   enumeration, local classification, bounded upstream probes, deduplication and ordered row
