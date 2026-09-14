@@ -1,9 +1,9 @@
 # Implementation State
 
-Implementation in flight: migrate eligible old install-root copies to ADR-0031 direct provider links under ADR-0032, then conduct the requested full architecture and `just code-review` reviews.
+No implementation is currently in flight.
 
 ADR-0029 now follows a Mise `latest` vendor manpage only when that alias and the executable both resolve under the exact inspected install root.
-Other layouts materialize the page under MANIAC storage.
+Every verified install-root vendor page otherwise links directly to its concrete provider page rather than copying it into MANIAC storage.
 Coordinated global Mise upgrades remain `ok`, while a missing, divergent, or unusable alias is `outdated` even when `man` falls through to a system page.
 Uninstall removes the MANIAC link but never a provider-owned target, including when its configured output directory encloses that target.
 
@@ -13,12 +13,12 @@ The development system has no populated Mise shim directory, leaving shim discov
 When the login-path child cannot initialize its user environment, it currently falls back to the caller's inherited PATH and can therefore reintroduce project activation; that hardening work is recorded in the backlog.
 
 ADR-0028 changed every new managed manpath entry into a manifest-tracked symbolic link.
-Generated, repository, and currently unqualified vendor pages materialize durably under MANIAC data storage rather than linking into the disposable cache or a versioned provider root.
-Uninstall preserves replaced, retargeted, and dangling entries, and legacy checksum-matching copies migrate on manifest load.
-The live migration converted the two existing managed pages, `aichat.1` and `ty.1`, to durable links.
+Generated and repository pages materialize durably under MANIAC data storage rather than linking into disposable cache paths.
+Uninstall preserves replaced, retargeted, and dangling entries, and ADR-0032 migrates eligible unchanged install-root copies to direct provider links on manifest load.
+The development manifest has no eligible historical vendor copies because its existing `aichat.1` and `ty.1` pages are synthesized and already MANIAC-owned.
 
 `cli.listing.compute_rows` and GitHub release-manpage discovery are now decomposed at their actual coordination boundaries with their observed rendering, callback, ordering, deduplication, and release-validation behavior intact.
-Provider registration and enumeration live in a resolution coordinator without a `discovery`/`providers` cycle.
+The 2026-09-14 architecture review found remaining manifest/installer and discovery/resolution soft cycles, plus duplicated source-selection policy, and records their remediation in the backlog.
 
 The default unfiltered TTY view now completes provider enumeration, builds one alphabetically stable per-binary table with every Tool cell populated, then fills State, Source, and Upstream progressively without changing the table shape.
 When that table is taller than the terminal, asynchronous rendering is cropped to an alternate-screen viewport and the complete final table is printed once after returning to the normal screen.

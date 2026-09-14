@@ -14,6 +14,15 @@ Immediate order after the completed list/provenance work:
    The development system has no populated Mise shim directory; exercise real shim resolution before deciding whether MANIAC should resolve a shim through a Mise query executed at `$HOME` or handle it another way.
    `mise which` alone is not that answer because it is cwd-sensitive; the live `mise which -C $HOME bat` result is an alias-path answer and still needs the same root validation as ADR-0029.
 5. Review `_classify` (34), `extract_docs_from_dir` (26), and `check_standard_sections` (28) when their behaviour is next touched; they exceed the cognitive threshold but not Ruff's McCabe threshold of 15.
+6. Make manifest loading a pure serialization operation and move legacy/link reconciliation into one explicit lifecycle service shared with installation.
+   That service must own provider-page discovery, filesystem transitions, and the `manifest`/`installer` boundary, rather than making `lookup()` mutate user manpath entries through a deferred import cycle.
+7. Serialize manifest load-modify-save operations with a sidecar lock and transactional update API, including reconciliation, so concurrent installs cannot lose an ownership entry.
+8. Persist upstream release bundles as one installation lifecycle unit so uninstalling the primary page also checksum-protects, removes, and restores every companion page.
+9. Replace discovery/resolution's upward imports and Mise class-global callback with a dependency-neutral path resolver and an explicitly passed provider registry or resolver context.
+10. Define provider capabilities as typed contracts or capability objects, then centralize candidate selection so install, list, and manifest reconciliation use one definition of a verified source page.
+11. Separate listing inventory/classification and probe scheduling from Rich rendering and Typer command wiring, then defer upstream identity resolution until local evidence leaves it necessary.
+12. Split `sources/docs.py` into repository acquisition, release retrieval, cache, page selection, and documentation extraction behind a small facade.
+13. Replace the correlated `RepoSource` string fields with validated local and remote source variants carrying canonical identity and clone data.
 
 ## Recovered from an unrecorded session (2026-09-09)
 
