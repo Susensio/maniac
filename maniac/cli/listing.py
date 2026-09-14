@@ -550,6 +550,76 @@ def _apply_probe_result(
         on_upstream_rows(rows.copy(), set(indexes))
 
 
+@dataclass(slots=True)
+class _RowCoordinator:
+    """Own coordinator-side row state while local and upstream work overlap."""
+
+    candidates: list[tuple["Provider | None", "Installation | None", str]]
+    rows: list[ToolRow]
+    local_rows: list[ToolRow]
+    on_row_scan: Callable[[], None] | None
+    on_local_row: Callable[[list[ToolRow], int, bool], None] | None
+    on_upstream_rows: Callable[[list[ToolRow], set[int]], None] | None
+    probe_indexes: dict[tuple[str, str, str], list[int]]
+    probe_results: dict[tuple[str, str, str], tuple[Path, str | None] | None]
+    active_probe_keys: set[tuple[str, str, str]]
+    local_eligible: set[int]
+
+    def complete_local(
+        self,
+        index: int,
+        classified: _LocalClassification,
+        upstream: RepoSource | None,
+    ) -> tuple[tuple[str, str, str], RepoSource, "Installation"] | None:
+        """Record one local result and return its new upstream probe, if any."""
+        _, inst, _ = self.candidates[index]
+        row = _row_from_local_classification(
+            self.candidates[index], classified, upstream
+        )
+        self.rows[index] = row
+        self.local_rows[index] = row
+        pending_probe = _is_upstream_eligible(row, inst)
+        launch = None
+        if pending_probe:
+            assert upstream is not None
+            assert inst is not None
+            key = _probe_key(upstream, inst)
+            self.probe_indexes.setdefault(key, []).append(index)
+            self.local_eligible.add(index)
+            if key in self.probe_results:
+                _apply_probe_result(
+                    self.rows,
+                    [index],
+                    self.probe_results[key],
+                    self.on_row_scan,
+                    self.on_upstream_rows,
+                )
+                pending_probe = False
+            elif key not in self.active_probe_keys:
+                self.active_probe_keys.add(key)
+                launch = (key, upstream, inst)
+        elif self.on_row_scan is not None:
+            self.on_row_scan()
+        if self.on_local_row is not None:
+            self.on_local_row(self.rows.copy(), index, pending_probe)
+        return launch
+
+    def complete_probe(
+        self,
+        key: tuple[str, str, str],
+        page: tuple[Path, str | None] | None,
+    ) -> None:
+        """Record one completed probe and publish all rows sharing its key."""
+        self.probe_results[key] = page
+        _apply_probe_result(
+            self.rows,
+            self.probe_indexes[key],
+            page,
+            self.on_row_scan,
+            self.on_upstream_rows,
+        )
+
+
 def _schedule_local_classifications(
     executor: ThreadPoolExecutor,
     candidates: list[tuple["Provider | None", "Installation | None", str]],
@@ -563,6 +633,81 @@ def _schedule_local_classifications(
         ): index
         for index, (provider, inst, tool) in enumerate(candidates)
     }
+
+
+def _next_completed_futures(
+    local_pending: Mapping[Future[Any], int],
+    probe_pending: Mapping[Future[Any], tuple[str, str, str]],
+    on_idle: Callable[[], None] | None,
+) -> set[Future[Any]] | None:
+    """Wait for work, notifying the coordinator when the workers are quiet."""
+    done, _ = wait(
+        [*local_pending, *probe_pending],
+        timeout=0.25,
+        return_when=FIRST_COMPLETED,
+    )
+    if done:
+        return done
+    if on_idle is not None:
+        on_idle()
+    return None
+
+
+def _complete_local_futures(
+    done: set[Future[Any]],
+    local_pending: dict[Future[tuple[_LocalClassification, RepoSource | None]], int],
+    coordinator: _RowCoordinator,
+) -> list[tuple[tuple[str, str, str], RepoSource, "Installation"]]:
+    """Record finished local work in stable row order and collect new probes."""
+    launches = []
+    for future in sorted(
+        (future for future in done if future in local_pending),
+        key=local_pending.__getitem__,
+    ):
+        index = local_pending.pop(future)
+        classified, upstream = future.result()
+        launch = coordinator.complete_local(index, classified, upstream)
+        if launch is not None:
+            launches.append(launch)
+    return launches
+
+
+def _launch_upstream_probes(
+    launches: list[tuple[tuple[str, str, str], RepoSource, "Installation"]],
+    probe_executor: ThreadPoolExecutor,
+    probe_pending: dict[Future[tuple[Path, str | None] | None], tuple[str, str, str]],
+    cfg: Config,
+) -> None:
+    """Start probes only after their local callback has observed `checking`."""
+    for key, upstream, inst in launches:
+        probe_pending[probe_executor.submit(_probe_upstream, upstream, inst, cfg)] = key
+
+
+def _publish_initial_rows(
+    local_pending: Mapping[Future[Any], int],
+    initial_sent: bool,
+    coordinator: _RowCoordinator,
+    on_initial_rows: Callable[[list[ToolRow], set[int]], None] | None,
+) -> bool:
+    """Publish the local-only snapshot exactly once, once all local work ends."""
+    if local_pending or initial_sent:
+        return initial_sent
+    if on_initial_rows is not None:
+        on_initial_rows(
+            coordinator.local_rows.copy(), coordinator.local_eligible.copy()
+        )
+    return True
+
+
+def _complete_probe_futures(
+    done: set[Future[Any]],
+    probe_pending: dict[Future[tuple[Path, str | None] | None], tuple[str, str, str]],
+    coordinator: _RowCoordinator,
+) -> None:
+    """Publish every already-completed upstream probe after local coordination."""
+    for future in [future for future in done if future in probe_pending]:
+        key = probe_pending.pop(future)
+        coordinator.complete_probe(key, future.result())
 
 
 def compute_rows(
@@ -631,10 +776,18 @@ def compute_rows(
     probe_pending: dict[
         Future[tuple[Path, str | None] | None], tuple[str, str, str]
     ] = {}
-    probe_indexes: dict[tuple[str, str, str], list[int]] = {}
-    probe_results: dict[tuple[str, str, str], tuple[Path, str | None] | None] = {}
-    active_probe_keys: set[tuple[str, str, str]] = set()
-    local_eligible: set[int] = set()
+    coordinator = _RowCoordinator(
+        candidates=candidates,
+        rows=rows,
+        local_rows=local_rows,
+        on_row_scan=on_row_scan,
+        on_local_row=on_local_row,
+        on_upstream_rows=on_upstream_rows,
+        probe_indexes={},
+        probe_results={},
+        active_probe_keys=set(),
+        local_eligible=set(),
+    )
     initial_sent = False
 
     with (
@@ -646,73 +799,20 @@ def compute_rows(
         )
 
         while local_pending or probe_pending:
-            done, _ = wait(
-                [*local_pending, *probe_pending],
-                timeout=0.25,
-                return_when=FIRST_COMPLETED,
-            )
-            if not done:
-                if on_idle is not None:
-                    on_idle()
+            done = _next_completed_futures(local_pending, probe_pending, on_idle)
+            if done is None:
                 continue
             # Resolve local futures before completed probes. A duplicate that
             # became ready in the same turn joins the single-flight group.
-            launches: list[tuple[tuple[str, str, str], RepoSource, Installation]] = []
-            for future in sorted(
-                (future for future in done if future in local_pending),
-                key=local_pending.__getitem__,
-            ):
-                index = local_pending.pop(future)
-                classified, upstream = future.result()
-                _, inst, _ = candidates[index]
-                row = _row_from_local_classification(
-                    candidates[index], classified, upstream
-                )
-                rows[index] = row
-                local_rows[index] = row
-                pending_probe = _is_upstream_eligible(row, inst)
-                if pending_probe:
-                    assert upstream is not None
-                    assert inst is not None
-                    key = _probe_key(upstream, inst)
-                    probe_indexes.setdefault(key, []).append(index)
-                    local_eligible.add(index)
-                    if key in probe_results:
-                        _apply_probe_result(
-                            rows,
-                            [index],
-                            probe_results[key],
-                            on_row_scan,
-                            on_upstream_rows,
-                        )
-                        pending_probe = False
-                    elif key not in active_probe_keys:
-                        active_probe_keys.add(key)
-                        launches.append((key, upstream, inst))
-                elif on_row_scan is not None:
-                    on_row_scan()
-                if on_local_row is not None:
-                    on_local_row(rows.copy(), index, pending_probe)
+            launches = _complete_local_futures(done, local_pending, coordinator)
 
             # The local callback must get one `checking` frame before a fast
             # cache-backed probe can publish its terminal result.
-            for key, upstream, inst in launches:
-                probe_pending[
-                    probe_executor.submit(_probe_upstream, upstream, inst, cfg)
-                ] = key
-
-            if not local_pending and not initial_sent:
-                if on_initial_rows is not None:
-                    on_initial_rows(local_rows.copy(), local_eligible.copy())
-                initial_sent = True
-
-            for future in [future for future in done if future in probe_pending]:
-                key = probe_pending.pop(future)
-                page = future.result()
-                probe_results[key] = page
-                _apply_probe_result(
-                    rows, probe_indexes[key], page, on_row_scan, on_upstream_rows
-                )
+            _launch_upstream_probes(launches, probe_executor, probe_pending, cfg)
+            initial_sent = _publish_initial_rows(
+                local_pending, initial_sent, coordinator, on_initial_rows
+            )
+            _complete_probe_futures(done, probe_pending, coordinator)
 
     return rows
 
