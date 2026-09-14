@@ -1118,56 +1118,73 @@ def extract_docs_from_dir(
     if not directory.exists():
         return []
 
-    raw_candidates: list[tuple[int, Path]] = []
-    seen_rel_paths: set[str] = set()
-
-    for item in sorted(directory.iterdir()):
-        if not item.is_file():
-            continue
-        name_lower = item.name.lower()
-        ext = item.suffix.lower()
-        if (
-            _is_ignored_file(name_lower)
-            or ext not in DOC_EXTENSIONS
-            or item.name.startswith(".")
-        ):
-            continue
-        rel = str(item.relative_to(directory))
-        prio = 0 if name_lower.startswith("readme") else _compute_doc_priority(rel)
-        raw_candidates.append((prio, item))
-        seen_rel_paths.add(rel)
-
-    for rel, file_path in _iter_doc_dir_files(directory):
-        if rel in seen_rel_paths:
-            continue
-        prio = _compute_doc_priority(rel)
-        raw_candidates.append((prio, file_path))
-        seen_rel_paths.add(rel)
-
-    raw_candidates.sort(key=lambda x: (x[0], x[1].name))
-
     doc_files: list[DocFile] = []
     total_chars = 0
 
-    for _, file_path in raw_candidates:
+    for file_path in _collect_doc_candidates(directory):
         if total_chars >= max_total_chars:
             break
-        rel = str(file_path.relative_to(directory))
-        try:
-            content = file_path.read_text(encoding="utf-8", errors="replace").strip()
-            if content:
-                if file_path.suffix == ".1" and is_help2man_content(content):
-                    logger.debug("Skipping help2man-generated manpage", path=rel)
-                    continue
-                if len(content) > 50_000:
-                    content = content[:50_000] + TRUNCATION_MARKER
-                content = _truncate_doc_content(content, max_total_chars - total_chars)
-                doc_files.append(DocFile(rel_path=rel, content=content))
-                total_chars += len(content)
-        except OSError as e:
-            logger.debug("Error reading doc file", path=str(file_path), error=str(e))
+        doc_file = _read_doc_file(file_path, directory, max_total_chars - total_chars)
+        if doc_file is None:
+            continue
+        doc_files.append(doc_file)
+        total_chars += len(doc_file.content)
 
     return doc_files
+
+
+def _collect_doc_candidates(directory: Path) -> list[Path]:
+    """Return candidate documentation paths in relevance order."""
+    candidates: list[tuple[int, Path]] = []
+    seen_rel_paths: set[str] = set()
+
+    for item in sorted(directory.iterdir()):
+        if not _is_top_level_doc_candidate(item):
+            continue
+        rel_path = str(item.relative_to(directory))
+        priority = (
+            0
+            if item.name.lower().startswith("readme")
+            else _compute_doc_priority(rel_path)
+        )
+        candidates.append((priority, item))
+        seen_rel_paths.add(rel_path)
+
+    for rel_path, file_path in _iter_doc_dir_files(directory):
+        if rel_path in seen_rel_paths:
+            continue
+        candidates.append((_compute_doc_priority(rel_path), file_path))
+        seen_rel_paths.add(rel_path)
+
+    candidates.sort(key=lambda candidate: (candidate[0], candidate[1].name))
+    return [file_path for _, file_path in candidates]
+
+
+def _is_top_level_doc_candidate(path: Path) -> bool:
+    if not path.is_file() or path.name.startswith("."):
+        return False
+    return path.suffix.lower() in DOC_EXTENSIONS and not _is_ignored_file(
+        path.name.lower()
+    )
+
+
+def _read_doc_file(file_path: Path, directory: Path, max_chars: int) -> DocFile | None:
+    """Return a bounded documentation file, or None when it should be skipped."""
+    rel_path = str(file_path.relative_to(directory))
+    try:
+        content = file_path.read_text(encoding="utf-8", errors="replace").strip()
+    except OSError as error:
+        logger.debug("Error reading doc file", path=str(file_path), error=str(error))
+        return None
+
+    if not content:
+        return None
+    if file_path.suffix == ".1" and is_help2man_content(content):
+        logger.debug("Skipping help2man-generated manpage", path=rel_path)
+        return None
+    if len(content) > 50_000:
+        content = content[:50_000] + TRUNCATION_MARKER
+    return DocFile(rel_path=rel_path, content=_truncate_doc_content(content, max_chars))
 
 
 def _truncate_doc_content(content: str, max_chars: int) -> str:
