@@ -82,13 +82,8 @@ def check_metadata_header(
     return True, None
 
 
-def check_standard_sections(
-    markdown_text: str,
-    required_sections: list[str | tuple[str, ...]] | None = None,
-) -> tuple[bool, list[str]]:
-    """Check presence of standard required sections with heading level and title normalization."""
-    sections = required_sections if required_sections is not None else REQUIRED_SECTIONS
-    errors: list[str] = []
+def _extract_section_headers(markdown_text: str) -> set[str]:
+    """Return normalized Markdown heading titles at levels one through three."""
     found_headers: set[str] = set()
 
     for line in markdown_text.splitlines():
@@ -98,24 +93,47 @@ def check_standard_sections(
             clean_title = match.group(1).strip().rstrip(":").strip().upper()
             found_headers.add(clean_title)
 
-    def is_present(req_name: str) -> bool:
-        synonyms = SECTION_SYNONYMS.get(req_name, {req_name})
-        for header in found_headers:
-            for syn in synonyms:
-                if header == syn or header.startswith((f"{syn} ", f"{syn}:")):
-                    return True
-        return False
+    return found_headers
 
-    for req in sections:
-        if isinstance(req, tuple):
-            if not any(is_present(alt) for alt in req):
-                alts_str = " or ".join(f"#{alt}" for alt in req)
+
+def _section_is_present(required_name: str, headers: set[str]) -> bool:
+    """Return whether a required section or one of its synonyms appears in headers."""
+    synonyms = SECTION_SYNONYMS.get(required_name, {required_name})
+    return any(
+        header == synonym or header.startswith((f"{synonym} ", f"{synonym}:"))
+        for header in headers
+        for synonym in synonyms
+    )
+
+
+def _missing_section_errors(
+    sections: list[str | tuple[str, ...]], headers: set[str]
+) -> list[str]:
+    """Return missing-section errors for the configured requirements."""
+    errors: list[str] = []
+
+    for section in sections:
+        if isinstance(section, tuple):
+            if not any(_section_is_present(option, headers) for option in section):
+                alternatives = " or ".join(f"#{option}" for option in section)
                 errors.append(
-                    f"Missing required section: at least one of {alts_str} must be present."
+                    f"Missing required section: at least one of {alternatives} must be present."
                 )
-        else:
-            if not is_present(req):
-                errors.append(f"Missing required section: #{req}")
+            continue
+
+        if not _section_is_present(section, headers):
+            errors.append(f"Missing required section: #{section}")
+
+    return errors
+
+
+def check_standard_sections(
+    markdown_text: str,
+    required_sections: list[str | tuple[str, ...]] | None = None,
+) -> tuple[bool, list[str]]:
+    """Check presence of standard required sections with heading level and title normalization."""
+    sections = required_sections if required_sections is not None else REQUIRED_SECTIONS
+    errors = _missing_section_errors(sections, _extract_section_headers(markdown_text))
 
     return len(errors) == 0, errors
 
