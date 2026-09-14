@@ -1,9 +1,10 @@
 """Repository identity and the version-pinned tier-2 page probe.
 
-ADR-0025 orders these behind local evidence: identity is resolved only for a
-row local classification left open, and the remote probe runs only when that
-row also carries a version. An `ok` row and an install-root `available` row
-are already final, so neither pays registry, provider or network work.
+Identity is resolved for every row: it is a cached registry read plus a dict
+lookup, and the Upstream column names where each tool comes from regardless of
+how its page was found. ADR-0025's ordering still governs the remote probe,
+which is per-row network work and runs only for a row local classification
+left open that also carries a version.
 """
 
 from pathlib import Path
@@ -14,7 +15,7 @@ from ..models import Installation, RepoSource
 from ..sources.docs import discover_repo_manpage, discovered_manpage_uri
 from ..sources.documentation import documentation_source
 from ..sources.providers.registry import registry
-from .models import ActionState, Candidate, LocalClassification, PageSource, ToolRow
+from .models import ActionState, Candidate, PageSource, ToolRow
 
 ProbeKey = tuple[str, str, str]
 """Clone target, installed version and binary name: one probe's identity."""
@@ -36,29 +37,19 @@ def resolve_upstream(candidate: Candidate, *, config: Config) -> RepoSource | No
     )
 
 
-def _unresolved_locally(
-    state: ActionState, source: PageSource, page_uri: str | None
-) -> bool:
-    """Whether local evidence left an upstream question open for this row.
-
-    Two shapes qualify: nothing resolved at all, and a repository-tier page
-    that resolved without the remote URI its Source link needs (ADR-0027's
-    recovery path for manifest entries written before that field existed).
-    """
-    return (state is ActionState.MISSING and source is PageSource.NONE) or (
-        source is PageSource.UPSTREAM and page_uri is None
-    )
-
-
-def needs_upstream_identity(classified: LocalClassification) -> bool:
-    """Whether ADR-0025 lets this row pay for repository resolution at all."""
-    return _unresolved_locally(classified.state, classified.source, classified.page_uri)
-
-
 def is_upstream_eligible(row: ToolRow, inst: Installation | None) -> bool:
-    """Whether one completed local row needs the version-matched remote check."""
+    """Whether one completed local row needs the version-matched remote check.
+
+    Two row shapes leave an upstream question open: nothing resolved at all,
+    and a repository-tier page that resolved without the remote URI its Source
+    link needs (ADR-0027's recovery path for manifest entries written before
+    that field existed).
+    """
+    unresolved_locally = (
+        row.state is ActionState.MISSING and row.source is PageSource.NONE
+    ) or (row.source is PageSource.UPSTREAM and row.page_uri is None)
     return (
-        _unresolved_locally(row.state, row.source, row.page_uri)
+        unresolved_locally
         and row.upstream is not None
         and inst is not None
         and inst.version is not None

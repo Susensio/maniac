@@ -1,8 +1,8 @@
 """Tests for the `list` inventory seam: classification facts, never a terminal.
 
-ADR-0024's stable ordered snapshots and ADR-0025's local-first upstream
-policy are contracts of `maniac.listing`, so they are pinned here rather
-than through rendered output.
+ADR-0024's stable ordered snapshots and ADR-0025's deferral of the remote
+page probe behind local evidence are contracts of `maniac.listing`, so they
+are pinned here rather than through rendered output.
 """
 
 import threading
@@ -124,10 +124,10 @@ def _count_registry_resolutions(
     return calls
 
 
-def test_compute_rows_defers_upstream_identity_for_a_vendor_page(
+def test_compute_rows_resolves_upstream_for_a_vendor_page(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """ADR-0025: an install-root page makes the row final, so it pays no resolution."""
+    """An install-root page still names its repository; only the probe is skipped."""
     page = tmp_path / "tool.1"
     page.write_text(".TH TOOL 1\n", encoding="utf-8")
     source = RepoSource(name="tool", target="owner/tool", is_local=False)
@@ -147,15 +147,14 @@ def test_compute_rows_defers_upstream_identity_for_a_vendor_page(
 
     assert row.state is ActionState.AVAILABLE
     assert row.source is PageSource.VENDOR
-    assert row.upstream is None
-    assert registry_calls == [0]
-    assert provider.resolutions == 0
+    assert row.upstream is source
+    assert registry_calls == [1]
 
 
-def test_compute_rows_defers_upstream_identity_for_a_reachable_page(
+def test_compute_rows_resolves_upstream_for_a_reachable_page(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """A page `man` resolves under the install root is final too (ADR-0025)."""
+    """A page `man` resolves under the install root also carries its repository."""
     installed = tmp_path / "share" / "man" / "man1" / "tool.1"
     installed.parent.mkdir(parents=True)
     installed.write_text(".TH TOOL 1\n", encoding="utf-8")
@@ -170,21 +169,24 @@ def test_compute_rows_defers_upstream_identity_for_a_reachable_page(
         "maniac.listing.classification.find_installed_manpage_path",
         lambda command, tool: installed,
     )
+    monkeypatch.setattr(
+        "maniac.listing.upstream.discover_repo_manpage",
+        lambda *args, **kwargs: pytest.fail("reachable rows must not probe for a page"),
+    )
     registry_calls = _count_registry_resolutions(monkeypatch, source)
 
     row = compute_rows(config=_config(tmp_path))[0]
 
     assert row.state is ActionState.OK
     assert row.source is PageSource.VENDOR
-    assert row.upstream is None
-    assert registry_calls == [0]
-    assert provider.resolutions == 0
+    assert row.upstream is source
+    assert registry_calls == [1]
 
 
-def test_compute_rows_still_resolves_upstream_for_an_unresolved_row(
+def test_compute_rows_resolves_upstream_for_an_unresolved_row(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """The deferral is conditional: a row with no local page still resolves."""
+    """A row with no local page carries both its repository and a probe."""
     source = RepoSource(name="tool", target="owner/tool", is_local=False)
     provider = _CountingProvider(source=source)
     monkeypatch.setattr(

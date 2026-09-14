@@ -34,7 +34,6 @@ from .upstream import (
     ProbeKey,
     ProbePage,
     is_upstream_eligible,
-    needs_upstream_identity,
     probe_key,
     probe_upstream,
     resolve_upstream,
@@ -146,16 +145,12 @@ def _classified_row(
 def _classify_and_resolve(
     candidate: Candidate, cfg: Config, entries: Mapping[str, manifest.Entry]
 ) -> _LocalResult:
-    """Classify locally, resolving repository identity only if that leaves it open.
+    """One row's local classification paired with its repository identity.
 
-    ADR-0025's deferral: a reachable page and an install-root page both make
-    the row final, and decorating their Upstream cell would cost registry and
-    provider work that cannot change the reachability decision.
+    Identity is resolved for every row; only the remote page probe that
+    follows it stays gated on local evidence (`is_upstream_eligible`).
     """
-    classified = classify(candidate, cfg, entries)
-    if not needs_upstream_identity(classified):
-        return classified, None
-    return classified, resolve_upstream(candidate, config=cfg)
+    return classify(candidate, cfg, entries), resolve_upstream(candidate, config=cfg)
 
 
 def _with_probe_result(row: ToolRow, page: ProbePage | None) -> ToolRow:
