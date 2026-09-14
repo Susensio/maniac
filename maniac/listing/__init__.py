@@ -13,7 +13,9 @@ not a manpath scan, since that is what bounds what a bulk install could act on.
 Each row's *state* is a reachability fact checked against `man` directly
 (ADR-0018, reversing ADR-0013/ADR-0016's "the manpath is never scanned").
 
-Nothing under this package imports Rich, Typer or a console. Callers observe a
+No module here renders, reads a console or touches Typer. Rich does appear in
+`sys.modules` after importing this package, but only because `..logging` imports
+structlog, which pulls it in itself. Callers observe a
 run through `InventoryObserver`, which receives immutable ordered snapshots and
 cannot reach the state the coordinator is still mutating.
 """
