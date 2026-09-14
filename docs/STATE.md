@@ -18,6 +18,8 @@ Uninstall preserves replaced, retargeted, and dangling entries, and ADR-0032 mig
 The development manifest has no eligible historical vendor copies because its existing `aichat.1` and `ty.1` pages are synthesized and already MANIAC-owned.
 
 `cli.listing.compute_rows` and GitHub release-manpage discovery are now decomposed at their actual coordination boundaries with their observed rendering, callback, ordering, deduplication, and release-validation behavior intact.
+`manifest._migrate_install_root_links`, `cli.listing._classify`, and `cli.listing.compute_rows` are all below the configured cognitive-complexity threshold.
+Rich listing tests now declare simulated console size and color capabilities explicitly, so Rich version and output-stream detection cannot change the terminal behavior under test.
 The 2026-09-14 architecture review found remaining manifest/installer and discovery/resolution soft cycles, plus duplicated source-selection policy, and records their remediation in the backlog.
 
 The default unfiltered TTY view now completes provider enumeration, builds one alphabetically stable per-binary table with every Tool cell populated, then fills State, Source, and Upstream progressively without changing the table shape.

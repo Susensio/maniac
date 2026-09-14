@@ -42,8 +42,6 @@ Open work with no single line to mark.
 
 ### Maintainability
 
-- Refactor the `just code-review` cognitive-complexity hotspots: `compute_rows` (41), `_classify` (39), and `_migrate_install_root_links` (29).
-
 - Decide whether `Config` binds XDG paths per instance or intentionally at import time, then make discovery consistent.
   Current frozen module globals make ordinary environment monkeypatches ineffective after import; this is a configuration-lifecycle decision deserving an ADR.
 - Extend installation-derived package metadata fallback beyond npm for Python, Cargo, Go, and Homebrew.
