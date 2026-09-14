@@ -182,3 +182,8 @@ missing_manpages.txt
 .mcp.json
 # Added by code-review-graph
 .code-review-graph/
+
+### Generated agent harness ###
+# Compiled from CLAUDE.md and the code-review-graph MCP; regenerate, do not commit.
+.agents/
+AGENTS.md
