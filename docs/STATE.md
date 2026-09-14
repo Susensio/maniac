@@ -1,6 +1,6 @@
 # Implementation State
 
-No implementation is currently in flight.
+Implementation in flight: use validated Mise `latest` aliases for globally selected vendor manuals, surface later alias drift as `outdated`, and preserve provider-owned target update semantics during uninstall under ADR-0029.
 
 ADR-0028 changed every new managed manpath entry into a manifest-tracked symbolic link.
 Generated, repository, and currently unqualified vendor pages materialize durably under MANIAC data storage rather than linking into the disposable cache or a versioned provider root.
