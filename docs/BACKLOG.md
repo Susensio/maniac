@@ -23,6 +23,27 @@ Open work with no single line to mark.
 
 ## Refactors and architecture
 
+### Architecture review follow-up
+
+- Make manifest loading a pure serialization operation and move legacy/link reconciliation into one explicit lifecycle service shared with installation.
+  That service must own provider-page discovery and filesystem transitions, so `lookup()` cannot mutate user manpath entries through the `manifest`/`installer` deferred-import cycle.
+- Break discovery/resolution's upward imports and Mise class-global callback wiring with a dependency-neutral path resolver and an explicitly passed provider registry or resolver context.
+- Define provider capabilities as typed contracts or capability objects instead of optional `getattr` methods and peer-provider helpers.
+  Registry composition should own any cross-provider resolution.
+- Centralize verified source selection in one candidate service carrying tier, pages, provenance URI, version match, and target ownership.
+  Install, listing, and manifest reconciliation must consume that result rather than each reimplementing root containment and repository eligibility.
+- Defer upstream identity resolution in `list` until local evidence leaves it necessary, as ADR-0025 requires.
+  Reachable and vendor-page rows should not pay provider or registry resolution merely to render a row.
+- Thread one resolved-tool context through all install tiers, including tier 3, rather than resolving the installation and repository again inside `run_pipeline`.
+- Separate listing inventory/classification and probe scheduling from Rich rendering and Typer command wiring.
+  Keep a non-CLI inventory service, a renderer, and a thin command adapter.
+- Split `sources/docs.py` into repository acquisition, release retrieval, cache, page selection, and documentation extraction behind a small facade.
+- Replace correlated `RepoSource` string fields with validated local and remote source variants carrying canonical identity and clone data.
+
+### Maintainability
+
+- Refactor the `just code-review` cognitive-complexity hotspots: `compute_rows` (41), `_classify` (39), `_migrate_install_root_links` (29), `check_standard_sections` (28), `uninstall_manpage` (27), and `extract_docs_from_dir` (26).
+
 - Decide whether `Config` binds XDG paths per instance or intentionally at import time, then make discovery consistent.
   Current frozen module globals make ordinary environment monkeypatches ineffective after import; this is a configuration-lifecycle decision deserving an ADR.
 - Extend installation-derived package metadata fallback beyond npm for Python, Cargo, Go, and Homebrew.
