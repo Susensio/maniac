@@ -43,7 +43,7 @@ def discover_repo(
     a source for it. There is no bare-name fallback -- ADR-0015 rules that
     "a tool with no provider is reported as unresolvable and nothing is
     generated for it", closing the gap where this used to return
-    `RepoSource(name=binary, target=binary)`, reachable by `run_pipeline`
+    `RepoSource(name=binary, target=binary)`, reachable by tier-3 synthesis
     and liable to synthesize a page for a genuinely unresolved tool.
     """
     found = find_installation(binary_name, bin_dir=bin_dir)

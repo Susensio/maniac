@@ -20,7 +20,8 @@ from ..evaluation import evaluate_manpage
 from ..exceptions import ManiacError
 from ..logging import logger
 from ..models import EvaluationResult, PipelineResult
-from ..orchestration import run_pipeline
+from ..orchestration import resolve_tool
+from ..orchestration.pipeline import synthesize
 
 console = Console()
 
@@ -85,11 +86,9 @@ def _generate(
     error: str | None = None
     for attempt in range(retries + 1):
         try:
-            result = run_pipeline(
-                tool_name=tool,
-                cache_dir=cfg.cache_dir,
+            result = synthesize(
+                resolve_tool(tool, config=cfg),
                 output_dir=out_dir,
-                intermediate_dir=cfg.intermediate_dir,
                 model=model_name,
                 reasoning_effort=reasoning_effort,
                 install=False,
@@ -222,7 +221,7 @@ def run_benchmark(
                 continue
 
             assert pipeline_res.context_path is not None, (
-                "run_pipeline succeeded (dry_run=False) but returned no context_path"
+                "synthesis succeeded (dry_run=False) but returned no context_path"
             )
             context_content = pipeline_res.context_path.read_text(encoding="utf-8")
 

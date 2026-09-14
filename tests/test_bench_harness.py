@@ -95,10 +95,11 @@ def test_run_benchmark_records_skips_and_preserves_prior_run(
 def test_generate_returns_error_after_retries_exhausted(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def always_fails(**kwargs):
+    def always_fails(tool, **kwargs):
         raise ManiacError("nope")
 
-    monkeypatch.setattr(harness, "run_pipeline", always_fails)
+    monkeypatch.setattr(harness, "resolve_tool", lambda name, **kwargs: None)
+    monkeypatch.setattr(harness, "synthesize", always_fails)
     monkeypatch.setattr(harness.time, "sleep", lambda _: None)
 
     result, error, _duration = harness._generate(

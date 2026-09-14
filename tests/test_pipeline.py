@@ -1,21 +1,74 @@
+"""Tier-3 synthesis: both entry paths, source material, ADR-0019's recorded version."""
+
 from pathlib import Path
 
 import pytest
 
+from maniac.config import Config
 from maniac.exceptions import CrawlerError, GenerationError
 from maniac.models import DocFile, Installation, RepoSource
-from maniac.orchestration.pipeline import run_pipeline
+from maniac.orchestration.context import ResolvedTool, resolve_tool
+from maniac.orchestration.pipeline import synthesize
 
 
-def _installation(version: str | None) -> Installation:
+class _FakeProvider:
+    """Minimal `Provider` stand-in answering with one fixed source."""
+
+    name = "fake"
+
+    def __init__(self, source: RepoSource | None = None) -> None:
+        self._source = source
+
+    def detect(self, bin_path: Path) -> Installation | None:
+        return None
+
+    def resolve_source(
+        self, inst: Installation, *, config: Config, sources: object
+    ) -> RepoSource | None:
+        return self._source
+
+    def local_docs(self, inst: Installation) -> list[Path]:
+        return []
+
+
+def _installation(version: str | None, binary: str = "testtool") -> Installation:
     return Installation(
-        binary="testtool",
-        bin_path=Path("/bin/testtool"),
-        real_path=Path("/bin/testtool"),
+        binary=binary,
+        bin_path=Path("/bin") / binary,
+        real_path=Path("/bin") / binary,
         provider="fake",
-        package="testtool",
+        package=binary,
         version=version,
         root=Path("/root"),
+    )
+
+
+def _resolved(
+    tool_name: str = "testtool",
+    *,
+    target: str | None = "org/testtool",
+    version: str | None = None,
+    claimed: bool = True,
+    bin_dir: Path | None = None,
+) -> ResolvedTool:
+    """A `ResolvedTool` as `run_install` would hand one to tier 3.
+
+    `claimed=False` is the ADR-0020 case: no provider claims the binary, so
+    there is no installation and no documentation source behind it.
+    """
+    source = (
+        RepoSource(name=tool_name, target=target, is_local=False)
+        if target is not None
+        else None
+    )
+    config = Config()
+    return ResolvedTool(
+        tool_name=tool_name,
+        config=config,
+        cache_dir=config.cache_dir,
+        bin_dir=bin_dir,
+        provider=_FakeProvider(source) if claimed else None,
+        installation=_installation(version, tool_name) if claimed else None,
     )
 
 
@@ -52,31 +105,24 @@ def _mock_synthesis(
     return recorded
 
 
-def test_run_pipeline_dry_run(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def _help_tree(monkeypatch: pytest.MonkeyPatch, tree: dict[str, str]) -> None:
     monkeypatch.setattr(
-        "maniac.orchestration.pipeline.find_subcommands",
-        lambda cmd, **kwargs: {"> testtool --help": "Usage: testtool"},
-    )
-    monkeypatch.setattr(
-        "maniac.orchestration.pipeline.discover_repo",
-        lambda name, **kwargs: RepoSource(
-            name=name, target="org/testtool", is_local=False
-        ),
-    )
-    monkeypatch.setattr(
-        "maniac.orchestration.pipeline.fetch_and_extract_docs",
-        lambda source, cache_dir, **kwargs: (
-            [DocFile(rel_path="README.md", content="# Test Tool")],
-            False,
-        ),
+        "maniac.orchestration.pipeline.find_subcommands", lambda cmd, **kwargs: tree
     )
 
-    out_dir = tmp_path / "manpages"
-    result = run_pipeline(
-        tool_name="testtool",
-        output_dir=out_dir,
-        dry_run=True,
+
+def _one_doc_file(matched: bool) -> tuple[list[DocFile], bool]:
+    return [DocFile(rel_path="README.md", content="# Test Tool")], matched
+
+
+def test_synthesize_dry_run(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    _help_tree(monkeypatch, {"> testtool --help": "Usage: testtool"})
+    monkeypatch.setattr(
+        "maniac.orchestration.pipeline.fetch_and_extract_docs",
+        lambda source, cache_dir, **kwargs: _one_doc_file(False),
     )
+
+    result = synthesize(_resolved(), output_dir=tmp_path / "manpages", dry_run=True)
 
     assert result.tool_name == "testtool"
     assert result.command_count == 1
@@ -92,18 +138,72 @@ def test_run_pipeline_dry_run(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -
     assert result.prompt_path.is_relative_to(tmp_path)
 
 
-def test_run_pipeline_fetches_docs_from_the_canonical_repository(
+def test_synthesize_consumes_the_facts_it_was_given_without_resolving_again(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    raw_source = RepoSource(name="tmux", target="tmux/tmux-builds", is_local=False)
+    """The `install` entry path: tier 3 must never re-resolve supplied facts."""
+
+    def _fail(*args: object, **kwargs: object) -> None:
+        raise AssertionError("tier 3 re-resolved an installation it was handed")
+
     monkeypatch.setattr(
-        "maniac.orchestration.pipeline.find_subcommands",
-        lambda cmd, **kwargs: {"> tmux --help": "Usage: tmux"},
+        "maniac.orchestration.context.resolution.find_installation", _fail
     )
+    _help_tree(monkeypatch, {"> testtool --help": "Usage: testtool"})
+    observed: list[RepoSource] = []
     monkeypatch.setattr(
-        "maniac.orchestration.pipeline.discover_repo",
-        lambda *args, **kwargs: raw_source,
+        "maniac.orchestration.pipeline.fetch_and_extract_docs",
+        lambda source, cache_dir, **kwargs: (
+            observed.append(source) or _one_doc_file(True)
+        ),
     )
+
+    result = synthesize(_resolved(version="1.2.3"), output_dir=tmp_path, dry_run=True)
+
+    assert observed == [
+        RepoSource(name="testtool", target="org/testtool", is_local=False)
+    ]
+    assert result.repo_source == observed[0]
+
+
+def test_resolve_tool_is_the_direct_synthesis_entry(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The direct path: a bare name, resolved explicitly, then synthesized."""
+    provider = _FakeProvider(
+        RepoSource(name="testtool", target="org/testtool", is_local=False)
+    )
+    inst = _installation("1.2.3")
+    monkeypatch.setattr(
+        "maniac.orchestration.context.resolution.find_installation",
+        lambda name, bin_dir=None: (provider, inst),
+    )
+    _help_tree(monkeypatch, {"> testtool --help": "Usage: testtool"})
+    observed: dict[str, object] = {}
+
+    def _fetch_and_extract_docs(
+        source: RepoSource, cache_dir: Path, **kwargs: object
+    ) -> tuple[list[DocFile], bool]:
+        observed["version"] = kwargs.get("version")
+        return _one_doc_file(True)
+
+    monkeypatch.setattr(
+        "maniac.orchestration.pipeline.fetch_and_extract_docs", _fetch_and_extract_docs
+    )
+
+    tool = resolve_tool("testtool", config=Config())
+    result = synthesize(tool, output_dir=tmp_path, dry_run=True)
+
+    assert tool.installation is inst
+    assert observed["version"] == "1.2.3"
+    assert result.repo_source is not None
+    assert result.repo_source.target == "org/testtool"
+
+
+def test_synthesize_fetches_docs_from_the_canonical_repository(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _help_tree(monkeypatch, {"> tmux --help": "Usage: tmux"})
     observed: list[RepoSource] = []
     monkeypatch.setattr(
         "maniac.orchestration.pipeline.fetch_and_extract_docs",
@@ -113,14 +213,14 @@ def test_run_pipeline_fetches_docs_from_the_canonical_repository(
         ),
     )
 
-    result = run_pipeline(tool_name="tmux", output_dir=tmp_path, dry_run=True)
+    tool = _resolved("tmux", target="tmux/tmux-builds")
+    result = synthesize(tool, output_dir=tmp_path, dry_run=True)
 
-    assert raw_source.target == "tmux/tmux-builds"
     assert observed == [RepoSource(name="tmux", target="tmux/tmux", is_local=False)]
     assert result.repo_source == observed[0]
 
 
-def test_run_pipeline_uses_custom_bin_dir(
+def test_synthesize_uses_a_custom_bin_dir(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     bin_dir = tmp_path / "bin"
@@ -131,52 +231,35 @@ def test_run_pipeline_uses_custom_bin_dir(
         observed["command"] = cmd
         return {"> testtool --help": "Usage: testtool"}
 
-    def _discover_repo(name: str, **kwargs: object) -> RepoSource:
-        observed["bin_dir"] = kwargs["bin_dir"]
-        return RepoSource(name=name, target="org/testtool", is_local=False)
-
     monkeypatch.setattr(
         "maniac.orchestration.pipeline.find_subcommands", _find_subcommands
     )
-    monkeypatch.setattr("maniac.orchestration.pipeline.discover_repo", _discover_repo)
     monkeypatch.setattr(
         "maniac.orchestration.pipeline.fetch_and_extract_docs",
-        lambda source, cache_dir, **kwargs: (
-            [DocFile(rel_path="README.md", content="# Test Tool")],
-            False,
-        ),
+        lambda source, cache_dir, **kwargs: _one_doc_file(False),
     )
 
-    run_pipeline(
-        tool_name="testtool", bin_dir=bin_dir, output_dir=tmp_path, dry_run=True
-    )
+    synthesize(_resolved(bin_dir=bin_dir), output_dir=tmp_path, dry_run=True)
 
-    assert observed == {"command": [str(bin_dir / "testtool")], "bin_dir": bin_dir}
+    assert observed == {"command": [str(bin_dir / "testtool")]}
 
 
-def test_run_pipeline_synthesizes_from_root_help_only(
+def test_synthesize_from_root_help_only(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    monkeypatch.setattr(
-        "maniac.orchestration.pipeline.find_subcommands",
-        lambda cmd, **kwargs: {"> testtool --help": "Usage: testtool"},
-    )
-    monkeypatch.setattr(
-        "maniac.orchestration.pipeline.discover_repo",
-        lambda name, **kwargs: RepoSource(name=name, target=name, is_local=False),
-    )
+    _help_tree(monkeypatch, {"> testtool --help": "Usage: testtool"})
     monkeypatch.setattr(
         "maniac.orchestration.pipeline.fetch_and_extract_docs",
         lambda source, cache_dir, **kwargs: ([], False),
     )
 
-    result = run_pipeline(tool_name="testtool", output_dir=tmp_path, dry_run=True)
+    result = synthesize(_resolved(), output_dir=tmp_path, dry_run=True)
 
     assert result.command_count == 1
     assert result.doc_file_count == 0
 
 
-def test_run_pipeline_reports_synthesis_sources(
+def test_synthesize_reports_its_source_material(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     messages: list[tuple[str, dict[str, object]]] = []
@@ -184,28 +267,19 @@ def test_run_pipeline_reports_synthesis_sources(
         "maniac.orchestration.pipeline.logger.warning",
         lambda event, **kwargs: messages.append((event, kwargs)),
     )
-    monkeypatch.setattr(
-        "maniac.orchestration.pipeline.find_subcommands",
-        lambda cmd, **kwargs: {
+    _help_tree(
+        monkeypatch,
+        {
             "> testtool --help": "Usage: testtool",
             "> testtool run --help": "Usage: testtool run",
         },
     )
     monkeypatch.setattr(
-        "maniac.orchestration.pipeline.discover_repo",
-        lambda name, **kwargs: RepoSource(
-            name=name, target="org/testtool", is_local=False
-        ),
-    )
-    monkeypatch.setattr(
         "maniac.orchestration.pipeline.fetch_and_extract_docs",
-        lambda source, cache_dir, **kwargs: (
-            [DocFile(rel_path="README.md", content="# Test Tool")],
-            True,
-        ),
+        lambda source, cache_dir, **kwargs: _one_doc_file(True),
     )
 
-    run_pipeline(tool_name="testtool", output_dir=tmp_path, dry_run=True)
+    synthesize(_resolved(), output_dir=tmp_path, dry_run=True)
 
     assert (
         "Synthesis source material found",
@@ -220,7 +294,26 @@ def test_run_pipeline_reports_synthesis_sources(
     ) in messages
 
 
-def test_run_pipeline_synthesizes_from_repository_docs_without_help(
+def test_synthesize_warns_when_only_root_help_is_available(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    messages: list[str] = []
+    monkeypatch.setattr(
+        "maniac.orchestration.pipeline.logger.warning",
+        lambda event, **kwargs: messages.append(event),
+    )
+    _help_tree(monkeypatch, {"> testtool --help": "Usage: testtool"})
+    monkeypatch.setattr(
+        "maniac.orchestration.pipeline.fetch_and_extract_docs",
+        lambda source, cache_dir, **kwargs: ([], False),
+    )
+
+    synthesize(_resolved(), output_dir=tmp_path, dry_run=True)
+
+    assert "Limited source material: synthesizing from root --help only" in messages
+
+
+def test_synthesize_from_repository_docs_without_help(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     monkeypatch.setattr(
@@ -228,80 +321,53 @@ def test_run_pipeline_synthesizes_from_repository_docs_without_help(
         lambda cmd, **kwargs: (_ for _ in ()).throw(CrawlerError("no help")),
     )
     monkeypatch.setattr(
-        "maniac.orchestration.pipeline.discover_repo",
-        lambda name, **kwargs: RepoSource(
-            name=name, target="org/testtool", is_local=False
-        ),
-    )
-    monkeypatch.setattr(
         "maniac.orchestration.pipeline.fetch_and_extract_docs",
-        lambda source, cache_dir, **kwargs: (
-            [DocFile(rel_path="README.md", content="# Test Tool")],
-            True,
-        ),
+        lambda source, cache_dir, **kwargs: _one_doc_file(True),
     )
 
-    result = run_pipeline(tool_name="testtool", output_dir=tmp_path, dry_run=True)
+    result = synthesize(_resolved(), output_dir=tmp_path, dry_run=True)
 
     assert result.command_count == 0
     assert result.doc_file_count == 1
 
 
-def test_run_pipeline_rejects_when_no_help_or_repository_docs(
+def test_synthesize_rejects_when_no_help_or_repository_docs(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     monkeypatch.setattr(
         "maniac.orchestration.pipeline.find_subcommands",
         lambda cmd, **kwargs: (_ for _ in ()).throw(CrawlerError("no help")),
     )
-    monkeypatch.setattr(
-        "maniac.orchestration.pipeline.discover_repo",
-        lambda name, **kwargs: None,
-    )
 
     with pytest.raises(GenerationError, match="no usable --help output"):
-        run_pipeline(tool_name="testtool", output_dir=tmp_path, dry_run=True)
+        synthesize(_resolved(target=None), output_dir=tmp_path, dry_run=True)
 
 
-def test_run_pipeline_records_the_matched_tag_version(
+def test_synthesize_records_the_matched_tag_version(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """ADR-0019: docs that came from a version-matched tag earn a recorded version."""
-    monkeypatch.setattr(
-        "maniac.orchestration.pipeline.find_subcommands",
-        lambda cmd, **kwargs: {"> testtool --help": "Usage: testtool"},
-    )
-    monkeypatch.setattr(
-        "maniac.orchestration.pipeline.discover_repo",
-        lambda name, **kwargs: RepoSource(
-            name=name, target="org/testtool", is_local=False
-        ),
-    )
-    monkeypatch.setattr(
-        "maniac.orchestration.pipeline.find_installation",
-        lambda name, bin_dir=None: (None, _installation("1.2.3")),
-    )
-
-    observed_version: dict[str, object] = {}
+    _help_tree(monkeypatch, {"> testtool --help": "Usage: testtool"})
+    observed: dict[str, object] = {}
 
     def _fetch_and_extract_docs(
         source: RepoSource, cache_dir: Path, **kwargs: object
     ) -> tuple[list[DocFile], bool]:
-        observed_version["passed"] = kwargs.get("version")
-        return [DocFile(rel_path="README.md", content="# Test Tool")], True
+        observed["version"] = kwargs.get("version")
+        return _one_doc_file(True)
 
     monkeypatch.setattr(
         "maniac.orchestration.pipeline.fetch_and_extract_docs", _fetch_and_extract_docs
     )
     recorded = _mock_synthesis(monkeypatch, tmp_path)
 
-    run_pipeline(tool_name="testtool", output_dir=tmp_path, install=True, dry_run=False)
+    synthesize(_resolved(version="1.2.3"), output_dir=tmp_path, install=True)
 
-    assert observed_version["passed"] == "1.2.3"
+    assert observed["version"] == "1.2.3"
     assert recorded["version"] == "1.2.3"
 
 
-def test_run_pipeline_records_no_version_when_tag_unmatched(
+def test_synthesize_records_no_version_when_tag_unmatched(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """ADR-0019: no matching tag means no recorded version, even though the
@@ -309,20 +375,7 @@ def test_run_pipeline_records_no_version_when_tag_unmatched(
     `inst.version` on the strength of it being non-None; a page built from
     the default branch has not earned it.
     """
-    monkeypatch.setattr(
-        "maniac.orchestration.pipeline.find_subcommands",
-        lambda cmd, **kwargs: {"> testtool --help": "Usage: testtool"},
-    )
-    monkeypatch.setattr(
-        "maniac.orchestration.pipeline.discover_repo",
-        lambda name, **kwargs: RepoSource(
-            name=name, target="org/testtool", is_local=False
-        ),
-    )
-    monkeypatch.setattr(
-        "maniac.orchestration.pipeline.find_installation",
-        lambda name, bin_dir=None: (None, _installation("9.9.9")),
-    )
+    _help_tree(monkeypatch, {"> testtool --help": "Usage: testtool"})
     monkeypatch.setattr(
         "maniac.orchestration.pipeline.fetch_and_extract_docs",
         lambda source, cache_dir, **kwargs: (
@@ -332,53 +385,30 @@ def test_run_pipeline_records_no_version_when_tag_unmatched(
     )
     recorded = _mock_synthesis(monkeypatch, tmp_path)
 
-    run_pipeline(tool_name="testtool", output_dir=tmp_path, install=True, dry_run=False)
+    synthesize(_resolved(version="9.9.9"), output_dir=tmp_path, install=True)
 
     assert recorded["version"] is None
 
 
-def test_run_pipeline_no_installation_records_no_version(
+def test_synthesize_without_an_installation_records_no_version(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """No `Installation` in scope (`find_installation` finds nothing) means no
-    version to match against at all, so extraction gets `version=None` and
-    synthesis still completes and installs -- unversioned, not blocked.
+    """A tool nothing claims has no version to match against at all, so
+    extraction gets `version=None` and synthesis still completes and
+    installs -- unversioned, not blocked.
     """
+    _help_tree(monkeypatch, {"> testtool --help": "Usage: testtool"})
     monkeypatch.setattr(
-        "maniac.orchestration.pipeline.find_subcommands",
-        lambda cmd, **kwargs: {"> testtool --help": "Usage: testtool"},
-    )
-    monkeypatch.setattr(
-        "maniac.orchestration.pipeline.discover_repo",
-        lambda name, **kwargs: RepoSource(
-            name=name, target="org/testtool", is_local=False
-        ),
-    )
-    monkeypatch.setattr(
-        "maniac.orchestration.pipeline.find_installation",
-        lambda name, bin_dir=None: None,
-    )
-
-    observed_version: dict[str, object] = {}
-
-    def _fetch_and_extract_docs(
-        source: RepoSource, cache_dir: Path, **kwargs: object
-    ) -> tuple[list[DocFile], bool]:
-        observed_version["passed"] = kwargs.get("version")
-        return [DocFile(rel_path="README.md", content="# Test Tool")], False
-
-    monkeypatch.setattr(
-        "maniac.orchestration.pipeline.fetch_and_extract_docs", _fetch_and_extract_docs
+        "maniac.orchestration.pipeline.get_version", lambda cmd, **kwargs: None
     )
     recorded = _mock_synthesis(monkeypatch, tmp_path)
 
-    run_pipeline(tool_name="testtool", output_dir=tmp_path, install=True, dry_run=False)
+    synthesize(_resolved(claimed=False), output_dir=tmp_path, install=True)
 
-    assert observed_version["passed"] is None
     assert recorded["version"] is None
 
 
-def test_run_pipeline_unclaimed_binary_records_its_own_version_output(
+def test_synthesize_unclaimed_binary_records_its_own_version_output(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """ADR-0020: no provider claims the binary, so there is no `Installation`
@@ -386,78 +416,17 @@ def test_run_pipeline_unclaimed_binary_records_its_own_version_output(
     matched evidence for the help-only page just crawled, and gets recorded
     verbatim.
     """
-    monkeypatch.setattr(
-        "maniac.orchestration.pipeline.find_subcommands",
-        lambda cmd, **kwargs: {"> testtool --help": "Usage: testtool"},
-    )
-    monkeypatch.setattr(
-        "maniac.orchestration.pipeline.discover_repo",
-        lambda name, **kwargs: RepoSource(
-            name=name, target="org/testtool", is_local=False
-        ),
-    )
-    monkeypatch.setattr(
-        "maniac.orchestration.pipeline.find_installation",
-        lambda name, bin_dir=None: None,
-    )
-    monkeypatch.setattr(
-        "maniac.orchestration.pipeline.fetch_and_extract_docs",
-        lambda source, cache_dir, **kwargs: (
-            [DocFile(rel_path="README.md", content="# Test Tool")],
-            False,
-        ),
-    )
-    observed_cmd: dict[str, object] = {}
+    _help_tree(monkeypatch, {"> testtool --help": "Usage: testtool"})
+    observed: dict[str, object] = {}
 
-    def _get_version(cmd: list[str]) -> str | None:
-        observed_cmd["cmd"] = cmd
+    def _get_version(cmd: list[str], **kwargs: object) -> str:
+        observed["cmd"] = cmd
         return "testtool 9.9.9-custom"
 
-    monkeypatch.setattr(
-        "maniac.orchestration.pipeline.get_version",
-        lambda cmd, **kwargs: _get_version(cmd),
-    )
+    monkeypatch.setattr("maniac.orchestration.pipeline.get_version", _get_version)
     recorded = _mock_synthesis(monkeypatch, tmp_path)
 
-    run_pipeline(tool_name="testtool", output_dir=tmp_path, install=True, dry_run=False)
+    synthesize(_resolved(claimed=False), output_dir=tmp_path, install=True)
 
-    assert observed_cmd["cmd"] == ["testtool"]
+    assert observed["cmd"] == ["testtool"]
     assert recorded["version"] == "testtool 9.9.9-custom"
-
-
-def test_run_pipeline_unclaimed_binary_with_no_version_output_records_none(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """`get_version` returning `None` (no `--version` flag, non-zero exit,
-    timeout, ...) is a normal case, not an error -- the page still installs,
-    unversioned.
-    """
-    monkeypatch.setattr(
-        "maniac.orchestration.pipeline.find_subcommands",
-        lambda cmd, **kwargs: {"> testtool --help": "Usage: testtool"},
-    )
-    monkeypatch.setattr(
-        "maniac.orchestration.pipeline.discover_repo",
-        lambda name, **kwargs: RepoSource(
-            name=name, target="org/testtool", is_local=False
-        ),
-    )
-    monkeypatch.setattr(
-        "maniac.orchestration.pipeline.find_installation",
-        lambda name, bin_dir=None: None,
-    )
-    monkeypatch.setattr(
-        "maniac.orchestration.pipeline.fetch_and_extract_docs",
-        lambda source, cache_dir, **kwargs: (
-            [DocFile(rel_path="README.md", content="# Test Tool")],
-            False,
-        ),
-    )
-    monkeypatch.setattr(
-        "maniac.orchestration.pipeline.get_version", lambda cmd, **kwargs: None
-    )
-    recorded = _mock_synthesis(monkeypatch, tmp_path)
-
-    run_pipeline(tool_name="testtool", output_dir=tmp_path, install=True, dry_run=False)
-
-    assert recorded["version"] is None

@@ -1,8 +1,15 @@
-"""End-to-end pipeline orchestrator."""
+"""Tier-3 synthesis: crawl help, extract repository docs, compile a manpage.
+
+`synthesize` takes facts, never a tool name: a `ResolvedTool` its caller
+already holds. `run_install` reaches here only after tiers 1-2 declined, so
+it passes down the installation, provider and documentation source it
+resolved for them. A caller entering synthesis directly, with no prior
+install, calls `resolve_tool` first -- the one explicit entry that turns a
+name into those facts, and the only way to obtain them.
+"""
 
 from pathlib import Path
 
-from ..config import Config
 from ..exceptions import CrawlerError, GenerationError
 from ..generation.compiler import compile_to_man
 from ..generation.llm import run_llm_synthesis
@@ -10,16 +17,17 @@ from ..generation.prompts import build_synthesis_prompt, load_system_prompt
 from ..installer import install_manpage
 from ..logging import logger
 from ..manifest import Tier
-from ..models import PipelineResult
+from ..models import DocFile, PipelineResult
 from ..sources.crawler import find_subcommands, format_help_block, get_version
 from ..sources.docs import fetch_and_extract_docs, format_docs_section
-from ..sources.documentation import documentation_source
-from ..sources.resolution import discover_repo, find_installation
+from .context import ResolvedTool
+
+__all__ = ["synthesize"]
 
 
-def run_pipeline(
-    tool_name: str,
-    cache_dir: str | Path | None = None,
+def synthesize(
+    tool: ResolvedTool,
+    *,
     output_dir: str | Path | None = None,
     intermediate_dir: str | Path | None = None,
     prompt_file: str | Path | None = None,
@@ -28,118 +36,53 @@ def run_pipeline(
     install: bool = False,
     force: bool = False,
     dry_run: bool = False,
-    config: Config | None = None,
-    bin_dir: str | Path | None = None,
 ) -> PipelineResult:
-    """Run the complete pipeline to extract docs, synthesize, and compile a manpage."""
-    cfg = config or Config()
-    c_dir = Path(cache_dir) if cache_dir is not None else cfg.cache_dir
+    """Extract source material for an already-resolved tool, synthesize, compile."""
+    cfg = tool.config
     out_dir = Path(output_dir) if output_dir is not None else cfg.output_dir
     out_dir.mkdir(parents=True, exist_ok=True)
-
     inter_dir = (
         Path(intermediate_dir) if intermediate_dir is not None else cfg.intermediate_dir
     )
     inter_dir.mkdir(parents=True, exist_ok=True)
 
-    logger.info("Extracting CLI help and subcommands", tool=tool_name)
-    executable = Path(bin_dir) / tool_name if bin_dir is not None else tool_name
-    try:
-        tree = find_subcommands([str(executable)], config=cfg)
-    except CrawlerError as error:
-        # Repository documentation can still be enough to synthesize a page.
-        logger.warning(
-            "CLI help crawl failed; continuing with repository docs", error=str(error)
-        )
-        tree = {}
+    tree = _crawl_help(tool)
+    doc_files, version_matched = _extract_docs(tool)
     help_block = format_help_block(tree)
-
-    logger.info("Discovering source and extracting documentation", tool=tool_name)
-    source = (
-        discover_repo(tool_name, bin_dir=bin_dir, config=cfg)
-        if bin_dir is not None
-        else discover_repo(tool_name, config=cfg)
-    )
-    if source is not None:
-        source = documentation_source(source, cfg.documentation_repository_overrides)
-    # Resolved separately from `source` above: shares `find_installation`'s
-    # own bin-path resolution rather than `source`'s, since only the
-    # `Installation` carries the version tier-3 extraction needs to match a
-    # tag against (ADR-0019). A caller with an `Installation` already in
-    # hand (`run_install`'s tiers 1-2) has none to thread down when
-    # `--generate` skips straight to tier 3, so this stays self-contained.
-    found = find_installation(tool_name, bin_dir=bin_dir)
-    installed_version = found[1].version if found is not None else None
-    doc_files, version_matched = (
-        fetch_and_extract_docs(
-            source,
-            cache_dir=c_dir,
-            max_total_chars=cfg.max_total_doc_chars,
-            version=installed_version,
-            config=cfg,
-        )
-        if source is not None
-        else ([], False)
-    )
     docs_block = format_docs_section(doc_files)
+    _report_material(tool, tree=tree, doc_files=doc_files, matched=version_matched)
 
-    if not help_block and not doc_files:
-        raise GenerationError(
-            f"Not enough source material for '{tool_name}': no usable --help output "
-            "or repository documentation was found."
-        )
-
-    root_help_only = len(tree) == 1 and not doc_files
-    logger.warning(
-        "Synthesis source material found",
-        tool=tool_name,
-        commands=len(tree),
-        subcommands=max(len(tree) - 1, 0),
-        repository=source.target if source is not None else None,
-        repository_docs=len(doc_files),
-        repository_docs_version_matched=version_matched,
-    )
-    if root_help_only:
-        logger.warning(
-            "Limited source material: synthesizing from root --help only",
-            tool=tool_name,
-        )
-
-    # Save intermediate extracted context
-    context_content = (
-        f"# {tool_name} Extracted Context\n\n"
+    context_file = _write_intermediate(
+        inter_dir / f"{tool.tool_name}_context.md",
+        f"# {tool.tool_name} Extracted Context\n\n"
         f"## CLI Help\n```text\n{help_block}\n```\n\n"
-        f"## Repository Documentation\n{docs_block}\n"
+        f"## Repository Documentation\n{docs_block}\n",
+        "Saved intermediate context",
     )
-    context_file = inter_dir / f"{tool_name}_context.md"
-    context_file.write_text(context_content, encoding="utf-8")
-    logger.info("Saved intermediate context", path=str(context_file))
-
-    system_prompt = load_system_prompt(prompt_file)
     full_prompt = build_synthesis_prompt(
-        tool_name=tool_name,
+        tool_name=tool.tool_name,
         help_text=help_block,
         doc_text=docs_block,
-        system_prompt=system_prompt,
+        system_prompt=load_system_prompt(prompt_file),
+    )
+    prompt_save_file = _write_intermediate(
+        inter_dir / f"{tool.tool_name}_prompt.md",
+        full_prompt,
+        "Saved intermediate prompt",
     )
 
-    # Save intermediate full prompt
-    prompt_save_file = inter_dir / f"{tool_name}_prompt.md"
-    prompt_save_file.write_text(full_prompt, encoding="utf-8")
-    logger.info("Saved intermediate prompt", path=str(prompt_save_file))
-
+    md_file = out_dir / f"{tool.tool_name}.1.md"
     if dry_run:
         logger.info("Dry run: skipping LLM synthesis")
         dummy_md = (
-            f"% {tool_name.upper()}(1) | User Commands\n\n# NAME\n{tool_name} - dry run"
+            f"% {tool.tool_name.upper()}(1) | User Commands\n\n"
+            f"# NAME\n{tool.tool_name} - dry run"
         )
-        md_file = out_dir / f"{tool_name}.1.md"
         md_file.write_text(dummy_md, encoding="utf-8")
-        return PipelineResult(
-            tool_name=tool_name,
-            repo_source=source,
-            command_count=len(tree),
-            doc_file_count=len(doc_files),
+        return _result(
+            tool,
+            tree=tree,
+            doc_files=doc_files,
             context_path=context_file,
             prompt_path=prompt_save_file,
             markdown_path=md_file,
@@ -150,22 +93,20 @@ def run_pipeline(
 
     markdown_content = run_llm_synthesis(
         full_prompt,
-        tool_name=tool_name,
+        tool_name=tool.tool_name,
         model=model,
         reasoning_effort=reasoning_effort,
         config=cfg,
     )
-
-    md_file = out_dir / f"{tool_name}.1.md"
     md_file.write_text(markdown_content, encoding="utf-8")
     logger.info("Saved Markdown manpage", path=str(md_file))
 
-    roff_file = out_dir / f"{tool_name}.1"
+    roff_file = out_dir / f"{tool.tool_name}.1"
     selected_model = cfg.model_for_metadata(model)
     compiled = compile_to_man(
         markdown_content,
         roff_file,
-        tool_name=tool_name,
+        tool_name=tool.tool_name,
         model=selected_model,
         config=cfg,
     )
@@ -173,40 +114,128 @@ def run_pipeline(
 
     installed_path = None
     if install and actual_roff_path and actual_roff_path.exists():
-        if found is not None:
-            # `version_matched` -- not `installed_version is not None` -- is
-            # the recorded fact (ADR-0019): a page built from default-branch
-            # docs must record no version even though the binary has one.
-            recorded_version = installed_version if version_matched else None
-        else:
-            # ADR-0020: no provider claims this binary, so there is no
-            # `Installation` to match a doc tag against -- `installed_version`
-            # is None and `version_matched` is always False here. Recording
-            # the binary's own `--version` output is still consistent with
-            # ADR-0019 rather than an exception to it: a help-only page
-            # documents exactly the binary that was crawled, so that
-            # binary's own version report is matched evidence, more directly
-            # than a tag match is.
-            recorded_version = get_version([str(executable)], config=cfg)
         installed_path = install_manpage(
             actual_roff_path,
-            tool_name,
+            tool.tool_name,
             Tier.SYNTHESIS,
             selected_model or "unknown",
             force=force,
-            version=recorded_version,
+            version=_recorded_version(tool, matched=version_matched),
             config=cfg,
         )
 
-    return PipelineResult(
-        tool_name=tool_name,
-        repo_source=source,
-        command_count=len(tree),
-        doc_file_count=len(doc_files),
+    return _result(
+        tool,
+        tree=tree,
+        doc_files=doc_files,
         context_path=context_file,
         prompt_path=prompt_save_file,
         markdown_path=md_file,
         roff_path=actual_roff_path,
+        installed_path=installed_path,
+        markdown_content=markdown_content,
+    )
+
+
+def _crawl_help(tool: ResolvedTool) -> dict[str, str]:
+    """Crawled command tree, empty when the binary's `--help` yielded nothing usable."""
+    logger.info("Extracting CLI help and subcommands", tool=tool.tool_name)
+    try:
+        return find_subcommands([tool.executable], config=tool.config)
+    except CrawlerError as error:
+        # Repository documentation can still be enough to synthesize a page.
+        logger.warning(
+            "CLI help crawl failed; continuing with repository docs", error=str(error)
+        )
+        return {}
+
+
+def _extract_docs(tool: ResolvedTool) -> tuple[list[DocFile], bool]:
+    """Documentation files and whether they came from a version-matched tag."""
+    logger.info("Discovering source and extracting documentation", tool=tool.tool_name)
+    source = tool.documentation_source
+    if source is None:
+        return [], False
+    return fetch_and_extract_docs(
+        source,
+        cache_dir=tool.cache_dir,
+        max_total_chars=tool.config.max_total_doc_chars,
+        version=tool.installed_version,
+        config=tool.config,
+    )
+
+
+def _report_material(
+    tool: ResolvedTool, *, tree: dict[str, str], doc_files: list[DocFile], matched: bool
+) -> None:
+    """Report what synthesis will run on, refusing when neither source yielded material."""
+    if not tree and not doc_files:
+        raise GenerationError(
+            f"Not enough source material for '{tool.tool_name}': no usable --help "
+            "output or repository documentation was found."
+        )
+
+    source = tool.documentation_source
+    logger.warning(
+        "Synthesis source material found",
+        tool=tool.tool_name,
+        commands=len(tree),
+        subcommands=max(len(tree) - 1, 0),
+        repository=source.target if source is not None else None,
+        repository_docs=len(doc_files),
+        repository_docs_version_matched=matched,
+    )
+    if len(tree) == 1 and not doc_files:
+        logger.warning(
+            "Limited source material: synthesizing from root --help only",
+            tool=tool.tool_name,
+        )
+
+
+def _recorded_version(tool: ResolvedTool, *, matched: bool) -> str | None:
+    """Version the manifest may claim for a synthesized page (ADR-0019)."""
+    if tool.installation is not None:
+        # `matched` -- not `installed_version is not None` -- is the recorded
+        # fact (ADR-0019): a page built from default-branch docs must record
+        # no version even though the binary has one.
+        return tool.installed_version if matched else None
+    # ADR-0020: no provider claims this binary, so there is no `Installation`
+    # to match a doc tag against -- `installed_version` is None and `matched`
+    # is always False here. Recording the binary's own `--version` output is
+    # still consistent with ADR-0019 rather than an exception to it: a
+    # help-only page documents exactly the binary that was crawled, so that
+    # binary's own version report is matched evidence, more directly than a
+    # tag match is.
+    return get_version([tool.executable], config=tool.config)
+
+
+def _write_intermediate(path: Path, content: str, event: str) -> Path:
+    path.write_text(content, encoding="utf-8")
+    logger.info(event, path=str(path))
+    return path
+
+
+def _result(
+    tool: ResolvedTool,
+    *,
+    tree: dict[str, str],
+    doc_files: list[DocFile],
+    context_path: Path | None,
+    prompt_path: Path | None,
+    markdown_path: Path,
+    roff_path: Path | None,
+    installed_path: Path | None,
+    markdown_content: str,
+) -> PipelineResult:
+    return PipelineResult(
+        tool_name=tool.tool_name,
+        repo_source=tool.documentation_source,
+        command_count=len(tree),
+        doc_file_count=len(doc_files),
+        context_path=context_path,
+        prompt_path=prompt_path,
+        markdown_path=markdown_path,
+        roff_path=roff_path,
         installed_path=installed_path,
         markdown_content=markdown_content,
     )

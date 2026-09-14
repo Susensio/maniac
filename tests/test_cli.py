@@ -13,6 +13,7 @@ from maniac.cli import _render_eval_table, _repo_cell, app
 from maniac.config import Config
 from maniac.installer import UninstallResult
 from maniac.models import DocFile, EvaluationResult, RepoSource
+from maniac.orchestration.context import ResolvedTool
 
 runner = CliRunner()
 
@@ -206,15 +207,8 @@ def test_cli_install_dry_run(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) ->
         lambda cmd, **kwargs: {"> tool --help": "Usage: tool"},
     )
     monkeypatch.setattr(
-        "maniac.orchestration.pipeline.discover_repo",
-        lambda name, **kwargs: RepoSource(name=name, target="org/tool", is_local=False),
-    )
-    monkeypatch.setattr(
-        "maniac.orchestration.pipeline.fetch_and_extract_docs",
-        lambda source, cache_dir, **kwargs: (
-            [DocFile(rel_path="README.md", content="# Tool")],
-            False,
-        ),
+        "maniac.orchestration.context.resolution.find_installation",
+        lambda name, bin_dir=None: None,
     )
 
     result = runner.invoke(
@@ -276,7 +270,7 @@ def test_cli_install_reuses_config_for_existing_destination(
         lambda tool, bin_dir=None: Path(f"/bin/{tool}"),
     )
     monkeypatch.setattr(
-        "maniac.orchestration.install.resolution.find_installation",
+        "maniac.orchestration.context.resolution.find_installation",
         lambda tool, bin_dir=None: (Provider(), installation),
     )
     monkeypatch.setattr("maniac.manifest.Config", TrackingConfig)
@@ -302,22 +296,24 @@ def test_cli_install_always_installs(
     )
     observed: dict[str, object] = {}
 
-    def _run_pipeline(tool_name: str, **kwargs: object) -> PipelineResult:
+    def _synthesize(tool: ResolvedTool, **kwargs: object) -> PipelineResult:
         observed["install"] = kwargs["install"]
         return PipelineResult(
-            tool_name=tool_name,
-            repo_source=RepoSource(name=tool_name, target="org/repo", is_local=False),
+            tool_name=tool.tool_name,
+            repo_source=RepoSource(
+                name=tool.tool_name, target="org/repo", is_local=False
+            ),
             command_count=1,
             doc_file_count=1,
             context_path=None,
             prompt_path=None,
-            markdown_path=tmp_path / f"{tool_name}.1.md",
+            markdown_path=tmp_path / f"{tool.tool_name}.1.md",
             roff_path=None,
             installed_path=None,
             markdown_content="# doc",
         )
 
-    monkeypatch.setattr("maniac.orchestration.pipeline.run_pipeline", _run_pipeline)
+    monkeypatch.setattr("maniac.orchestration.pipeline.synthesize", _synthesize)
 
     res = runner.invoke(app, ["install", "mytool"])
     assert res.exit_code == 0
@@ -336,11 +332,11 @@ def test_cli_install_zero_tools_exits_quietly(
     """`$(maniac status)` can legitimately expand to nothing."""
     called = False
 
-    def _run_pipeline(*args: object, **kwargs: object) -> None:
+    def _synthesize(*args: object, **kwargs: object) -> None:
         nonlocal called
         called = True
 
-    monkeypatch.setattr("maniac.orchestration.pipeline.run_pipeline", _run_pipeline)
+    monkeypatch.setattr("maniac.orchestration.pipeline.synthesize", _synthesize)
 
     res = runner.invoke(app, ["install"])
     assert res.exit_code == 0
@@ -509,7 +505,7 @@ def test_cli_install_multiple_all_fail_exits_nonzero(
         "maniac.sources.loginpath.which_login",
         lambda name: Path(f"/bin/{name}"),
     )
-    monkeypatch.setattr("maniac.orchestration.pipeline.run_pipeline", _raise)
+    monkeypatch.setattr("maniac.orchestration.pipeline.synthesize", _raise)
     res = runner.invoke(app, ["install", "toolone", "tooltwo"])
     assert res.exit_code == 1
     assert "Install failed for toolone: boom" in res.output
@@ -529,23 +525,25 @@ def test_cli_install_multiple_partial_success_exits_nonzero(
         lambda name: Path(f"/bin/{name}"),
     )
 
-    def _run_pipeline(tool_name: str, **kwargs: object) -> PipelineResult:
-        if tool_name == "badtool":
+    def _synthesize(tool: ResolvedTool, **kwargs: object) -> PipelineResult:
+        if tool.tool_name == "badtool":
             raise ManiacError("boom")
         return PipelineResult(
-            tool_name=tool_name,
-            repo_source=RepoSource(name=tool_name, target="org/repo", is_local=False),
+            tool_name=tool.tool_name,
+            repo_source=RepoSource(
+                name=tool.tool_name, target="org/repo", is_local=False
+            ),
             command_count=1,
             doc_file_count=1,
             context_path=None,
             prompt_path=None,
-            markdown_path=tmp_path / f"{tool_name}.1.md",
+            markdown_path=tmp_path / f"{tool.tool_name}.1.md",
             roff_path=None,
             installed_path=None,
             markdown_content="# doc",
         )
 
-    monkeypatch.setattr("maniac.orchestration.pipeline.run_pipeline", _run_pipeline)
+    monkeypatch.setattr("maniac.orchestration.pipeline.synthesize", _synthesize)
     res = runner.invoke(app, ["install", "goodtool", "badtool"])
     assert res.exit_code == 1
     assert "1/2 tool(s) failed" in res.output

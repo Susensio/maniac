@@ -1,15 +1,18 @@
 """Tests for `run_install` (ADR-0016): tier selection, `--generate`/`--no-generate`."""
 
+from collections import Counter
 from pathlib import Path
 
 import pytest
 
 from maniac import manifest
 from maniac.config import Config
-from maniac.models import Installation, RepoSource
+from maniac.models import DocFile, Installation, RepoSource
+from maniac.orchestration.context import ResolvedTool
 from maniac.orchestration.install import InstallRefused, Tier, run_install
 from maniac.sources import loginpath
-from maniac.sources.providers.base import SourceResolver
+from maniac.sources.providers.base import Provider, SourceResolver
+from maniac.sources.providers.registry import registry
 
 
 @pytest.fixture(autouse=True)
@@ -68,7 +71,7 @@ def test_run_install_uses_the_install_root_page_first(
     provider = _FakeProvider(local_docs=[page])
     inst = _installation()
     monkeypatch.setattr(
-        "maniac.orchestration.install.resolution.find_installation",
+        "maniac.orchestration.context.resolution.find_installation",
         lambda name, bin_dir=None: (provider, inst),
     )
     monkeypatch.setattr(
@@ -100,7 +103,7 @@ def test_run_install_links_a_verified_install_root_page_directly(
         manifest_path=tmp_path / "state" / "installed.json",
     )
     monkeypatch.setattr(
-        "maniac.orchestration.install.resolution.find_installation",
+        "maniac.orchestration.context.resolution.find_installation",
         lambda name, bin_dir=None: (provider, inst),
     )
 
@@ -134,7 +137,7 @@ def test_run_install_materializes_an_install_root_page_resolving_outside_its_roo
         manifest_path=tmp_path / "state" / "installed.json",
     )
     monkeypatch.setattr(
-        "maniac.orchestration.install.resolution.find_installation",
+        "maniac.orchestration.context.resolution.find_installation",
         lambda name, bin_dir=None: (provider, inst),
     )
 
@@ -154,7 +157,7 @@ def test_run_install_falls_through_to_repository_when_no_install_root_page(
     provider = _FakeProvider(local_docs=[], source=source)
     inst = _installation()
     monkeypatch.setattr(
-        "maniac.orchestration.install.resolution.find_installation",
+        "maniac.orchestration.context.resolution.find_installation",
         lambda name, bin_dir=None: (provider, inst),
     )
     page = tmp_path / "tool.1"
@@ -185,7 +188,7 @@ def test_run_install_uses_the_exact_tmux_documentation_repository(
     page = tmp_path / "tmux.1"
     page.write_text(".TH TMUX 1\n", encoding="utf-8")
     monkeypatch.setattr(
-        "maniac.orchestration.install.resolution.find_installation",
+        "maniac.orchestration.context.resolution.find_installation",
         lambda name, bin_dir=None: (provider, inst),
     )
     observed: list[RepoSource] = []
@@ -214,7 +217,7 @@ def test_run_install_tier2_rejects_a_page_naming_a_different_binary(
     provider = _FakeProvider(local_docs=[], source=source)
     inst = _installation()
     monkeypatch.setattr(
-        "maniac.orchestration.install.resolution.find_installation",
+        "maniac.orchestration.context.resolution.find_installation",
         lambda name, bin_dir=None: (provider, inst),
     )
     page = tmp_path / "tool.1"
@@ -226,21 +229,21 @@ def test_run_install_tier2_rejects_a_page_naming_a_different_binary(
 
     from maniac.models import PipelineResult
 
-    def _run_pipeline(tool_name: str, **kwargs: object) -> PipelineResult:
+    def _synthesize(tool: ResolvedTool, **kwargs: object) -> PipelineResult:
         return PipelineResult(
-            tool_name=tool_name,
+            tool_name=tool.tool_name,
             repo_source=None,
             command_count=1,
             doc_file_count=0,
             context_path=None,
             prompt_path=None,
-            markdown_path=tmp_path / f"{tool_name}.1.md",
+            markdown_path=tmp_path / f"{tool.tool_name}.1.md",
             roff_path=None,
             installed_path=None,
             markdown_content="# doc",
         )
 
-    monkeypatch.setattr("maniac.orchestration.pipeline.run_pipeline", _run_pipeline)
+    monkeypatch.setattr("maniac.orchestration.pipeline.synthesize", _synthesize)
 
     outcome = run_install("tool")
 
@@ -253,19 +256,21 @@ def test_run_install_reports_repository_docs_only_synthesis(
     from maniac.models import PipelineResult
 
     monkeypatch.setattr(
-        "maniac.orchestration.install.resolution.find_installation",
+        "maniac.orchestration.context.resolution.find_installation",
         lambda name, bin_dir=None: None,
     )
     monkeypatch.setattr(
-        "maniac.orchestration.pipeline.run_pipeline",
-        lambda tool_name, **kwargs: PipelineResult(
-            tool_name=tool_name,
-            repo_source=RepoSource(name=tool_name, target="owner/tool", is_local=False),
+        "maniac.orchestration.pipeline.synthesize",
+        lambda tool, **kwargs: PipelineResult(
+            tool_name=tool.tool_name,
+            repo_source=RepoSource(
+                name=tool.tool_name, target="owner/tool", is_local=False
+            ),
             command_count=0,
             doc_file_count=1,
             context_path=None,
             prompt_path=None,
-            markdown_path=tmp_path / f"{tool_name}.1.md",
+            markdown_path=tmp_path / f"{tool.tool_name}.1.md",
             roff_path=None,
             installed_path=None,
             markdown_content="# doc",
@@ -285,7 +290,7 @@ def test_run_install_tier2_skipped_without_an_installed_version(
     provider = _FakeProvider(local_docs=[], source=source)
     inst = _installation(version=None)
     monkeypatch.setattr(
-        "maniac.orchestration.install.resolution.find_installation",
+        "maniac.orchestration.context.resolution.find_installation",
         lambda name, bin_dir=None: (provider, inst),
     )
     called = False
@@ -327,7 +332,7 @@ def test_run_install_installs_all_anchored_release_manpages(
     provider = _FakeProvider(local_docs=[], source=source)
     inst = _installation(version="0.23.5", binary="eza")
     monkeypatch.setattr(
-        "maniac.orchestration.install.resolution.find_installation",
+        "maniac.orchestration.context.resolution.find_installation",
         lambda name, bin_dir=None: (provider, inst),
     )
     monkeypatch.setattr(
@@ -355,41 +360,47 @@ def test_run_install_installs_all_anchored_release_manpages(
 def test_generate_flag_skips_tiers_1_and_2(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    """`--generate` still resolves the tool -- tier 3 needs those facts too --
+    but consults neither tier's documentation source.
+    """
     page = tmp_path / "tool.1"
     page.write_text(".TH TOOL 1\n", encoding="utf-8")
-    provider = _FakeProvider(local_docs=[page])
-    inst = _installation()
 
-    def _fail_if_called(*args: object, **kwargs: object) -> None:
+    def _fail_if_called(*args: object, **kwargs: object) -> list[Path]:
         raise AssertionError("--generate must not consult tiers 1-2")
 
+    provider = _FakeProvider(local_docs=[page])
+    monkeypatch.setattr(provider, "local_docs", _fail_if_called)
     monkeypatch.setattr(
-        "maniac.orchestration.install.resolution.find_installation", _fail_if_called
+        "maniac.orchestration.install.discover_repo_manpages", _fail_if_called
+    )
+    monkeypatch.setattr(
+        "maniac.orchestration.context.resolution.find_installation",
+        lambda name, bin_dir=None: (provider, _installation()),
     )
 
     from maniac.models import PipelineResult
 
-    def _run_pipeline(tool_name: str, **kwargs: object) -> PipelineResult:
+    def _synthesize(tool: ResolvedTool, **kwargs: object) -> PipelineResult:
         return PipelineResult(
-            tool_name=tool_name,
+            tool_name=tool.tool_name,
             repo_source=None,
             command_count=1,
             doc_file_count=2,
             context_path=None,
             prompt_path=None,
-            markdown_path=tmp_path / f"{tool_name}.1.md",
+            markdown_path=tmp_path / f"{tool.tool_name}.1.md",
             roff_path=None,
             installed_path=None,
             markdown_content="# doc",
         )
 
-    monkeypatch.setattr("maniac.orchestration.pipeline.run_pipeline", _run_pipeline)
+    monkeypatch.setattr("maniac.orchestration.pipeline.synthesize", _synthesize)
 
     outcome = run_install("tool", generate_only=True)
 
     assert outcome.tier is Tier.SYNTHESIS
     assert "repo docs" in outcome.detail
-    del provider, inst  # never consulted; kept only to show intent
 
 
 def test_no_generate_never_reaches_the_llm_when_no_tier_1_or_2_page_exists(
@@ -408,7 +419,7 @@ def test_no_generate_never_reaches_the_llm_when_no_tier_1_or_2_page_exists(
 
     monkeypatch.setattr("maniac.generation.llm.run_llm_synthesis", _explode)
     monkeypatch.setattr(
-        "maniac.orchestration.install.resolution.find_installation",
+        "maniac.orchestration.context.resolution.find_installation",
         lambda name, bin_dir=None: None,
     )
 
@@ -432,7 +443,7 @@ def test_no_generate_installs_a_tier_1_page_with_no_llm_call(
     provider = _FakeProvider(local_docs=[page])
     inst = _installation()
     monkeypatch.setattr(
-        "maniac.orchestration.install.resolution.find_installation",
+        "maniac.orchestration.context.resolution.find_installation",
         lambda name, bin_dir=None: (provider, inst),
     )
     monkeypatch.setattr(
@@ -454,7 +465,7 @@ def test_run_install_refuses_a_binary_the_login_path_cannot_reach(
     """
     monkeypatch.setattr(loginpath, "which_login", lambda name: None)
     monkeypatch.setattr(
-        "maniac.orchestration.install.resolution.find_installation",
+        "maniac.orchestration.context.resolution.find_installation",
         lambda name, bin_dir=None: None,
     )
 
@@ -479,7 +490,7 @@ def test_run_install_refuses_under_generate_too(
     """
     monkeypatch.setattr(loginpath, "which_login", lambda name: None)
     monkeypatch.setattr(
-        "maniac.orchestration.install.resolution.find_installation",
+        "maniac.orchestration.context.resolution.find_installation",
         lambda name, bin_dir=None: None,
     )
 
@@ -498,7 +509,7 @@ def test_run_install_refusal_runs_no_tier(
     provider = _FakeProvider(local_docs=[page])
     inst = _installation()
     monkeypatch.setattr(
-        "maniac.orchestration.install.resolution.find_installation",
+        "maniac.orchestration.context.resolution.find_installation",
         lambda name, bin_dir=None: (provider, inst),
     )
     monkeypatch.setattr(
@@ -528,7 +539,7 @@ def test_run_install_explicit_bin_dir_bypasses_the_refusal(
     provider = _FakeProvider(local_docs=[page])
     inst = _installation()
     monkeypatch.setattr(
-        "maniac.orchestration.install.resolution.find_installation",
+        "maniac.orchestration.context.resolution.find_installation",
         lambda name, bin_dir=None: (provider, inst),
     )
     monkeypatch.setattr(
@@ -539,3 +550,71 @@ def test_run_install_explicit_bin_dir_bypasses_the_refusal(
     outcome = run_install("tool", bin_dir=bin_dir)
 
     assert outcome.tier is Tier.INSTALL_ROOT
+
+
+def test_install_reaching_tier_3_resolves_the_tool_once_not_twice(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The duplicated work one `ResolvedTool` exists to remove.
+
+    `run_install` resolved the installation for tiers 1-2, and tier 3 then
+    resolved it again -- and the repository with it -- through
+    `discover_repo`. One context now carries both facts through all three
+    tiers, so each resolution runs exactly once and `discover_repo` is never
+    reached.
+    """
+    calls: Counter[str] = Counter()
+    source = RepoSource(name="tool", target="owner/tool", is_local=False)
+    provider = _FakeProvider(local_docs=[], source=source)
+    inst = _installation()
+
+    def _find_installation(
+        name: str, bin_dir: object = None
+    ) -> tuple[_FakeProvider, Installation]:
+        calls["find_installation"] += 1
+        return provider, inst
+
+    resolve_source = registry.resolve_source
+
+    def _resolve_source(
+        installation: Installation, *, config: Config, provider: Provider | None = None
+    ) -> RepoSource | None:
+        calls["resolve_source"] += 1
+        return resolve_source(installation, config=config, provider=provider)
+
+    def _discover_repo(*args: object, **kwargs: object) -> None:
+        raise AssertionError("tier 3 resolved the repository a second time")
+
+    monkeypatch.setattr(
+        "maniac.orchestration.context.resolution.find_installation", _find_installation
+    )
+    monkeypatch.setattr(registry, "resolve_source", _resolve_source)
+    monkeypatch.setattr("maniac.sources.resolution.discover_repo", _discover_repo)
+    # Tier 1 finds no page and tier 2 no repository page, so the install
+    # falls through to a real (dry-run) tier-3 synthesis.
+    monkeypatch.setattr(
+        "maniac.orchestration.install.discover_repo_manpages",
+        lambda *args, **kwargs: [],
+    )
+    monkeypatch.setattr(
+        "maniac.orchestration.pipeline.find_subcommands",
+        lambda cmd, **kwargs: {"> tool --help": "Usage: tool"},
+    )
+    monkeypatch.setattr(
+        "maniac.orchestration.pipeline.fetch_and_extract_docs",
+        lambda source, cache_dir, **kwargs: (
+            [DocFile(rel_path="README.md", content="# Tool")],
+            True,
+        ),
+    )
+    cfg = Config(
+        cache_dir=tmp_path / "cache",
+        output_dir=tmp_path / "out",
+        intermediate_dir=tmp_path / "intermediate",
+        manifest_path=tmp_path / "state" / "installed.json",
+    )
+
+    outcome = run_install("tool", config=cfg, dry_run=True)
+
+    assert outcome.tier is Tier.SYNTHESIS
+    assert calls == Counter({"find_installation": 1, "resolve_source": 1})

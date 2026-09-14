@@ -2,11 +2,15 @@
 
 Tier order, cheapest and most authoritative first: the install root (tier
 1), the upstream repository with the version matched (tier 2), then LLM
-synthesis (tier 3, `run_pipeline`). `--generate` restricts selection to
-tier 3; `--no-generate` restricts it to tiers 1-2 and must never reach
-`run_pipeline` -- tested by `tests/test_orchestration_install.py` failing a
+synthesis (tier 3, `synthesize`). `--generate` restricts selection to tier
+3; `--no-generate` restricts it to tiers 1-2 and must never reach
+`synthesize` -- tested by `tests/test_orchestration_install.py` failing a
 monkeypatched LLM call reachable through it, not only by asserting the
 happy path.
+
+One `ResolvedTool` is resolved before the tiers and carries the binary, its
+installation, provider, installed version and documentation source through
+all three, so tier 3 never re-resolves what tiers 1-2 already found.
 """
 
 from dataclasses import dataclass
@@ -18,17 +22,15 @@ from ..installer import install_manpage
 from ..logging import logger
 from ..manifest import Tier
 from ..models import Installation, PipelineResult
-from ..sources import resolution
 from ..sources.docs import discover_repo_manpages, discovered_manpage_uri
-from ..sources.documentation import documentation_source
 from ..sources.manpages import (
     manpage_documents,
     read_manpage_source,
     select_primary_manpage,
 )
 from ..sources.pathcache import resolve_bin_path, resolve_cached
-from ..sources.providers.base import DirectPageProvider, Provider
-from ..sources.providers.registry import registry
+from ..sources.providers.base import DirectPageProvider
+from .context import ResolvedTool, resolve_tool
 
 __all__ = ["InstallOutcome", "InstallRefused", "Tier", "run_install"]
 
@@ -58,10 +60,8 @@ def run_install(
     *,
     cache_dir: str | Path | None = None,
     output_dir: str | Path | None = None,
-    intermediate_dir: str | Path | None = None,
     prompt_file: str | Path | None = None,
     model: str | None = None,
-    reasoning_effort: str | None = None,
     generate_only: bool = False,
     no_generate: bool = False,
     force: bool = False,
@@ -73,7 +73,7 @@ def run_install(
 
     `generate_only` (`--generate`) restricts selection to tier 3, skipping
     tiers 1-2 outright. `no_generate` (`--no-generate`) restricts it to
-    tiers 1-2 -- `run_pipeline`, the only path that can call an LLM, is
+    tiers 1-2 -- `synthesize`, the only path that can call an LLM, is
     imported nowhere in that branch, not merely left uncalled.
 
     Before any tier runs (ADR-0020): a binary the login `$PATH` cannot reach
@@ -83,7 +83,6 @@ def run_install(
     should record one for it.
     """
     cfg = config or Config()
-    cache_dir_path = Path(cache_dir) if cache_dir is not None else cfg.cache_dir
 
     # Ahead of the `generate_only` branch, not inside it: the refusal asks
     # whether MANIAC should serve this binary at all, which is prior to
@@ -98,23 +97,14 @@ def run_install(
             "where the login shell can reach it first (ADR-0020)."
         )
 
-    if not generate_only:
-        found = resolution.find_installation(tool_name, bin_dir=bin_dir)
-        if found is not None:
-            provider, inst = found
-            outcome = _try_install_root(provider, inst, cfg=cfg, force=force)
-            if outcome is not None:
-                return outcome
-            outcome = _try_repository(
-                provider,
-                inst,
-                cache_dir_path=cache_dir_path,
-                cfg=cfg,
-                force=force,
-            )
-            if outcome is not None:
-                return outcome
+    tool = resolve_tool(tool_name, config=cfg, cache_dir=cache_dir, bin_dir=bin_dir)
 
+    if not generate_only:
+        outcome = _try_install_root(tool, force=force) or _try_repository(
+            tool, force=force
+        )
+        if outcome is not None:
+            return outcome
         if no_generate:
             return InstallOutcome(
                 tool=tool_name,
@@ -125,21 +115,16 @@ def run_install(
                 ),
             )
 
-    from .pipeline import run_pipeline  # deferred: tier 3 only, never on --no-generate
+    from .pipeline import synthesize  # deferred: tier 3 only, never on --no-generate
 
-    pipeline_result = run_pipeline(
-        tool_name,
-        cache_dir=cache_dir,
+    pipeline_result = synthesize(
+        tool,
         output_dir=output_dir,
-        intermediate_dir=intermediate_dir,
         prompt_file=prompt_file,
         model=model,
-        reasoning_effort=reasoning_effort,
         install=True,
         force=force,
         dry_run=dry_run,
-        config=cfg,
-        bin_dir=bin_dir,
     )
     if pipeline_result.command_count and pipeline_result.doc_file_count:
         detail = "synthesized from --help + repo docs"
@@ -157,10 +142,11 @@ def run_install(
     )
 
 
-def _try_install_root(
-    provider: Provider, inst: Installation, *, cfg: Config, force: bool
-) -> InstallOutcome | None:
+def _try_install_root(tool: ResolvedTool, *, force: bool) -> InstallOutcome | None:
     """Tier 1: a page already inside the install root, the installed version by construction."""
+    provider, inst = tool.provider, tool.installation
+    if provider is None or inst is None:
+        return None
     page = select_primary_manpage(provider.local_docs(inst), inst.binary)
     if page is None:
         return None
@@ -180,7 +166,7 @@ def _try_install_root(
         version=inst.version,
         durable_source=provider_owned,
         provider_target=provider_owned,
-        config=cfg,
+        config=tool.config,
     )
     detail = "upstream manpage from install root"
     if inst.version:
@@ -204,14 +190,7 @@ def _is_direct_provider_page(page: Path, inst: Installation) -> bool:
     return True
 
 
-def _try_repository(
-    provider: Provider,
-    inst: Installation,
-    *,
-    cache_dir_path: Path,
-    cfg: Config,
-    force: bool,
-) -> InstallOutcome | None:
+def _try_repository(tool: ResolvedTool, *, force: bool) -> InstallOutcome | None:
     """Tier 2: a hand-authored page fetched from the resolved repository at the matching tag.
 
     Refuses rather than guesses in two cases ADR-0016 calls out: no
@@ -221,15 +200,16 @@ def _try_repository(
     A page that clears both is still checked against the binary it claims
     to document (`manpage_documents`) before being trusted verbatim.
     """
-    if inst.version is None:
+    inst = tool.installation
+    if inst is None or inst.version is None:
         return None
-    source = registry.resolve_source(inst, config=cfg, provider=provider)
+    source = tool.documentation_source
     if source is None:
         return None
-    source = documentation_source(source, cfg.documentation_repository_overrides)
+    cfg = tool.config
 
     pages = discover_repo_manpages(
-        source, inst.binary, cache_dir=cache_dir_path, config=cfg, version=inst.version
+        source, inst.binary, cache_dir=tool.cache_dir, config=cfg, version=inst.version
     )
     if not pages:
         return None

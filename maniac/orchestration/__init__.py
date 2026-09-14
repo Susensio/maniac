@@ -1,5 +1,10 @@
-"""Pipeline orchestration package."""
+"""Install orchestration: one resolved tool, ADR-0016's tiers, tier-3 synthesis.
 
-from .pipeline import run_pipeline
+`pipeline` stays out of this namespace deliberately: importing it pulls the
+LLM stack in, and `run_install` must be able to promise `--no-generate`
+never reaches one.
+"""
 
-__all__ = ["run_pipeline"]
+from .context import ResolvedTool, resolve_tool
+
+__all__ = ["ResolvedTool", "resolve_tool"]
