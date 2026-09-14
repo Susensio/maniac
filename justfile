@@ -30,6 +30,11 @@ fix:
 # Run all verification checks (linter, formatting, typing, tests)
 check: lint format-check typecheck test
 
+# Report maintainability findings; existing findings are advisory.
+audit:
+    uv run ruff check . --select C901,PLR0911,PLR0912,PLR0913,PLR0915 --exit-zero
+    uv run complexipy . --failed --suggest-refactors --ignore-complexity
+
 # Run the model x tool benchmark harness. Calls a real LLM -- costs money per run, not part of `check`.
 bench *args:
     uv run python -m maniac.bench {{ args }}
