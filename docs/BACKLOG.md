@@ -80,30 +80,9 @@ These are findings the work surfaced and deliberately did not take; they are fir
 
 ### Architecture review follow-up
 
-Waves A and B are landed (ADR-0033 to ADR-0038). Two entries remain, and their order
-matters: the candidate service is specified to carry a provenance URI, which is exactly
-what `RepoSource`'s correlated strings hold today. Doing `RepoSource` first lets the
-candidate service consume a validated type; doing it second means editing the same call
-sites twice.
-
-- Replace correlated `RepoSource` string fields with validated local and remote source
-  variants carrying canonical identity and clone data.
-  One fact is currently spelled four ways in `maniac/models.py`: `target` is a `str` whose
-  docstring lists four incompatible shapes (`"owner/repo"`, `"LOCAL:/path"`, `"https://..."`,
-  `"backend:identifier"`), `is_local` is a bool, `local_path` is an optional `Path`, and a
-  fifth meaning -- unresolved -- is encoded as `target == name` and read that way in
-  `cli/render.py`. Nothing prevents a combination that cannot exist, such as `is_local` true
-  with a `https://` target and no `local_path`.
-  `clone_url` then re-parses `target` at render time to recover what the constructor knew,
-  including the `aqua:` special case where the backend identifier happens to be an
-  `owner/repo` pair and every other backend where guessing a GitHub path would name the
-  wrong repository.
-  Split into variants so an illegal combination cannot be constructed and `clone_url`
-  becomes a property of the variant rather than a parse. Keep the `aqua:` exception and the
-  refusal to guess for other backends; both are deliberate and ADR-0027 depends on the
-  second.
-  Expect callers in `cli/render.py`, `cli/listing.py`, `listing/upstream.py`,
-  `sources/providers/*`, `sources/discovery.py` and `manifest.py`.
+Waves A and B are landed (ADR-0033 to ADR-0038).
+Wave C's validated repository-source variants landed first as ADR-0039, so the remaining
+candidate service can consume that type without editing the same call sites twice.
 
 - Centralize verified source selection in one candidate service carrying tier, pages,
   provenance URI, version match, and target ownership.

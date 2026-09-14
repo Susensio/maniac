@@ -2,8 +2,8 @@
 
 ## Architecture review follow-up
 
-Waves A and B of the 2026-09-14 architecture review are landed and verified. Wave C has
-not started.
+Waves A and B of the 2026-09-14 architecture review are landed and verified. Wave C is in
+progress.
 
 ### Wave A -- landed
 
@@ -87,14 +87,23 @@ Grouping the default view made a known label defect the common case rather than 
 a collapsed row's Source link points only at the representative's page. Both are in
 `docs/BACKLOG.md` under "Next round".
 
-### Wave C -- not started
+### Wave C -- in progress
 
-Two entries remain under "Architecture review follow-up": one verified-source candidate
-service carrying tier, pages, provenance URI, version match and target ownership; and
-validated local/remote `RepoSource` variants replacing the correlated string fields. The
-docs-facade cleanup in "Next round" is now unblocked, its callers no longer being edited.
+`25fa718` replaced `RepoSource`'s correlated strings with validated local and remote
+variants. ADR-0039.
+The legacy constructor remains as a validated compatibility boundary, but production
+callers consume canonical identity, local path and clone data from the variants.
+Remote construction derives the only permitted clone URL from the identity, preserving the
+`aqua:` exception while refusing to guess for other backend identifiers.
+Verified at 601 tests, `just check` exit 0, plus an independent impact review and a focused
+architecture re-audit of direct construction.
 
-Two ADRs are still unwritten: the listing inventory seam and the resolved-tool context.
+One entry remains under "Architecture review follow-up": the verified-source candidate
+service carrying tier, pages, provenance URI, version match and target ownership.
+The docs-facade cleanup in "Next round" is now unblocked, its callers no longer being
+edited.
+
+The listing inventory seam and resolved-tool context are recorded in ADR-0037 and ADR-0038.
 
 ### Housekeeping
 
