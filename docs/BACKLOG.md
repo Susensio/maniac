@@ -68,19 +68,42 @@ These are findings the work surfaced and deliberately did not take; they are fir
 
 ### Architecture review follow-up
 
-- Centralize verified source selection in one candidate service carrying tier, pages, provenance URI, version match, and target ownership.
-  Install, listing, and manifest reconciliation must consume that result rather than each reimplementing root containment and repository eligibility.
-- Defer upstream identity resolution in `list` until local evidence leaves it necessary, as ADR-0025 requires.
-  Reachable and vendor-page rows should not pay provider or registry resolution merely to render a row.
-- Thread one resolved-tool context through all install tiers, including tier 3, rather than resolving the installation and repository again inside `run_pipeline`.
-  Carry the selected binary, installation, provider, installed version, and canonical documentation source from the first resolution through authoritative installation and synthesis.
-  Tier 3 must be able to consume those facts directly when `install` already found them, while retaining one explicit entry path for direct synthesis.
-  This removes the duplicate `discover_repo()` and `find_installation()` work in `run_pipeline`, keeps version-match evidence local to one flow, and shrinks its current configuration-heavy interface.
-- Separate listing inventory/classification and probe scheduling from Rich rendering and Typer command wiring.
-  Keep a non-CLI inventory service that owns candidate enumeration, local classification, bounded upstream probes, deduplication, and ordered row snapshots.
-  Keep Rich rendering and the Typer command as thin adapters over that inventory interface, so progress callbacks and terminal refresh timing cannot steer classification facts.
-  Preserve ADR-0024's stable streaming rows and ADR-0025's local-first upstream policy as contracts tested at the inventory seam; terminal tests should cover only rendering behavior.
-- Replace correlated `RepoSource` string fields with validated local and remote source variants carrying canonical identity and clone data.
+Waves A and B are landed (ADR-0033 to ADR-0038). Two entries remain, and their order
+matters: the candidate service is specified to carry a provenance URI, which is exactly
+what `RepoSource`'s correlated strings hold today. Doing `RepoSource` first lets the
+candidate service consume a validated type; doing it second means editing the same call
+sites twice.
+
+- Replace correlated `RepoSource` string fields with validated local and remote source
+  variants carrying canonical identity and clone data.
+  One fact is currently spelled four ways in `maniac/models.py`: `target` is a `str` whose
+  docstring lists four incompatible shapes (`"owner/repo"`, `"LOCAL:/path"`, `"https://..."`,
+  `"backend:identifier"`), `is_local` is a bool, `local_path` is an optional `Path`, and a
+  fifth meaning -- unresolved -- is encoded as `target == name` and read that way in
+  `cli/render.py`. Nothing prevents a combination that cannot exist, such as `is_local` true
+  with a `https://` target and no `local_path`.
+  `clone_url` then re-parses `target` at render time to recover what the constructor knew,
+  including the `aqua:` special case where the backend identifier happens to be an
+  `owner/repo` pair and every other backend where guessing a GitHub path would name the
+  wrong repository.
+  Split into variants so an illegal combination cannot be constructed and `clone_url`
+  becomes a property of the variant rather than a parse. Keep the `aqua:` exception and the
+  refusal to guess for other backends; both are deliberate and ADR-0027 depends on the
+  second.
+  Expect callers in `cli/render.py`, `cli/listing.py`, `listing/upstream.py`,
+  `sources/providers/*`, `sources/discovery.py` and `manifest.py`.
+
+- Centralize verified source selection in one candidate service carrying tier, pages,
+  provenance URI, version match, and target ownership.
+  Install, listing, and manifest reconciliation must consume that result rather than each
+  reimplementing root containment and repository eligibility.
+  The three consumers are `orchestration/install.py` (`_try_install_root`, `_try_repository`),
+  the listing classification and upstream modules, and `lifecycle.py`'s reconciliation.
+  Root containment is the rule ADR-0031 depends on -- a page is provider-owned when it
+  resolves beneath the inspected install root -- and it is currently re-derived in each.
+  This is the largest remaining entry: it spans three subsystems that Waves A and B have
+  just restructured, so it should be scoped on its own rather than batched with anything
+  else. Waves A and B each cost roughly 600k subagent tokens; this is comparable on its own.
 
 ### Maintainability
 
