@@ -8,6 +8,9 @@ import pytest
 from maniac.config import Config
 from maniac.models import RepoSource
 from maniac.sources.providers import mise
+from maniac.sources.providers.base import DirectPageProvider
+from maniac.sources.providers.npm import NpmProvider
+from maniac.sources.providers.registry import registry
 
 
 def _make_mise_install(tmp_path: Path, tool: str, version: str, real_name: str) -> Path:
@@ -73,7 +76,13 @@ def test_detect_rejects_an_install_with_no_version_segment(tmp_path: Path) -> No
     assert mise.MiseProvider().detect(bin_path) is None
 
 
-def test_latest_manpage_target_uses_a_validated_alias(tmp_path: Path) -> None:
+def test_mise_declares_the_direct_page_capability_others_do_not() -> None:
+    """The capability is a type, not a duck-typed attribute lookup at the caller."""
+    assert isinstance(mise.MiseProvider(), DirectPageProvider)
+    assert not isinstance(NpmProvider(), DirectPageProvider)
+
+
+def test_direct_page_target_uses_a_validated_alias(tmp_path: Path) -> None:
     bin_path = _make_mise_install(tmp_path, "tool", "1.0.0", "tool")
     provider = mise.MiseProvider()
     inst = provider.detect(bin_path)
@@ -84,13 +93,11 @@ def test_latest_manpage_target_uses_a_validated_alias(tmp_path: Path) -> None:
     latest = inst.root.parent / "latest"
     latest.symlink_to(inst.root.name)
 
-    assert (
-        provider.latest_manpage_target(inst, page) == latest / "share/man/man1/tool.1"
-    )
+    assert provider.direct_page_target(inst, page) == latest / "share/man/man1/tool.1"
 
 
 @pytest.mark.parametrize("alias_target", [None, "other"])
-def test_latest_manpage_target_falls_back_without_a_matching_alias(
+def test_direct_page_target_falls_back_without_a_matching_alias(
     tmp_path: Path, alias_target: str | None
 ) -> None:
     bin_path = _make_mise_install(tmp_path, "tool", "1.0.0", "tool")
@@ -104,10 +111,10 @@ def test_latest_manpage_target_falls_back_without_a_matching_alias(
         (inst.root.parent / alias_target).mkdir()
         (inst.root.parent / "latest").symlink_to(alias_target)
 
-    assert provider.latest_manpage_target(inst, page) is None
+    assert provider.direct_page_target(inst, page) is None
 
 
-def test_latest_manpage_target_rejects_a_binary_outside_the_alias_root(
+def test_direct_page_target_rejects_a_binary_outside_the_alias_root(
     tmp_path: Path,
 ) -> None:
     bin_path = _make_mise_install(tmp_path, "tool", "1.0.0", "tool")
@@ -123,7 +130,7 @@ def test_latest_manpage_target_rejects_a_binary_outside_the_alias_root(
     outside_binary.touch()
     inst = replace(inst, real_path=outside_binary)
 
-    assert provider.latest_manpage_target(inst, page) is None
+    assert provider.direct_page_target(inst, page) is None
 
 
 def test_resolve_source_wraps_resolve_from_mise(tmp_path: Path, monkeypatch) -> None:
@@ -145,7 +152,7 @@ def test_resolve_source_wraps_resolve_from_mise(tmp_path: Path, monkeypatch) -> 
     monkeypatch.setattr(mise.discovery, "_resolve_from_mise", fake_resolve)
 
     config = Config()
-    source = provider.resolve_source(inst, config=config)
+    source = provider.resolve_source(inst, config=config, sources=registry)
 
     assert source == RepoSource(name="hx", target="helix-editor/helix", is_local=False)
     assert observed == {
@@ -166,7 +173,7 @@ def test_resolve_source_returns_none_when_mise_registry_has_nothing(
 
     monkeypatch.setattr(mise.discovery, "_resolve_from_mise", lambda *a, **k: None)
 
-    assert provider.resolve_source(inst, config=Config()) is None
+    assert provider.resolve_source(inst, config=Config(), sources=registry) is None
 
 
 def test_resolve_source_uses_one_npm_package_when_no_backend_or_registry_source(
@@ -189,7 +196,7 @@ def test_resolve_source_uses_one_npm_package_when_no_backend_or_registry_source(
     inst = mise.MiseProvider().detect(bin_path)
     assert inst is not None
 
-    source = mise.MiseProvider().resolve_source(inst, config=Config())
+    source = mise.MiseProvider().resolve_source(inst, config=Config(), sources=registry)
 
     assert source == RepoSource(
         name="bash-language-server",
@@ -213,7 +220,7 @@ def test_resolve_source_supports_root_node_modules_npm_layout(
     inst = mise.MiseProvider().detect(bin_path)
     assert inst is not None
 
-    source = mise.MiseProvider().resolve_source(inst, config=Config())
+    source = mise.MiseProvider().resolve_source(inst, config=Config(), sources=registry)
 
     assert source == RepoSource(
         name="custom-tool", target="owner/tool-package", is_local=False
@@ -237,7 +244,7 @@ def test_resolve_source_prefers_npm_package_metadata_to_mise_inference(
     inst = mise.MiseProvider().detect(bin_path)
     assert inst is not None
 
-    source = mise.MiseProvider().resolve_source(inst, config=Config())
+    source = mise.MiseProvider().resolve_source(inst, config=Config(), sources=registry)
 
     assert source == RepoSource(
         name="custom-tool", target="package/repository", is_local=False
@@ -260,7 +267,10 @@ def test_resolve_source_refuses_ambiguous_npm_package_layout(
     inst = mise.MiseProvider().detect(bin_path)
     assert inst is not None
 
-    assert mise.MiseProvider().resolve_source(inst, config=Config()) is None
+    assert (
+        mise.MiseProvider().resolve_source(inst, config=Config(), sources=registry)
+        is None
+    )
 
 
 def test_resolve_source_prefers_backend_record_to_npm_layout(
@@ -285,7 +295,7 @@ def test_resolve_source_prefers_backend_record_to_npm_layout(
     inst = mise.MiseProvider().detect(bin_path)
     assert inst is not None
 
-    source = mise.MiseProvider().resolve_source(inst, config=Config())
+    source = mise.MiseProvider().resolve_source(inst, config=Config(), sources=registry)
 
     assert source == RepoSource(
         name="custom-tool", target="record/repository", is_local=False
@@ -312,7 +322,7 @@ def test_resolve_source_reads_the_backend_record_before_the_registry(
 
     monkeypatch.setattr(mise.discovery, "_resolve_from_mise", fail_if_called)
 
-    source = provider.resolve_source(inst, config=Config())
+    source = provider.resolve_source(inst, config=Config(), sources=registry)
 
     assert source == RepoSource(name="biome", target="biomejs/biome", is_local=False)
 
@@ -328,7 +338,7 @@ def test_resolve_source_treats_github_backend_the_same_as_aqua(
     inst = provider.detect(bin_path)
     assert inst is not None
 
-    source = provider.resolve_source(inst, config=Config())
+    source = provider.resolve_source(inst, config=Config(), sources=registry)
 
     assert source == RepoSource(
         name="herdr", target="ogulcancelik/herdr", is_local=False
@@ -345,7 +355,7 @@ def test_resolve_source_keeps_tmux_build_repository_as_distribution_provenance(
     inst = mise.MiseProvider().detect(bin_path)
     assert inst is not None
 
-    source = mise.MiseProvider().resolve_source(inst, config=Config())
+    source = mise.MiseProvider().resolve_source(inst, config=Config(), sources=registry)
 
     assert source == RepoSource(
         name="tmux",
@@ -364,7 +374,7 @@ def test_resolve_source_does_not_redirect_an_unrelated_builds_repository(
     inst = mise.MiseProvider().detect(bin_path)
     assert inst is not None
 
-    source = mise.MiseProvider().resolve_source(inst, config=Config())
+    source = mise.MiseProvider().resolve_source(inst, config=Config(), sources=registry)
 
     assert source == RepoSource(name="foo", target="owner/foo-builds", is_local=False)
 
@@ -386,7 +396,7 @@ def test_resolve_source_gives_up_when_the_composed_npm_package_json_is_missing(
     inst = provider.detect(bin_path)
     assert inst is not None
 
-    assert provider.resolve_source(inst, config=Config()) is None
+    assert provider.resolve_source(inst, config=Config(), sources=registry) is None
 
 
 def test_resolve_source_falls_back_when_the_backend_record_is_not_utf8(
@@ -402,7 +412,7 @@ def test_resolve_source_falls_back_when_the_backend_record_is_not_utf8(
         mise.discovery, "_resolve_from_mise", lambda *a, **k: "helix-editor/helix"
     )
 
-    source = provider.resolve_source(inst, config=Config())
+    source = provider.resolve_source(inst, config=Config(), sources=registry)
 
     assert source == RepoSource(name="hx", target="helix-editor/helix", is_local=False)
 
@@ -428,7 +438,9 @@ def test_resolve_source_falls_back_to_the_registry_keyed_on_the_directory_name(
     # installation-derived directory name -- restrictive resolution must miss.
     assert (
         provider.resolve_source(
-            inst, config=Config(config_dir=tmp_path / "empty-config")
+            inst,
+            config=Config(config_dir=tmp_path / "empty-config"),
+            sources=registry,
         )
         is None
     )
@@ -457,7 +469,10 @@ def test_resolve_source_offline_skips_the_registry_but_keeps_local_config(
     monkeypatch.setattr(mise.discovery, "_query_mise_registry", fail_if_called)
 
     source = provider.resolve_source(
-        inst, config=Config(config_dir=tmp_path / "config"), offline=True
+        inst,
+        config=Config(config_dir=tmp_path / "config"),
+        sources=registry,
+        offline=True,
     )
 
     assert source == RepoSource(name="rg", target="private/rg", is_local=False)
@@ -480,7 +495,10 @@ def test_resolve_source_offline_returns_none_rather_than_query_the_registry(
 
     monkeypatch.setattr(mise.discovery, "_query_mise_registry", fail_if_called)
 
-    assert provider.resolve_source(inst, config=Config(), offline=True) is None
+    assert (
+        provider.resolve_source(inst, config=Config(), sources=registry, offline=True)
+        is None
+    )
 
 
 def test_local_docs_finds_manpage_under_install_root(tmp_path: Path) -> None:
@@ -537,7 +555,7 @@ def test_detect_composes_a_parent_for_an_npm_backend(tmp_path: Path) -> None:
     assert inst.parent.package == "yaml-language-server"
     assert inst.parent.root == package_dir
 
-    source = provider.resolve_source(inst, config=Config())
+    source = provider.resolve_source(inst, config=Config(), sources=registry)
 
     assert source == RepoSource(
         name="yaml-language-server",
@@ -546,9 +564,12 @@ def test_detect_composes_a_parent_for_an_npm_backend(tmp_path: Path) -> None:
     )
 
 
-def test_resolve_source_passes_config_to_a_parent_provider(
-    tmp_path: Path, monkeypatch
+def test_resolve_source_delegates_a_parent_to_the_resolver_it_was_given(
+    tmp_path: Path,
 ) -> None:
+    """The composed install is resolved through the caller's resolver, so nothing
+    binds a resolver onto `MiseProvider` itself (ADR-0015 composition).
+    """
     bin_path = _make_mise_install(
         tmp_path, "npm-yaml-language-server", "1.24.0", "yaml-language-server"
     )
@@ -561,22 +582,18 @@ def test_resolve_source_passes_config_to_a_parent_provider(
     config = Config()
     observed: list[tuple[object, Config]] = []
 
-    class ParentProvider:
-        def resolve_source(self, parent, *, config: Config) -> RepoSource:
-            observed.append((parent, config))
+    class RecordingResolver:
+        def resolve_source(self, inst, *, config: Config) -> RepoSource:
+            observed.append((inst, config))
             return RepoSource(
                 name="yaml-language-server",
                 target="owner/repo",
                 is_local=False,
             )
 
-    monkeypatch.setattr(
-        mise.MiseProvider,
-        "_composed_source_resolver",
-        lambda parent, config: ParentProvider().resolve_source(parent, config=config),
+    source = mise.MiseProvider().resolve_source(
+        inst, config=config, sources=RecordingResolver()
     )
-
-    source = mise.MiseProvider().resolve_source(inst, config=config)
 
     assert source == RepoSource(
         name="yaml-language-server", target="owner/repo", is_local=False
@@ -615,7 +632,7 @@ def test_detect_composes_a_parent_for_a_pipx_backend(tmp_path: Path) -> None:
     assert inst.parent.package == "tlp-ui"
     assert inst.parent.root == venv_root
 
-    source = provider.resolve_source(inst, config=Config())
+    source = provider.resolve_source(inst, config=Config(), sources=registry)
 
     assert source == RepoSource(name="tlpui", target="d4nj1/TLPUI", is_local=False)
 
@@ -638,4 +655,4 @@ def test_detect_leaves_parent_none_for_a_backend_with_no_composed_shape(
 
     assert inst is not None
     assert inst.parent is None
-    assert provider.resolve_source(inst, config=Config()) is None
+    assert provider.resolve_source(inst, config=Config(), sources=registry) is None

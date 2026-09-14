@@ -21,10 +21,9 @@ from maniac.sources.discovery import (
     _parse_mise_registry,
     _read_mise_registry_archive,
     _resolve_from_mise,
-    discover_repo,
-    enumerate_installations,
 )
 from maniac.sources.loginpath import login_path, login_path_dirs, which_login
+from maniac.sources.resolution import discover_repo, enumerate_installations
 
 
 def _compressed_mise_registry(entries: dict[str, bytes]) -> bytes:
@@ -118,7 +117,7 @@ def test_discover_repo_has_no_implicit_local_bin_default(
     decoy_dir.mkdir(parents=True)
     (decoy_dir / "tool").touch()
     monkeypatch.setenv("HOME", str(fake_home))
-    monkeypatch.setattr(discovery.loginpath, "which_login", lambda name: None)
+    monkeypatch.setattr(loginpath, "which_login", lambda name: None)
 
     assert discover_repo("tool", config=Config()) is None
 
@@ -131,7 +130,7 @@ def test_discover_repo_does_not_use_the_registry_without_an_installation(
     where the registry would have matched it by bare name -- this is
     `discover_repo("envsubst")` ceasing to return "a8m/envsubst".
     """
-    monkeypatch.setattr(discovery.loginpath, "which_login", lambda name: None)
+    monkeypatch.setattr(loginpath, "which_login", lambda name: None)
     monkeypatch.setattr(
         discovery,
         "_load_mise_registry",
@@ -160,7 +159,7 @@ def test_enumerate_installations_walks_path_and_keeps_only_claimed_binaries(
     claimed.touch(mode=0o755)
     unclaimed = tmp_path / "unclaimed"
     unclaimed.touch(mode=0o755)
-    monkeypatch.setattr(discovery.loginpath, "login_path", lambda: str(tmp_path))
+    monkeypatch.setattr(loginpath, "login_path", lambda: str(tmp_path))
 
     def fake_detect(bin_path: Path):
         if bin_path.name == "claimed":
@@ -184,9 +183,7 @@ def test_enumerate_installations_resolves_a_name_once_at_its_first_path_entry(
     second_dir.mkdir()
     (first_dir / "tool").touch(mode=0o755)
     (second_dir / "tool").touch(mode=0o755)
-    monkeypatch.setattr(
-        discovery.loginpath, "login_path", lambda: f"{first_dir}:{second_dir}"
-    )
+    monkeypatch.setattr(loginpath, "login_path", lambda: f"{first_dir}:{second_dir}")
 
     seen_paths: list[Path] = []
 
@@ -205,7 +202,7 @@ def test_enumerate_installations_skips_non_executable_files(
     monkeypatch, tmp_path: Path
 ) -> None:
     (tmp_path / "not_executable").touch(mode=0o644)
-    monkeypatch.setattr(discovery.loginpath, "login_path", lambda: str(tmp_path))
+    monkeypatch.setattr(loginpath, "login_path", lambda: str(tmp_path))
     monkeypatch.setattr(
         resolution, "_detect_via_registry", lambda p: pytest.fail("must not be called")
     )
@@ -219,7 +216,7 @@ def test_enumerate_installations_on_start_and_on_scan_are_optional_and_no_op_by_
     """Existing callers omitting the callbacks see unchanged behaviour."""
     claimed = tmp_path / "claimed"
     claimed.touch(mode=0o755)
-    monkeypatch.setattr(discovery.loginpath, "login_path", lambda: str(tmp_path))
+    monkeypatch.setattr(loginpath, "login_path", lambda: str(tmp_path))
     monkeypatch.setattr(
         resolution,
         "_detect_via_registry",
@@ -236,7 +233,7 @@ def test_enumerate_installations_reports_candidate_count_then_one_scan_per_candi
 ) -> None:
     for name in ("one", "two", "three"):
         (tmp_path / name).touch(mode=0o755)
-    monkeypatch.setattr(discovery.loginpath, "login_path", lambda: str(tmp_path))
+    monkeypatch.setattr(loginpath, "login_path", lambda: str(tmp_path))
     monkeypatch.setattr(
         resolution,
         "_detect_via_registry",

@@ -12,9 +12,9 @@ from ..logging import logger
 from ..manifest import Tier
 from ..models import PipelineResult
 from ..sources.crawler import find_subcommands, format_help_block, get_version
-from ..sources.discovery import discover_repo, find_installation
 from ..sources.docs import fetch_and_extract_docs, format_docs_section
 from ..sources.documentation import documentation_source
+from ..sources.resolution import discover_repo, find_installation
 
 
 def run_pipeline(

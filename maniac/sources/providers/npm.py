@@ -9,6 +9,7 @@ from ...models import Installation, RepoSource
 from .. import discovery
 from ..manpages import find_install_root_manpages
 from ..pathcache import resolve_cached
+from .base import SourceResolver
 
 _NODE_MODULES_MARKER = "/lib/node_modules/"
 
@@ -51,7 +52,7 @@ class NpmProvider:
         )
 
     def resolve_source(
-        self, inst: Installation, *, config: Config
+        self, inst: Installation, *, config: Config, sources: SourceResolver
     ) -> RepoSource | None:
         repo = _repo_from_repository_field(
             read_package_json(inst.root).get("repository")

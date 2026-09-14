@@ -9,6 +9,7 @@ from ...logging import logger
 from ...models import Installation, RepoSource
 from ..manpages import find_install_root_manpages
 from ..pathcache import resolve_cached
+from .base import SourceResolver
 from .pipx import find_distribution_metadata, repository_from_metadata
 
 _TOOLS_MARKER = "/.local/share/uv/tools/"
@@ -42,7 +43,7 @@ class UvProvider:
         )
 
     def resolve_source(
-        self, inst: Installation, *, config: Config
+        self, inst: Installation, *, config: Config, sources: SourceResolver
     ) -> RepoSource | None:
         local_dir = _local_editable_dir(inst.root)
         if local_dir is not None:

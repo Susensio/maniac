@@ -18,7 +18,7 @@ from ..installer import install_manpage
 from ..logging import logger
 from ..manifest import Tier
 from ..models import Installation, PipelineResult
-from ..sources import discovery
+from ..sources import resolution
 from ..sources.docs import discover_repo_manpages, discovered_manpage_uri
 from ..sources.documentation import documentation_source
 from ..sources.manpages import (
@@ -26,8 +26,9 @@ from ..sources.manpages import (
     read_manpage_source,
     select_primary_manpage,
 )
-from ..sources.pathcache import resolve_cached
-from ..sources.providers.base import Provider
+from ..sources.pathcache import resolve_bin_path, resolve_cached
+from ..sources.providers.base import DirectPageProvider, Provider
+from ..sources.providers.registry import registry
 
 __all__ = ["InstallOutcome", "InstallRefused", "Tier", "run_install"]
 
@@ -89,7 +90,7 @@ def run_install(
     # which tier would answer. Inside the branch, `--generate` bypassed it
     # and synthesized a global page for a binary only this shell can see --
     # the exact outcome ADR-0020 exists to prevent.
-    if discovery.resolve_bin_path(tool_name, bin_dir) is None:
+    if resolve_bin_path(tool_name, bin_dir) is None:
         raise InstallRefused(
             f"'{tool_name}' is reachable only from the current "
             "environment, not the login shell's $PATH -- and a manpage "
@@ -98,7 +99,7 @@ def run_install(
         )
 
     if not generate_only:
-        found = discovery.find_installation(tool_name, bin_dir=bin_dir)
+        found = resolution.find_installation(tool_name, bin_dir=bin_dir)
         if found is not None:
             provider, inst = found
             outcome = _try_install_root(provider, inst, cfg=cfg, force=force)
@@ -165,13 +166,13 @@ def _try_install_root(
         return None
 
     provider_owned = _is_direct_provider_page(page, inst)
-    latest_target = (
-        getattr(provider, "latest_manpage_target", lambda *_: None)(inst, page)
-        if provider_owned
+    direct_target = (
+        provider.direct_page_target(inst, page)
+        if provider_owned and isinstance(provider, DirectPageProvider)
         else None
     )
     installed_path = install_manpage(
-        latest_target or page,
+        direct_target or page,
         inst.binary,
         Tier.INSTALL_ROOT,
         str(inst.root),
@@ -222,7 +223,7 @@ def _try_repository(
     """
     if inst.version is None:
         return None
-    source = provider.resolve_source(inst, config=cfg)
+    source = registry.resolve_source(inst, config=cfg, provider=provider)
     if source is None:
         return None
     source = documentation_source(source, cfg.documentation_repository_overrides)

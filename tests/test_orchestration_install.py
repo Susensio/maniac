@@ -8,7 +8,8 @@ from maniac import manifest
 from maniac.config import Config
 from maniac.models import Installation, RepoSource
 from maniac.orchestration.install import InstallRefused, Tier, run_install
-from maniac.sources import discovery
+from maniac.sources import loginpath
+from maniac.sources.providers.base import SourceResolver
 
 
 @pytest.fixture(autouse=True)
@@ -17,9 +18,7 @@ def _reachable_from_the_login_path(monkeypatch: pytest.MonkeyPatch) -> None:
     default `which_login` to "found" so ADR-0020's new refusal (tested on
     its own below) doesn't fire for tests about tier selection instead.
     """
-    monkeypatch.setattr(
-        discovery.loginpath, "which_login", lambda name: Path(f"/bin/{name}")
-    )
+    monkeypatch.setattr(loginpath, "which_login", lambda name: Path(f"/bin/{name}"))
 
 
 class _FakeProvider:
@@ -39,7 +38,7 @@ class _FakeProvider:
         return None
 
     def resolve_source(
-        self, inst: Installation, *, config: Config
+        self, inst: Installation, *, config: Config, sources: SourceResolver
     ) -> RepoSource | None:
         return self._source
 
@@ -69,7 +68,7 @@ def test_run_install_uses_the_install_root_page_first(
     provider = _FakeProvider(local_docs=[page])
     inst = _installation()
     monkeypatch.setattr(
-        "maniac.orchestration.install.discovery.find_installation",
+        "maniac.orchestration.install.resolution.find_installation",
         lambda name, bin_dir=None: (provider, inst),
     )
     monkeypatch.setattr(
@@ -101,7 +100,7 @@ def test_run_install_links_a_verified_install_root_page_directly(
         manifest_path=tmp_path / "state" / "installed.json",
     )
     monkeypatch.setattr(
-        "maniac.orchestration.install.discovery.find_installation",
+        "maniac.orchestration.install.resolution.find_installation",
         lambda name, bin_dir=None: (provider, inst),
     )
 
@@ -135,7 +134,7 @@ def test_run_install_materializes_an_install_root_page_resolving_outside_its_roo
         manifest_path=tmp_path / "state" / "installed.json",
     )
     monkeypatch.setattr(
-        "maniac.orchestration.install.discovery.find_installation",
+        "maniac.orchestration.install.resolution.find_installation",
         lambda name, bin_dir=None: (provider, inst),
     )
 
@@ -155,7 +154,7 @@ def test_run_install_falls_through_to_repository_when_no_install_root_page(
     provider = _FakeProvider(local_docs=[], source=source)
     inst = _installation()
     monkeypatch.setattr(
-        "maniac.orchestration.install.discovery.find_installation",
+        "maniac.orchestration.install.resolution.find_installation",
         lambda name, bin_dir=None: (provider, inst),
     )
     page = tmp_path / "tool.1"
@@ -186,7 +185,7 @@ def test_run_install_uses_the_exact_tmux_documentation_repository(
     page = tmp_path / "tmux.1"
     page.write_text(".TH TMUX 1\n", encoding="utf-8")
     monkeypatch.setattr(
-        "maniac.orchestration.install.discovery.find_installation",
+        "maniac.orchestration.install.resolution.find_installation",
         lambda name, bin_dir=None: (provider, inst),
     )
     observed: list[RepoSource] = []
@@ -215,7 +214,7 @@ def test_run_install_tier2_rejects_a_page_naming_a_different_binary(
     provider = _FakeProvider(local_docs=[], source=source)
     inst = _installation()
     monkeypatch.setattr(
-        "maniac.orchestration.install.discovery.find_installation",
+        "maniac.orchestration.install.resolution.find_installation",
         lambda name, bin_dir=None: (provider, inst),
     )
     page = tmp_path / "tool.1"
@@ -254,7 +253,7 @@ def test_run_install_reports_repository_docs_only_synthesis(
     from maniac.models import PipelineResult
 
     monkeypatch.setattr(
-        "maniac.orchestration.install.discovery.find_installation",
+        "maniac.orchestration.install.resolution.find_installation",
         lambda name, bin_dir=None: None,
     )
     monkeypatch.setattr(
@@ -286,7 +285,7 @@ def test_run_install_tier2_skipped_without_an_installed_version(
     provider = _FakeProvider(local_docs=[], source=source)
     inst = _installation(version=None)
     monkeypatch.setattr(
-        "maniac.orchestration.install.discovery.find_installation",
+        "maniac.orchestration.install.resolution.find_installation",
         lambda name, bin_dir=None: (provider, inst),
     )
     called = False
@@ -328,7 +327,7 @@ def test_run_install_installs_all_anchored_release_manpages(
     provider = _FakeProvider(local_docs=[], source=source)
     inst = _installation(version="0.23.5", binary="eza")
     monkeypatch.setattr(
-        "maniac.orchestration.install.discovery.find_installation",
+        "maniac.orchestration.install.resolution.find_installation",
         lambda name, bin_dir=None: (provider, inst),
     )
     monkeypatch.setattr(
@@ -365,7 +364,7 @@ def test_generate_flag_skips_tiers_1_and_2(
         raise AssertionError("--generate must not consult tiers 1-2")
 
     monkeypatch.setattr(
-        "maniac.orchestration.install.discovery.find_installation", _fail_if_called
+        "maniac.orchestration.install.resolution.find_installation", _fail_if_called
     )
 
     from maniac.models import PipelineResult
@@ -409,7 +408,7 @@ def test_no_generate_never_reaches_the_llm_when_no_tier_1_or_2_page_exists(
 
     monkeypatch.setattr("maniac.generation.llm.run_llm_synthesis", _explode)
     monkeypatch.setattr(
-        "maniac.orchestration.install.discovery.find_installation",
+        "maniac.orchestration.install.resolution.find_installation",
         lambda name, bin_dir=None: None,
     )
 
@@ -433,7 +432,7 @@ def test_no_generate_installs_a_tier_1_page_with_no_llm_call(
     provider = _FakeProvider(local_docs=[page])
     inst = _installation()
     monkeypatch.setattr(
-        "maniac.orchestration.install.discovery.find_installation",
+        "maniac.orchestration.install.resolution.find_installation",
         lambda name, bin_dir=None: (provider, inst),
     )
     monkeypatch.setattr(
@@ -453,9 +452,9 @@ def test_run_install_refuses_a_binary_the_login_path_cannot_reach(
     reachable only from the current environment is refused, and the refusal
     names why rather than declining quietly.
     """
-    monkeypatch.setattr(discovery.loginpath, "which_login", lambda name: None)
+    monkeypatch.setattr(loginpath, "which_login", lambda name: None)
     monkeypatch.setattr(
-        "maniac.orchestration.install.discovery.find_installation",
+        "maniac.orchestration.install.resolution.find_installation",
         lambda name, bin_dir=None: None,
     )
 
@@ -478,9 +477,9 @@ def test_run_install_refuses_under_generate_too(
     binary the login `$PATH` cannot. Placed inside the `generate_only`
     branch it could, which is the bug this pins.
     """
-    monkeypatch.setattr(discovery.loginpath, "which_login", lambda name: None)
+    monkeypatch.setattr(loginpath, "which_login", lambda name: None)
     monkeypatch.setattr(
-        "maniac.orchestration.install.discovery.find_installation",
+        "maniac.orchestration.install.resolution.find_installation",
         lambda name, bin_dir=None: None,
     )
 
@@ -499,14 +498,14 @@ def test_run_install_refusal_runs_no_tier(
     provider = _FakeProvider(local_docs=[page])
     inst = _installation()
     monkeypatch.setattr(
-        "maniac.orchestration.install.discovery.find_installation",
+        "maniac.orchestration.install.resolution.find_installation",
         lambda name, bin_dir=None: (provider, inst),
     )
     monkeypatch.setattr(
         "maniac.orchestration.install.install_manpage",
         lambda *args, **kwargs: pytest.fail("no tier should run on a refusal"),
     )
-    monkeypatch.setattr(discovery.loginpath, "which_login", lambda name: None)
+    monkeypatch.setattr(loginpath, "which_login", lambda name: None)
 
     with pytest.raises(InstallRefused):
         run_install("tool")
@@ -522,14 +521,14 @@ def test_run_install_explicit_bin_dir_bypasses_the_refusal(
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     (bin_dir / "tool").touch(mode=0o755)
-    monkeypatch.setattr(discovery.loginpath, "which_login", lambda name: None)
+    monkeypatch.setattr(loginpath, "which_login", lambda name: None)
 
     page = tmp_path / "tool.1"
     page.write_text(".TH TOOL 1\n", encoding="utf-8")
     provider = _FakeProvider(local_docs=[page])
     inst = _installation()
     monkeypatch.setattr(
-        "maniac.orchestration.install.discovery.find_installation",
+        "maniac.orchestration.install.resolution.find_installation",
         lambda name, bin_dir=None: (provider, inst),
     )
     monkeypatch.setattr(

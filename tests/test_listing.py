@@ -39,6 +39,7 @@ from maniac.models import Installation, RepoSource
 from maniac.sources import discovery
 from maniac.sources.packages import ExternalPageFreshness
 from maniac.sources.providers import mise as mise_module
+from maniac.sources.providers.base import SourceResolver
 
 runner = CliRunner()
 
@@ -72,7 +73,7 @@ class _FakeProvider:
         return None
 
     def resolve_source(
-        self, inst: Installation, *, config: Config
+        self, inst: Installation, *, config: Config, sources: SourceResolver
     ) -> RepoSource | None:
         return self._source
 
@@ -112,13 +113,13 @@ def _classification_pair(*args: Any, **kwargs: Any) -> tuple[ActionState, PageSo
 def test_compute_rows_no_args_walks_providers_not_the_manpath(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Enumeration is `discovery.enumerate_installations`; `man` decides state, not the manpath scan."""
+    """Enumeration is `resolution.enumerate_installations`; `man` decides state, not the manpath scan."""
     page = tmp_path / "tool.1"
     page.write_text(".TH TOOL 1\n", encoding="utf-8")
     provider = _FakeProvider(local_docs=[page])
     inst = _installation(root=tmp_path)
     monkeypatch.setattr(
-        "maniac.cli.listing.discovery.enumerate_installations",
+        "maniac.cli.listing.resolution.enumerate_installations",
         lambda on_start=None, on_scan=None: [(provider, inst)],
     )
 
@@ -146,7 +147,7 @@ def test_compute_rows_resolves_upstream_for_a_vendor_page(
     provider = _FakeProvider(local_docs=[page], source=source)
     inst = _installation(root=tmp_path)
     monkeypatch.setattr(
-        "maniac.cli.listing.discovery.enumerate_installations",
+        "maniac.cli.listing.resolution.enumerate_installations",
         lambda on_start=None, on_scan=None: [(provider, inst)],
     )
     monkeypatch.setattr(
@@ -182,7 +183,7 @@ def test_compute_rows_recovers_the_uri_for_an_older_repository_manifest(
     cached = tmp_path / "cache" / "tool.1"
     uri = "https://github.com/owner/tool/blob/v1.2.3/man/tool.1"
     monkeypatch.setattr(
-        "maniac.cli.listing.discovery.enumerate_installations",
+        "maniac.cli.listing.resolution.enumerate_installations",
         lambda on_start=None, on_scan=None: [(provider, inst)],
     )
     monkeypatch.setattr(
@@ -209,7 +210,7 @@ def test_compute_rows_with_tools_is_unfiltered_and_resolves_each_by_name(
     provider = _FakeProvider(local_docs=[])
     inst = _installation(binary="bash")
     monkeypatch.setattr(
-        "maniac.cli.listing.discovery.find_installation",
+        "maniac.cli.listing.resolution.find_installation",
         lambda name, bin_dir=None: (provider, inst) if name == "bash" else None,
     )
 
@@ -226,7 +227,7 @@ def test_compute_rows_named_tools_are_deduplicated(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     monkeypatch.setattr(
-        "maniac.cli.listing.discovery.find_installation",
+        "maniac.cli.listing.resolution.find_installation",
         lambda name, bin_dir=None: None,
     )
 
@@ -241,7 +242,7 @@ def test_compute_rows_on_row_callbacks_are_optional_and_no_op_by_default(
     """Every caller besides the CLI (including every other test here) omits
     the callbacks and must see unchanged behaviour."""
     monkeypatch.setattr(
-        "maniac.cli.listing.discovery.find_installation",
+        "maniac.cli.listing.resolution.find_installation",
         lambda name, bin_dir=None: None,
     )
 
@@ -253,10 +254,10 @@ def test_compute_rows_on_row_callbacks_are_optional_and_no_op_by_default(
 def test_compute_rows_named_tools_report_row_progress_but_no_discovery_phase(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """The `tools` path never calls `discovery.enumerate_installations`, so
+    """The `tools` path never calls `resolution.enumerate_installations`, so
     its discovery callbacks must never fire."""
     monkeypatch.setattr(
-        "maniac.cli.listing.discovery.find_installation",
+        "maniac.cli.listing.resolution.find_installation",
         lambda name, bin_dir=None: None,
     )
     row_starts: list[int] = []
@@ -300,7 +301,7 @@ def test_compute_rows_no_args_threads_both_phases_callbacks(
         return [(provider, inst)]
 
     monkeypatch.setattr(
-        "maniac.cli.listing.discovery.enumerate_installations", fake_enumerate
+        "maniac.cli.listing.resolution.enumerate_installations", fake_enumerate
     )
 
     def on_row_start(total: int) -> None:
@@ -335,7 +336,7 @@ def test_compute_rows_upgrades_a_versioned_cached_repository_page(
     provider = _FakeProvider(source=source)
     inst = _installation(binary="fzf", version="0.74.3")
     monkeypatch.setattr(
-        "maniac.cli.listing.discovery.enumerate_installations",
+        "maniac.cli.listing.resolution.enumerate_installations",
         lambda on_start=None, on_scan=None: [(provider, inst)],
     )
     monkeypatch.setattr(
@@ -365,7 +366,7 @@ def test_local_repository_page_links_to_its_source_file(
     provider = _FakeProvider(source=source)
     inst = _installation()
     monkeypatch.setattr(
-        "maniac.cli.listing.discovery.enumerate_installations",
+        "maniac.cli.listing.resolution.enumerate_installations",
         lambda on_start=None, on_scan=None: [(provider, inst)],
     )
     monkeypatch.setattr(
@@ -387,7 +388,7 @@ def test_compute_rows_uses_the_exact_tmux_documentation_repository(
     provider = _FakeProvider(source=distribution_source)
     inst = _installation(binary="tmux", version="3.7b")
     monkeypatch.setattr(
-        "maniac.cli.listing.discovery.enumerate_installations",
+        "maniac.cli.listing.resolution.enumerate_installations",
         lambda on_start=None, on_scan=None: [(provider, inst)],
     )
     observed: list[RepoSource] = []
@@ -410,7 +411,7 @@ def test_compute_rows_keeps_an_offline_upstream_row_missing(
     provider = _FakeProvider(source=source)
     inst = _installation()
     monkeypatch.setattr(
-        "maniac.cli.listing.discovery.enumerate_installations",
+        "maniac.cli.listing.resolution.enumerate_installations",
         lambda on_start=None, on_scan=None: [(provider, inst)],
     )
     monkeypatch.setattr(
@@ -431,7 +432,7 @@ def test_compute_rows_keeps_a_single_failed_upstream_probe_missing(
     provider = _FakeProvider(source=source)
     inst = _installation()
     monkeypatch.setattr(
-        "maniac.cli.listing.discovery.enumerate_installations",
+        "maniac.cli.listing.resolution.enumerate_installations",
         lambda on_start=None, on_scan=None: [(provider, inst)],
     )
 
@@ -454,7 +455,7 @@ def test_compute_rows_never_probes_an_unversioned_installation(
     provider = _FakeProvider(source=source)
     inst = _installation(version=None)
     monkeypatch.setattr(
-        "maniac.cli.listing.discovery.enumerate_installations",
+        "maniac.cli.listing.resolution.enumerate_installations",
         lambda on_start=None, on_scan=None: [(provider, inst)],
     )
     monkeypatch.setattr(
@@ -483,7 +484,7 @@ def test_compute_rows_bounds_upstream_probes_and_keeps_row_order(
         for index in range(12)
     ]
     monkeypatch.setattr(
-        "maniac.cli.listing.discovery.enumerate_installations",
+        "maniac.cli.listing.resolution.enumerate_installations",
         lambda on_start=None, on_scan=None: installations,
     )
     active = 0
@@ -526,7 +527,7 @@ def test_compute_rows_bounds_parallel_local_classification(
         (_FakeProvider(), _installation(binary=f"tool{index}")) for index in range(12)
     ]
     monkeypatch.setattr(
-        "maniac.cli.listing.discovery.enumerate_installations",
+        "maniac.cli.listing.resolution.enumerate_installations",
         lambda on_start=None, on_scan=None: installations,
     )
     active = 0
@@ -567,7 +568,7 @@ def test_compute_rows_loads_the_manifest_once_per_invocation(
         (_FakeProvider(), _installation(binary=f"tool{index}")) for index in range(3)
     ]
     monkeypatch.setattr(
-        "maniac.cli.listing.discovery.enumerate_installations",
+        "maniac.cli.listing.resolution.enumerate_installations",
         lambda on_start=None, on_scan=None: installations,
     )
     loads = 0
@@ -598,7 +599,7 @@ def test_compute_rows_starts_upstream_before_slow_local_work_finishes(
         (provider, _installation(binary="slow")),
     ]
     monkeypatch.setattr(
-        "maniac.cli.listing.discovery.enumerate_installations",
+        "maniac.cli.listing.resolution.enumerate_installations",
         lambda on_start=None, on_scan=None: installations,
     )
     slow_started = threading.Event()
@@ -651,7 +652,7 @@ def test_compute_rows_ticks_while_a_slow_future_leaves_a_quiet_gap(
         (provider, _installation(binary="slow")),
     ]
     monkeypatch.setattr(
-        "maniac.cli.listing.discovery.enumerate_installations",
+        "maniac.cli.listing.resolution.enumerate_installations",
         lambda on_start=None, on_scan=None: installations,
     )
     release_slow = threading.Event()
@@ -696,7 +697,7 @@ def test_compute_rows_deduplicates_identical_upstream_binary_probes(
         (_FakeProvider(source=source), _installation(binary="tool")) for _ in range(3)
     ]
     monkeypatch.setattr(
-        "maniac.cli.listing.discovery.enumerate_installations",
+        "maniac.cli.listing.resolution.enumerate_installations",
         lambda on_start=None, on_scan=None: installations,
     )
     probes = 0
@@ -722,7 +723,7 @@ def test_deduplicated_probe_publishes_all_siblings_atomically(
         (_FakeProvider(source=source), _installation(binary="tool")) for _ in range(3)
     ]
     monkeypatch.setattr(
-        "maniac.cli.listing.discovery.enumerate_installations",
+        "maniac.cli.listing.resolution.enumerate_installations",
         lambda on_start=None, on_scan=None: installations,
     )
     monkeypatch.setattr(
@@ -750,7 +751,7 @@ def test_streaming_list_renders_checking_before_a_blocked_probe_finishes(
     provider = _FakeProvider(source=source)
     inst = _installation()
     monkeypatch.setattr(
-        "maniac.cli.listing.discovery.enumerate_installations",
+        "maniac.cli.listing.resolution.enumerate_installations",
         lambda on_start=None, on_scan=None: [(provider, inst)],
     )
     probe_started = threading.Event()
@@ -836,7 +837,7 @@ def test_streaming_skeleton_waits_for_complete_enumeration(
         return [(provider, inst)]
 
     monkeypatch.setattr(
-        "maniac.cli.listing.discovery.enumerate_installations", enumerate_installations
+        "maniac.cli.listing.resolution.enumerate_installations", enumerate_installations
     )
     worker = threading.Thread(
         target=lambda: compute_rows(
@@ -863,7 +864,7 @@ def test_compute_rows_emits_one_sorted_complete_skeleton(
         return [(provider, beta), (provider, alpha)]
 
     monkeypatch.setattr(
-        "maniac.cli.listing.discovery.enumerate_installations", enumerate_installations
+        "maniac.cli.listing.resolution.enumerate_installations", enumerate_installations
     )
     skeletons: list[list[str]] = []
 
@@ -890,7 +891,7 @@ def test_compute_rows_streaming_local_callbacks_handle_multiple_partial_rows(
         return installations
 
     monkeypatch.setattr(
-        "maniac.cli.listing.discovery.enumerate_installations", enumerate_installations
+        "maniac.cli.listing.resolution.enumerate_installations", enumerate_installations
     )
     monkeypatch.setattr(
         "maniac.cli.listing.discover_repo_manpage", lambda *args, **kwargs: None
@@ -1476,7 +1477,7 @@ def test_compute_rows_callbacks_receive_snapshots_after_initial_and_each_probe(
     source = RepoSource(name="tool", target="owner/tool", is_local=False)
     provider = _FakeProvider(source=source)
     monkeypatch.setattr(
-        "maniac.cli.listing.discovery.enumerate_installations",
+        "maniac.cli.listing.resolution.enumerate_installations",
         lambda on_start=None, on_scan=None: [(provider, _installation())],
     )
     monkeypatch.setattr(
@@ -1511,7 +1512,7 @@ def test_cli_streaming_leaves_live_table_as_the_only_final_render(
     )
     monkeypatch.setattr(cli_module, "Config", lambda: _config(tmp_path))
     monkeypatch.setattr(
-        "maniac.cli.listing.discovery.enumerate_installations",
+        "maniac.cli.listing.resolution.enumerate_installations",
         lambda on_start=None, on_scan=None: (
             on_start and on_start(0),
             [],
@@ -1648,7 +1649,7 @@ def test_cli_streaming_error_keeps_provisional_rows_and_propagates(
         lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("local failed")),
     )
     monkeypatch.setattr(
-        "maniac.cli.listing.discovery.enumerate_installations", enumerate_installations
+        "maniac.cli.listing.resolution.enumerate_installations", enumerate_installations
     )
 
     result = runner.invoke(app, ["list"])
@@ -1671,7 +1672,7 @@ def test_cli_list_explicit_tools_on_a_terminal_render_a_final_table(
     )
     monkeypatch.setattr(cli_module, "Config", lambda: _config(tmp_path))
     monkeypatch.setattr(
-        "maniac.cli.listing.discovery.find_installation",
+        "maniac.cli.listing.resolution.find_installation",
         lambda name, bin_dir=None: (_FakeProvider(), _installation(binary=name)),
     )
 
@@ -2595,7 +2596,7 @@ def test_cli_list_pipe_emits_exactly_the_filtered_set(
     missing_provider = _FakeProvider(local_docs=[])
 
     monkeypatch.setattr(
-        "maniac.cli.listing.discovery.enumerate_installations",
+        "maniac.cli.listing.resolution.enumerate_installations",
         lambda on_start=None, on_scan=None: [
             (available_provider, _installation(binary="gum")),
             (missing_provider, _installation(binary="ghost")),
@@ -2624,7 +2625,7 @@ def test_cli_list_pipe_unverified_emits_exactly_the_filtered_set(
         lambda page, **kwargs: ExternalPageFreshness.UNVERIFIED,
     )
     monkeypatch.setattr(
-        "maniac.cli.listing.discovery.enumerate_installations",
+        "maniac.cli.listing.resolution.enumerate_installations",
         lambda on_start=None, on_scan=None: [(_FakeProvider(), _installation())],
     )
 
@@ -2643,7 +2644,7 @@ def test_cli_list_pipe_available_waits_for_upstream_classification(
     monkeypatch.setattr(cli_module, "Config", lambda: _config(tmp_path))
     source = RepoSource(name="fzf", target="junegunn/fzf", is_local=False)
     monkeypatch.setattr(
-        "maniac.cli.listing.discovery.enumerate_installations",
+        "maniac.cli.listing.resolution.enumerate_installations",
         lambda on_start=None, on_scan=None: [
             (
                 _FakeProvider(source=source),
@@ -3025,7 +3026,7 @@ def test_cli_list_pipe_emits_bare_names(
     )
     monkeypatch.setattr(cli_module, "Config", lambda: _config(tmp_path))
     monkeypatch.setattr(
-        "maniac.cli.listing.discovery.enumerate_installations",
+        "maniac.cli.listing.resolution.enumerate_installations",
         lambda on_start=None, on_scan=None: [
             (_FakeProvider(), _installation(binary="gum"))
         ],
@@ -3044,7 +3045,7 @@ def test_cli_list_tty_shows_table(
     )
     monkeypatch.setattr(cli_module, "Config", lambda: _config(tmp_path))
     monkeypatch.setattr(
-        "maniac.cli.listing.discovery.enumerate_installations",
+        "maniac.cli.listing.resolution.enumerate_installations",
         lambda on_start=None, on_scan=None: (
             on_start and on_start(1),
             [(_FakeProvider(), _installation(binary="gum"))],

@@ -7,6 +7,7 @@ import pytest
 from maniac.config import Config
 from maniac.models import RepoSource
 from maniac.sources.providers import pipx
+from maniac.sources.providers.registry import registry
 
 _METADATA_TEMPLATE = """\
 Metadata-Version: 2.4
@@ -129,7 +130,7 @@ def test_resolve_source_reads_a_repository_project_url(tmp_path, monkeypatch) ->
     inst = provider.detect(bin_path)
     assert inst is not None
 
-    source = provider.resolve_source(inst, config=Config())
+    source = provider.resolve_source(inst, config=Config(), sources=registry)
 
     assert source == RepoSource(name="tlpui", target="d4nj1/TLPUI", is_local=False)
 
@@ -155,7 +156,7 @@ def test_resolve_source_prefers_a_repository_label_over_an_earlier_github_link(
     inst = provider.detect(bin_path)
     assert inst is not None
 
-    source = provider.resolve_source(inst, config=Config())
+    source = provider.resolve_source(inst, config=Config(), sources=registry)
 
     assert source == RepoSource(name="tlpui", target="d4nj1/TLPUI", is_local=False)
 
@@ -166,7 +167,7 @@ def test_resolve_source_returns_none_with_no_github_url(tmp_path, monkeypatch) -
     inst = provider.detect(bin_path)
     assert inst is not None
 
-    assert provider.resolve_source(inst, config=Config()) is None
+    assert provider.resolve_source(inst, config=Config(), sources=registry) is None
 
 
 def test_local_docs_finds_manpage_under_install_root(tmp_path, monkeypatch) -> None:

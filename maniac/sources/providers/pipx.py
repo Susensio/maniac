@@ -11,6 +11,7 @@ from ...models import Installation, RepoSource
 from .. import discovery
 from ..manpages import find_install_root_manpages
 from ..pathcache import resolve_cached
+from .base import SourceResolver
 
 
 class PipxProvider:
@@ -63,7 +64,7 @@ class PipxProvider:
         return None
 
     def resolve_source(
-        self, inst: Installation, *, config: Config
+        self, inst: Installation, *, config: Config, sources: SourceResolver
     ) -> RepoSource | None:
         metadata = find_distribution_metadata(inst.root, inst.package)
         if metadata is None:

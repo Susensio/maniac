@@ -13,6 +13,7 @@ import pytest
 from maniac.config import Config
 from maniac.models import RepoSource
 from maniac.sources.providers import go
+from maniac.sources.providers.registry import registry
 
 
 @pytest.fixture(autouse=True)
@@ -166,7 +167,7 @@ def test_resolve_source_derives_owner_repo_from_a_github_module(
     inst = go.GoProvider().detect(bin_path)
     assert inst is not None
 
-    source = go.GoProvider().resolve_source(inst, config=Config())
+    source = go.GoProvider().resolve_source(inst, config=Config(), sources=registry)
 
     assert source == RepoSource(
         name="herdr", target="ogulcancelik/herdr", is_local=False
@@ -193,7 +194,9 @@ def test_resolve_source_returns_none_for_a_non_github_module(
     inst = go.GoProvider().detect(bin_path)
     assert inst is not None
 
-    assert go.GoProvider().resolve_source(inst, config=Config()) is None
+    assert (
+        go.GoProvider().resolve_source(inst, config=Config(), sources=registry) is None
+    )
 
 
 def test_local_docs_finds_manpage_under_install_root(tmp_path, monkeypatch) -> None:

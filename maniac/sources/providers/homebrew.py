@@ -15,6 +15,7 @@ from ...models import Installation, RepoSource
 from .. import discovery
 from ..manpages import find_install_root_manpages
 from ..pathcache import resolve_cached
+from .base import SourceResolver
 
 _CELLAR_MARKER = "/Cellar/"
 
@@ -53,7 +54,7 @@ class HomebrewProvider:
         )
 
     def resolve_source(
-        self, inst: Installation, *, config: Config
+        self, inst: Installation, *, config: Config, sources: SourceResolver
     ) -> RepoSource | None:
         homepage = _brew_homepage(inst.package)
         if not homepage:

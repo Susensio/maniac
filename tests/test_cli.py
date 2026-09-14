@@ -177,7 +177,7 @@ def test_cli_source_crawl(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_cli_source_docs(monkeypatch: pytest.MonkeyPatch) -> None:
     raw_source = RepoSource(name="tmux", target="tmux/tmux-builds", is_local=False)
     monkeypatch.setattr(
-        "maniac.sources.discovery.discover_repo",
+        "maniac.sources.resolution.discover_repo",
         lambda tool, **kwargs: raw_source,
     )
     observed: list[RepoSource] = []
@@ -198,7 +198,7 @@ def test_cli_source_docs(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_cli_install_dry_run(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setattr(
-        "maniac.sources.discovery.loginpath.which_login",
+        "maniac.sources.loginpath.which_login",
         lambda name: Path(f"/bin/{name}"),
     )
     monkeypatch.setattr(
@@ -272,11 +272,11 @@ def test_cli_install_reuses_config_for_existing_destination(
 
     monkeypatch.setattr(cli_module, "Config", TrackingConfig)
     monkeypatch.setattr(
-        "maniac.orchestration.install.discovery.resolve_bin_path",
+        "maniac.orchestration.install.resolve_bin_path",
         lambda tool, bin_dir=None: Path(f"/bin/{tool}"),
     )
     monkeypatch.setattr(
-        "maniac.orchestration.install.discovery.find_installation",
+        "maniac.orchestration.install.resolution.find_installation",
         lambda tool, bin_dir=None: (Provider(), installation),
     )
     monkeypatch.setattr("maniac.manifest.Config", TrackingConfig)
@@ -297,7 +297,7 @@ def test_cli_install_always_installs(
     from maniac.models import PipelineResult
 
     monkeypatch.setattr(
-        "maniac.sources.discovery.loginpath.which_login",
+        "maniac.sources.loginpath.which_login",
         lambda name: Path(f"/bin/{name}"),
     )
     observed: dict[str, object] = {}
@@ -506,7 +506,7 @@ def test_cli_install_multiple_all_fail_exits_nonzero(
         raise ManiacError("boom")
 
     monkeypatch.setattr(
-        "maniac.sources.discovery.loginpath.which_login",
+        "maniac.sources.loginpath.which_login",
         lambda name: Path(f"/bin/{name}"),
     )
     monkeypatch.setattr("maniac.orchestration.pipeline.run_pipeline", _raise)
@@ -525,7 +525,7 @@ def test_cli_install_multiple_partial_success_exits_nonzero(
     from maniac.models import PipelineResult
 
     monkeypatch.setattr(
-        "maniac.sources.discovery.loginpath.which_login",
+        "maniac.sources.loginpath.which_login",
         lambda name: Path(f"/bin/{name}"),
     )
 

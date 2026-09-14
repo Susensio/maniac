@@ -1,4 +1,10 @@
-"""Dynamic repository discovery via local metadata and Mise's registry."""
+"""Mise registry and configuration lookups behind provider source resolution.
+
+Deliberately depends on no provider and no resolver: `providers/mise.py` and
+the URL cleaning its peers share both import this, so anything here reaching
+back up would close a cycle. Resolving a binary to a provider lives in
+`resolution.py`; naming a binary at all lives in `pathcache.py`.
+"""
 
 import io
 import re
@@ -6,10 +12,8 @@ import tarfile
 import tempfile
 import threading
 import tomllib
-from collections.abc import Callable
 from pathlib import Path
 from time import time
-from typing import TYPE_CHECKING
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
@@ -17,12 +21,6 @@ import zstandard
 
 from ..config import Config
 from ..logging import logger
-from ..models import RepoSource
-from . import loginpath
-
-if TYPE_CHECKING:
-    from ..models import Installation
-    from .providers.base import Provider
 
 MISE_REGISTRY_URL = "https://mise.jdx.dev/registry/latest.tar.zst"
 MISE_REGISTRY_TTL_SECONDS = 3_600
@@ -57,90 +55,6 @@ class _MiseRegistryLoader:
     def cache_clear(self) -> None:
         with self._guard:
             self._cache.clear()
-
-
-def resolve_bin_path(binary_name: str, bin_dir: str | Path | None) -> Path | None:
-    """Locate a binary's path: an explicit directory first, then the login `$PATH`.
-
-    With no `bin_dir`, resolution is exactly `loginpath.which_login` --
-    nothing else. `enumerate_installations` applies the identical first-
-    `$PATH`-entry-wins rule in bulk, by walking the login `$PATH` itself
-    once for every name rather than calling `which_login` once per name;
-    that walk, not a second notion of "which binary a name means", is the
-    only reason the mechanics differ here.
-
-    An explicit `bin_dir` is stated intent -- a directory the caller named,
-    not one MANIAC found -- and is checked first regardless of what the
-    login `$PATH` would have resolved to.
-    """
-    if bin_dir is not None:
-        explicit_path = Path(bin_dir) / binary_name
-        if explicit_path.exists():
-            return explicit_path
-    return loginpath.which_login(binary_name)
-
-
-def discover_repo(
-    binary_name: str, bin_dir: str | Path | None = None, *, config: Config
-) -> RepoSource | None:
-    """Discover an upstream repository or local source for a binary dynamically.
-
-    None means unresolvable: no provider (ADR-0015) detected an
-    installation behind this binary, so nothing installation-derived backs
-    a source for it. There is no bare-name fallback -- ADR-0015 rules that
-    "a tool with no provider is reported as unresolvable and nothing is
-    generated for it", closing the gap where this used to return
-    `RepoSource(name=binary, target=binary)`, reachable by `run_pipeline`
-    and liable to synthesize a page for a genuinely unresolved tool.
-    """
-    from .resolution import discover_repo as resolve_repo
-
-    return resolve_repo(binary_name, bin_dir=bin_dir, config=config)
-
-
-def find_installation(
-    binary_name: str, bin_dir: str | Path | None = None
-) -> "tuple[Provider, Installation] | None":
-    """Return the provider and `Installation` a binary resolves to, if any.
-
-    Shares `discover_repo`'s own bin-path resolution but stops at the
-    `Installation` itself rather than resolving its source -- ADR-0016's
-    tier 1 (install root) and tier 2 (repository, version matched) both
-    need the install root and version directly, not only what
-    `resolve_source` derives from them.
-    """
-    from .resolution import find_installation as resolve_installation
-
-    return resolve_installation(binary_name, bin_dir=bin_dir)
-
-
-def enumerate_installations(
-    on_start: Callable[[int], None] | None = None,
-    on_scan: Callable[[], None] | None = None,
-) -> "list[tuple[Provider, Installation]]":
-    """Walk the login `$PATH` once per unique binary name, resolved through the provider registry.
-
-    `status`'s enumeration (ADR-0016 Stage 7) inverts from scanning the
-    manpath to this: a binary is a unit MANIAC can act on because some
-    provider claims it, whether or not a manpage for it exists anywhere
-    yet -- capability the manpath scan could never see, not a page. A name
-    is resolved once, at its first `$PATH` occurrence, since that is the
-    binary that actually runs when two providers claim the same name
-    (ADR-0016's tie-break).
-
-    Walks `loginpath.login_path_dirs()` (ADR-0020) rather than the `$PATH`
-    MANIAC inherited, so the answer describes the machine rather than the
-    shell that happened to invoke this.
-
-    `on_start`/`on_scan`, both `None` by default, split the work into two
-    phases to instrument: `on_start` fires once with the candidate count,
-    right after the directory scan and before the per-candidate
-    `_detect_via_registry` loop that dominates the cost; `on_scan` fires
-    once per candidate processed in that loop.
-    """
-    from .resolution import enumerate_installations as resolve_installations
-
-    return resolve_installations(on_start=on_start, on_scan=on_scan)
 
 
 def _check_mise_toml(cfg_path: Path, tool_id: str, binary_name: str) -> str | None:

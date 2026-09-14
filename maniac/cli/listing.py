@@ -13,7 +13,7 @@ docstring as "the manpath is never scanned": `find_installed_manpage_path`
 (`sources/manpages.py`, `man -w`) is now called for every row, because the
 question this command answers is whether `man <tool>` works, not what
 MANIAC itself has done for a binary (ADR-0018). Enumeration is still a
-provider walk (`discovery.enumerate_installations`), not a manpath scan --
+provider walk (`resolution.enumerate_installations`), not a manpath scan --
 the unit stays a binary a provider detected, since that is still what
 bounds what a bulk install could act on -- but each row's *state* is now a
 reachability fact, checked against `man` directly.
@@ -47,7 +47,7 @@ from .. import manifest
 from ..config import Config
 from ..logging import logger
 from ..models import RepoSource
-from ..sources import discovery
+from ..sources import resolution
 from ..sources.crawler import get_version
 from ..sources.docs import discover_repo_manpage, discovered_manpage_uri
 from ..sources.documentation import documentation_source
@@ -58,6 +58,8 @@ from ..sources.manpages import (
 )
 from ..sources.packages import ExternalPageFreshness, verify_external_page
 from ..sources.pathcache import resolve_cached
+from ..sources.providers.base import DirectPageProvider
+from ..sources.providers.registry import registry
 from . import app, console, get_config
 from .render import _repo_cell
 
@@ -370,10 +372,9 @@ def _provider_target_freshness(
     provider: "Provider | None", inst: "Installation | None", target: Path | None
 ) -> bool | None:
     """Return a provider-specific target freshness verdict when one exists."""
-    checker = getattr(provider, "has_current_latest_manpage_target", None)
-    if inst is None or target is None or checker is None:
+    if inst is None or target is None or not isinstance(provider, DirectPageProvider):
         return None
-    return checker(inst, target)
+    return provider.is_direct_page_target_current(inst, target)
 
 
 def _resolve_upstream(
@@ -382,7 +383,7 @@ def _resolve_upstream(
     """Resolve `inst`'s upstream repository."""
     if provider is None or inst is None:
         return None
-    source = provider.resolve_source(inst, config=config)
+    source = registry.resolve_source(inst, config=config, provider=provider)
     return (
         documentation_source(source, config.documentation_repository_overrides)
         if source is not None
@@ -461,15 +462,15 @@ def _build_inventory(
     if tools:
         candidates = []
         for tool in dict.fromkeys(tools):
-            # No `discovery.discover_repo(tool)` fallback when `found` is
+            # No `resolution.discover_repo(tool)` fallback when `found` is
             # None: it shares `find_installation`'s own bin-path resolution.
-            found = discovery.find_installation(tool)
+            found = resolution.find_installation(tool)
             provider, inst = found if found else (None, None)
             candidates.append((provider, inst, tool))
         return candidates, False
 
     discovered = sorted(
-        discovery.enumerate_installations(
+        resolution.enumerate_installations(
             on_start=on_discovery_start,
             on_scan=on_discovery_scan,
         ),
@@ -726,7 +727,7 @@ def compute_rows(
 ) -> list[ToolRow]:
     """One row per binary: every provider-detected installation, or exactly the named tools.
 
-    With no names, walks `$PATH` (`discovery.enumerate_installations`) and
+    With no names, walks `$PATH` (`resolution.enumerate_installations`) and
     reports every binary some provider claims. With names, resolves
     exactly those, unfiltered; a name no provider claims still gets a row
     (`MISSING`, unless `man` or the manifest says otherwise) rather than
@@ -736,7 +737,7 @@ def compute_rows(
     instrumentation for a caller with a console in scope (the CLI command);
     every other caller, including tests, omits them and sees no behaviour
     change. `on_discovery_*` passes straight through to
-    `discovery.enumerate_installations` (skipped entirely on the `tools`
+    `resolution.enumerate_installations` (skipped entirely on the `tools`
     path, which never calls it); `on_row_*` wraps this function's own
     per-row `_classify` loop, whichever path runs it.
 

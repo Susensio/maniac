@@ -5,6 +5,7 @@ from pathlib import Path
 
 from maniac.config import Config
 from maniac.sources.providers import uv
+from maniac.sources.providers.registry import registry
 
 
 def _make_uv_tool(tmp_path: Path, tool: str, real_name: str) -> tuple[Path, Path]:
@@ -101,7 +102,7 @@ def test_resolve_source_finds_a_local_editable_checkout(tmp_path: Path) -> None:
     inst = uv.UvProvider().detect(bin_path)
     assert inst is not None
 
-    source = uv.UvProvider().resolve_source(inst, config=Config())
+    source = uv.UvProvider().resolve_source(inst, config=Config(), sources=registry)
 
     assert source is not None
     assert source.is_local
@@ -125,7 +126,7 @@ def test_resolve_source_reads_a_published_packages_repository_metadata(
     inst = uv.UvProvider().detect(bin_path)
     assert inst is not None
 
-    source = uv.UvProvider().resolve_source(inst, config=Config())
+    source = uv.UvProvider().resolve_source(inst, config=Config(), sources=registry)
 
     assert source is not None
     assert source.target == "astral-sh/ruff"
@@ -139,7 +140,9 @@ def test_resolve_source_returns_none_without_repository_metadata(
     inst = uv.UvProvider().detect(bin_path)
     assert inst is not None
 
-    assert uv.UvProvider().resolve_source(inst, config=Config()) is None
+    assert (
+        uv.UvProvider().resolve_source(inst, config=Config(), sources=registry) is None
+    )
 
 
 def test_uv_metadata_scans_are_cached_per_install_root(tmp_path: Path) -> None:
@@ -159,8 +162,14 @@ def test_uv_metadata_scans_are_cached_per_install_root(tmp_path: Path) -> None:
     assert first is not None
     assert second is not None
     assert first.version == second.version == "1.2.3"
-    assert uv.UvProvider().resolve_source(first, config=Config()) is not None
-    assert uv.UvProvider().resolve_source(second, config=Config()) is not None
+    assert (
+        uv.UvProvider().resolve_source(first, config=Config(), sources=registry)
+        is not None
+    )
+    assert (
+        uv.UvProvider().resolve_source(second, config=Config(), sources=registry)
+        is not None
+    )
 
     assert uv._installed_version.cache_info().hits == 1
     assert uv._local_editable_dir.cache_info().hits == 1

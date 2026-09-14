@@ -10,6 +10,7 @@ from pathlib import Path
 from maniac.config import Config
 from maniac.models import RepoSource
 from maniac.sources.providers import homebrew
+from maniac.sources.providers.registry import registry
 
 
 def _make_cellar_install(
@@ -62,7 +63,9 @@ def test_resolve_source_reads_a_github_homepage(tmp_path, monkeypatch) -> None:
         homebrew, "_brew_homepage", lambda package: "https://github.com/jqlang/jq"
     )
 
-    source = homebrew.HomebrewProvider().resolve_source(inst, config=Config())
+    source = homebrew.HomebrewProvider().resolve_source(
+        inst, config=Config(), sources=registry
+    )
 
     assert source == RepoSource(name="jq", target="jqlang/jq", is_local=False)
 
@@ -77,7 +80,12 @@ def test_resolve_source_returns_none_for_a_non_github_homepage(
         homebrew, "_brew_homepage", lambda package: "https://jqlang.org"
     )
 
-    assert homebrew.HomebrewProvider().resolve_source(inst, config=Config()) is None
+    assert (
+        homebrew.HomebrewProvider().resolve_source(
+            inst, config=Config(), sources=registry
+        )
+        is None
+    )
 
 
 def test_resolve_source_returns_none_when_brew_info_fails(
@@ -88,7 +96,12 @@ def test_resolve_source_returns_none_when_brew_info_fails(
     assert inst is not None
     monkeypatch.setattr(homebrew, "_brew_homepage", lambda package: None)
 
-    assert homebrew.HomebrewProvider().resolve_source(inst, config=Config()) is None
+    assert (
+        homebrew.HomebrewProvider().resolve_source(
+            inst, config=Config(), sources=registry
+        )
+        is None
+    )
 
 
 def test_local_docs_finds_manpage_under_install_root(tmp_path: Path) -> None:

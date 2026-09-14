@@ -1,10 +1,13 @@
-"""Tests for `ProviderRegistry` (ADR-0015): registration plus ordered iteration."""
+"""Tests for `ProviderRegistry` (ADR-0015): registration, ordered iteration, composition."""
 
+import importlib
+import sys
 from pathlib import Path
 
 from maniac.config import Config
 from maniac.models import Installation, RepoSource
 from maniac.sources import resolution
+from maniac.sources.providers.base import SourceResolver
 from maniac.sources.providers.registry import ProviderRegistry, registry
 
 
@@ -18,7 +21,7 @@ class _FakeProvider:
         return None
 
     def resolve_source(
-        self, inst: Installation, *, config: Config
+        self, inst: Installation, *, config: Config, sources: SourceResolver
     ) -> RepoSource | None:
         return None
 
@@ -185,3 +188,97 @@ def test_symlink_is_routed_by_its_resolved_target_but_detected_as_path_entry(
     assert provider.detect_paths == [entry]
     assert detected is not None
     assert detected.binary == "tool"
+
+
+class _ComposingFakeProvider(_FakeProvider):
+    """Describes a parent installation and asks the resolver it was handed for it."""
+
+    def __init__(self, name: str, parent: Installation) -> None:
+        super().__init__(name)
+        self.parent = parent
+
+    def resolve_source(
+        self, inst: Installation, *, config: Config, sources: SourceResolver
+    ) -> RepoSource | None:
+        return sources.resolve_source(self.parent, config=config)
+
+
+class _SourcedFakeProvider(_FakeProvider):
+    def __init__(self, name: str, source: RepoSource) -> None:
+        super().__init__(name)
+        self.source = source
+        self.resolved: list[Installation] = []
+
+    def resolve_source(
+        self, inst: Installation, *, config: Config, sources: SourceResolver
+    ) -> RepoSource | None:
+        self.resolved.append(inst)
+        return self.source
+
+
+def _installation(provider: str) -> Installation:
+    return Installation(
+        binary="tool",
+        bin_path=Path("/bin/tool"),
+        real_path=Path("/bin/tool"),
+        provider=provider,
+        package="tool",
+        version=None,
+        root=Path("/root"),
+    )
+
+
+def test_resolve_source_routes_a_composed_parent_to_its_own_provider() -> None:
+    """Cross-provider composition belongs to the registry: the composing provider
+    names its parent installation and never reaches for the peer that owns it.
+    """
+    parent = _installation("backend")
+    source = RepoSource(name="tool", target="owner/repo", is_local=False)
+    backend = _SourcedFakeProvider("backend", source)
+    composing = _ComposingFakeProvider("composing", parent)
+    reg = ProviderRegistry()
+    reg.register(composing)
+    reg.register(backend)
+
+    resolved = reg.resolve_source(_installation("composing"), config=Config())
+
+    assert resolved == source
+    assert backend.resolved == [parent]
+
+
+def test_resolve_source_leaves_an_unregistered_provider_name_unresolved() -> None:
+    assert (
+        ProviderRegistry().resolve_source(_installation("absent"), config=Config())
+        is None
+    )
+
+
+def test_resolve_source_uses_the_provider_the_caller_already_holds() -> None:
+    """`find_installation` returns the detecting provider; resolution reuses it
+    rather than looking its name up again.
+    """
+    source = RepoSource(name="tool", target="owner/repo", is_local=False)
+    detected = _SourcedFakeProvider("unregistered", source)
+
+    resolved = ProviderRegistry().resolve_source(
+        _installation("unregistered"), config=Config(), provider=detected
+    )
+
+    assert resolved == source
+
+
+def test_importing_resolution_mutates_no_provider_class() -> None:
+    """ADR-0015 composition is passed, not installed: importing the resolver must
+    not bind anything onto a provider class.
+    """
+    before = {
+        provider.__class__.__name__: set(vars(provider.__class__))
+        for provider in registry
+    }
+
+    importlib.reload(sys.modules["maniac.sources.resolution"])
+
+    assert {
+        provider.__class__.__name__: set(vars(provider.__class__))
+        for provider in registry
+    } == before

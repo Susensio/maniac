@@ -9,6 +9,7 @@ from ...models import Installation, RepoSource
 from .. import discovery
 from ..manpages import find_install_root_manpages
 from ..pathcache import resolve_cached
+from .base import SourceResolver
 
 _LIB_MARKER = "/.local/lib/"
 
@@ -47,7 +48,7 @@ class LocalLibProvider:
         )
 
     def resolve_source(
-        self, inst: Installation, *, config: Config
+        self, inst: Installation, *, config: Config, sources: SourceResolver
     ) -> RepoSource | None:
         if (inst.root / ".git").exists():
             remote = _git_remote(inst.root)

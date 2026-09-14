@@ -1,9 +1,7 @@
 """Mise-installed binaries under `~/.local/share/mise/installs/` (ADR-0015)."""
 
 import tomllib
-from collections.abc import Callable
 from pathlib import Path
-from typing import ClassVar
 
 from ...config import Config
 from ...logging import logger
@@ -11,6 +9,7 @@ from ...models import Installation, RepoSource
 from .. import discovery
 from ..manpages import find_install_root_manpages
 from ..pathcache import resolve_cached
+from .base import SourceResolver
 from .npm import read_package_json
 
 _INSTALLS_MARKER = "/.local/share/mise/installs/"
@@ -35,16 +34,6 @@ class MiseProvider:
     """
 
     name = "mise"
-    _composed_source_resolver: ClassVar[
-        Callable[[Installation, Config], RepoSource | None] | None
-    ] = None
-
-    @classmethod
-    def set_composed_source_resolver(
-        cls, resolver: Callable[[Installation, Config], RepoSource | None]
-    ) -> None:
-        """Bind resolution of installation records composed by Mise."""
-        cls._composed_source_resolver = resolver
 
     def can_detect(self, real_path: Path) -> bool:
         """Recognise mise's versioned installation layout."""
@@ -75,14 +64,23 @@ class MiseProvider:
         )
 
     def resolve_source(
-        self, inst: Installation, *, config: Config, offline: bool = False
+        self,
+        inst: Installation,
+        *,
+        config: Config,
+        sources: SourceResolver,
+        offline: bool = False,
     ) -> RepoSource | None:
         """`offline` skips only the mise-registry network fallback inside
         `discovery._resolve_from_mise` -- backend and npm-layout resolution are
         pure filesystem reads, so neither branch needs it.
+
+        A backend install mise composes is resolved through `sources`, the
+        resolver that started this resolution, rather than by reaching for the
+        backend's provider directly.
         """
         if inst.parent is not None:
-            return self._resolve_composed_source(inst.parent, config)
+            return sources.resolve_source(inst.parent, config=config)
         backend_record = _read_backend_record(inst.root)
         if backend_record is not None:
             repo = _repo_from_backend(*backend_record)
@@ -93,7 +91,7 @@ class MiseProvider:
             )
         parent = _build_npm_parent_from_layout(inst)
         if parent is not None:
-            source = self._resolve_composed_source(parent, config)
+            source = sources.resolve_source(parent, config=config)
             if source:
                 return source
         repo = discovery._resolve_from_mise(
@@ -106,7 +104,7 @@ class MiseProvider:
     def local_docs(self, inst: Installation) -> list[Path]:
         return find_install_root_manpages(inst.root, inst.binary)
 
-    def latest_manpage_target(self, inst: Installation, page: Path) -> Path | None:
+    def direct_page_target(self, inst: Installation, page: Path) -> Path | None:
         """Return a validated global `latest` alias path for one vendor page."""
         try:
             root = resolve_cached(inst.root)
@@ -119,9 +117,7 @@ class MiseProvider:
             return None
         return latest / relative_page
 
-    def has_current_latest_manpage_target(
-        self, inst: Installation, target: Path
-    ) -> bool:
+    def is_direct_page_target_current(self, inst: Installation, target: Path) -> bool:
         """Whether a recorded alias target still follows this installation."""
         latest = inst.root.parent / "latest"
         try:
@@ -137,14 +133,6 @@ class MiseProvider:
         except (OSError, ValueError):
             return False
         return (latest / relative_page).exists()
-
-    @classmethod
-    def _resolve_composed_source(
-        cls, parent: Installation, config: Config
-    ) -> RepoSource | None:
-        if cls._composed_source_resolver is None:
-            return None
-        return cls._composed_source_resolver(parent, config)
 
 
 def _read_backend_record(root: Path) -> tuple[str, str] | None:

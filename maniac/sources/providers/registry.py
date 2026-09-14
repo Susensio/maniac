@@ -3,8 +3,10 @@
 from collections.abc import Iterator
 from pathlib import Path
 
+from ...config import Config
+from ...models import Installation, RepoSource
 from ..pathcache import resolve_cached
-from .base import Provider
+from .base import Provider, RoutableProvider
 from .cargo import CargoProvider
 from .go import GoProvider
 from .homebrew import HomebrewProvider
@@ -20,7 +22,9 @@ _SYSTEM_BIN_DIRS = frozenset(
 
 
 class ProviderRegistry:
-    """Owns the ordered provider list; iteration order is registration order.
+    """Owns the ordered provider list and cross-provider source composition.
+
+    Iteration order is registration order.
 
     Where two providers could claim the same binary, ADR-0015 resolves the
     tie by `$PATH` order, not registry order -- callers walk providers per
@@ -55,10 +59,9 @@ class ProviderRegistry:
         candidates: list[Provider] = []
         has_direct_route = False
         for provider in self:
-            route = getattr(provider, "can_detect", None)
-            if route is None:
+            if not isinstance(provider, RoutableProvider):
                 candidates.append(provider)
-            elif route(real_path):
+            elif provider.can_detect(real_path):
                 candidates.append(provider)
                 has_direct_route = True
 
@@ -69,6 +72,28 @@ class ProviderRegistry:
             yield from candidates
             return
         yield from self
+
+    def provider_named(self, name: str) -> Provider | None:
+        """The registered provider called `name`, as `Installation.provider` records it."""
+        return next(
+            (provider for provider in self._providers if provider.name == name), None
+        )
+
+    def resolve_source(
+        self, inst: Installation, *, config: Config, provider: Provider | None = None
+    ) -> RepoSource | None:
+        """Resolve one installation's upstream, composing across providers.
+
+        `provider` is the one that detected `inst`, when the caller still holds
+        it; otherwise the registry looks it up by `inst.provider`, which is how
+        a parent installation another provider merely described gets resolved.
+        The registry passes itself down, so composition never needs a peer
+        import or class-global callback.
+        """
+        owner = provider if provider is not None else self.provider_named(inst.provider)
+        if owner is None:
+            return None
+        return owner.resolve_source(inst, config=config, sources=self)
 
 
 registry = ProviderRegistry()

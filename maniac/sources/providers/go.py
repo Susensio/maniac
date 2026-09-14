@@ -15,6 +15,7 @@ from ...logging import logger
 from ...models import Installation, RepoSource
 from ..manpages import find_install_root_manpages
 from ..pathcache import resolve_cached
+from .base import SourceResolver
 
 
 class GoProvider:
@@ -62,7 +63,7 @@ class GoProvider:
         )
 
     def resolve_source(
-        self, inst: Installation, *, config: Config
+        self, inst: Installation, *, config: Config, sources: SourceResolver
     ) -> RepoSource | None:
         info = _read_module_info(inst.real_path)
         if info is None:

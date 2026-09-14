@@ -44,9 +44,9 @@ def docs(
     ] = None,
 ) -> None:
     """Discover repository and extract documentation files for a tool."""
-    from ..sources.discovery import discover_repo
     from ..sources.docs import fetch_and_extract_docs
     from ..sources.documentation import documentation_source
+    from ..sources.resolution import discover_repo
 
     try:
         cfg = get_config(ctx)
