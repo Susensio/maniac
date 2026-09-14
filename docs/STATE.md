@@ -59,6 +59,23 @@ ADR-0036 therefore restores identity for every row and keeps ADR-0025's deferral
 remote page probe, which is genuinely per-row network work. `needs_upstream_identity` and
 `_unresolved_locally` were deleted rather than left as pass-throughs.
 
+### Sibling binaries group only in the final table
+
+`maniac list` unfiltered on a TTY streamed every binary separately while
+`maniac list --available` collapsed siblings, so the same tools rendered in two shapes
+depending on the flags. Pre-existing, not a Wave B regression: the control flow is
+identical at `e9f8873^`.
+
+The cause is not an oversight. `_grouped_for_display` keys on
+`(provider, package, state, source, upstream)`, and state, source and upstream do not exist
+when ADR-0024's streaming skeleton is built -- the skeleton carries every binary up front
+precisely so rows stay stable while results land. Collapsing during streaming would make
+rows rearrange as they arrive.
+
+The decision is to stream ungrouped and collapse once at completion, in the final render
+that already exists separately from the live one. Both the normal-final and the
+alternate-screen paths must collapse; the live table is unchanged.
+
 ### Wave C -- not started
 
 Two entries remain under "Architecture review follow-up": one verified-source candidate
