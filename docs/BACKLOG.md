@@ -25,11 +25,6 @@ Open work with no single line to mark.
 
 ### Architecture review follow-up
 
-- Make manifest loading a pure serialization operation and move legacy/link reconciliation into one explicit lifecycle service shared with installation.
-  Loading must parse and validate persisted ownership facts only: a `lookup()` from `list` must neither replace a manpath link nor remove a durable target.
-  The lifecycle service must own provider-page discovery, ownership and checksum checks, link replacement, durable-target cleanup, and manifest updates for reconciliation, installation, and uninstallation.
-  Keep legacy-copy recovery and install-root direct-link migration conservative, but test their filesystem transitions through that one seam instead of reaching them as an effect of manifest deserialization.
-  This removes the `manifest`/`installer` deferred-import cycle and gives read-only callers a locally testable interface.
 - Break discovery/resolution's upward imports and Mise class-global callback wiring with a dependency-neutral path resolver and an explicitly passed provider registry or resolver context.
   `resolution.py` currently installs the composed-source resolver on `MiseProvider` at import time, so composition depends on process-global state rather than the resolver that initiated it.
 - Define provider capabilities as typed contracts or capability objects instead of optional `getattr` methods and peer-provider helpers.
@@ -48,15 +43,19 @@ Open work with no single line to mark.
   Keep a non-CLI inventory service that owns candidate enumeration, local classification, bounded upstream probes, deduplication, and ordered row snapshots.
   Keep Rich rendering and the Typer command as thin adapters over that inventory interface, so progress callbacks and terminal refresh timing cannot steer classification facts.
   Preserve ADR-0024's stable streaming rows and ADR-0025's local-first upstream policy as contracts tested at the inventory seam; terminal tests should cover only rendering behavior.
-- Split `sources/docs.py` into repository acquisition, release retrieval, cache, page selection, and documentation extraction behind a small facade.
-  Repository acquisition must contain bare-ref fetching, tag selection, and versioned cache materialization.
-  Release retrieval must contain GitHub release metadata, bounded asset retrieval, archive validation, and its cache/probe expiry rules.
-  Page selection must own primary-versus-companion identity, source URI recording, and materialization; extraction must own documentation-root walking, prioritization, truncation, and formatting.
-  Keep one facade for callers so cache, release, repository, page, and extraction detail gain depth without leaking into install, list, or synthesis tests.
 - Replace correlated `RepoSource` string fields with validated local and remote source variants carrying canonical identity and clone data.
 
 ### Maintainability
 
+- Thread probe definitiveness back as a return value instead of `docs.cache`'s module-level `_lookup_state` thread-local.
+  ADR-0033's split made that cross-module channel visible without removing it: `cache` writes it and `repository` reads it.
+  Removing it touches every probe signature, so it was left out of the split deliberately.
+- Replace `installer.install_manpage`'s and `manifest.record`'s eleven-parameter signatures with one entry record.
+  Both describe the same installed page and drifted into parallel positional lists; ADR-0034 moved their coordination but not their shape.
+- Split `sources/docs/release._fetch_and_materialize_release_asset`'s direct-asset and archive-asset flows.
+  They are two flows sharing one function, which is why it still carries seven returns after ADR-0033.
+- Split `tests/test_docs.py` to mirror the five modules behind the ADR-0033 facade.
+  It is 1301 lines against a package whose patch targets are now per-module; the split rehomed the targets but not the file.
 - Decide whether `Config` binds XDG paths per instance or intentionally at import time, then make discovery consistent.
   Current frozen module globals make ordinary environment monkeypatches ineffective after import; this is a configuration-lifecycle decision deserving an ADR.
 - Extend installation-derived package metadata fallback beyond npm for Python, Cargo, Go, and Homebrew.
