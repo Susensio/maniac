@@ -25,7 +25,7 @@ These are findings the work surfaced and deliberately did not take; they are fir
   Removing it touches every probe signature, so it was left out of the split deliberately.
 - Replace `installer.install_manpage`'s and `manifest.record`'s eleven-parameter signatures with one entry record.
   Both describe the same installed page and drifted into parallel positional lists; ADR-0034 moved their coordination but not their shape.
-  Do not raise ruff's `max-args` to make the finding go away; the parameter lists are the defect.
+  Both still trip the raised `max-args = 10`, which is the point of that threshold: eleven parameters is coordination, seven is a command surface.
 - Split `sources/docs/release._fetch_and_materialize_release_asset`'s direct-asset and archive-asset flows.
   They are two flows sharing one function, which is why it still carries seven returns after ADR-0033.
 
