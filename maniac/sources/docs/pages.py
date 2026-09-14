@@ -84,7 +84,7 @@ def _repository_page_uri(source: RepoSource, ref: str, path: str) -> str | None:
 def _materialize_page(
     cache_dir: Path, source: RepoSource, ref: str, original_path: str, content: bytes
 ) -> Path:
-    key = sha256(f"{source.target}\0{ref}\0{original_path}".encode()).hexdigest()
+    key = sha256(f"{source.identity}\0{ref}\0{original_path}".encode()).hexdigest()
     destination = cache_dir / "manpages" / key / Path(original_path).name
     with cache._cache_lock(destination):
         destination.parent.mkdir(parents=True, exist_ok=True)

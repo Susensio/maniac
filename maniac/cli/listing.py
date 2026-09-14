@@ -94,7 +94,7 @@ def _bare_names(rows: list[ToolRow]) -> list[str]:
     return list(seen)
 
 
-def _upstream_key(upstream: RepoSource | None) -> tuple[str, bool] | None:
+def _upstream_key(upstream: RepoSource | None) -> str | None:
     """Hashable identity of a `RepoSource` by what the Upstream column renders.
 
     `RepoSource.name` is deliberately excluded: it carries the *binary*
@@ -107,7 +107,7 @@ def _upstream_key(upstream: RepoSource | None) -> tuple[str, bool] | None:
     """
     if upstream is None:
         return None
-    return (upstream.target, upstream.is_local)
+    return upstream.identity
 
 
 def _grouped_for_display(

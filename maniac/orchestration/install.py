@@ -231,7 +231,7 @@ def _try_repository(tool: ResolvedTool, *, force: bool) -> InstallOutcome | None
             candidate,
             _manpage_owner(candidate),
             Tier.REPOSITORY,
-            source.target,
+            source.identity,
             target_dir=_manpage_directory(candidate, cfg),
             force=force,
             version=inst.version,

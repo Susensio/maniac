@@ -7,7 +7,7 @@ from pathlib import Path
 
 from ...config import Config
 from ...logging import logger
-from ...models import Installation, RepoSource
+from ...models import Installation, RemoteRepoSource, RepoSource
 from .. import discovery
 from ..manpages import find_install_root_manpages
 from ..pathcache import resolve_cached
@@ -70,9 +70,7 @@ class PipxProvider:
         if metadata is None:
             return None
         repo = repository_from_metadata(metadata)
-        return (
-            RepoSource(name=inst.binary, target=repo, is_local=False) if repo else None
-        )
+        return RemoteRepoSource.from_identifier(inst.binary, repo) if repo else None
 
     def local_docs(self, inst: Installation) -> list[Path]:
         return find_install_root_manpages(inst.root, inst.binary)

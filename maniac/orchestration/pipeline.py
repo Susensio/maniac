@@ -182,7 +182,7 @@ def _report_material(
         tool=tool.tool_name,
         commands=len(tree),
         subcommands=max(len(tree) - 1, 0),
-        repository=source.target if source is not None else None,
+        repository=source.identity if source is not None else None,
         repository_docs=len(doc_files),
         repository_docs_version_matched=matched,
     )

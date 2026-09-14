@@ -11,41 +11,159 @@ from pathlib import Path
 _BACKEND_PREFIX = re.compile(r"^([a-zA-Z][\w-]*):(.+)$")
 
 
-@dataclass
-class RepoSource:
+def _clone_url_for_identifier(identifier: str) -> str | None:
+    """Return the only clone URL justified by one remote identity."""
+    if identifier.startswith("LOCAL:"):
+        raise ValueError("a remote source cannot use a reserved local identity")
+    if identifier.startswith(("http://", "https://")):
+        return identifier
+    prefix_match = _BACKEND_PREFIX.match(identifier)
+    if prefix_match:
+        backend, package = prefix_match.groups()
+        if backend != "aqua":
+            return None
+        segments = package.split("/")
+        return (
+            f"https://github.com/{'/'.join(segments[:2])}.git"
+            if len(segments) >= 2
+            else None
+        )
+    return f"https://github.com/{identifier}.git" if "/" in identifier else None
+
+
+class _RepoSourceMeta(type):
+    """Build a concrete source without exposing the retired field bundle."""
+
+    def __call__(
+        cls, *args: object, **kwargs: object
+    ) -> "LocalRepoSource | RemoteRepoSource":
+        if cls is not RepoSource:
+            return super().__call__(*args, **kwargs)
+        name = kwargs.get("name", args[0] if args else None)
+        target = kwargs.get("target", args[1] if len(args) > 1 else None)
+        is_local = kwargs.get("is_local", args[2] if len(args) > 2 else None)
+        local_path = kwargs.get("local_path", args[3] if len(args) > 3 else None)
+        if (
+            not isinstance(name, str)
+            or not isinstance(target, str)
+            or not isinstance(is_local, bool)
+        ):
+            raise TypeError("RepoSource needs name, target, and is_local")
+        if local_path is not None and not isinstance(local_path, Path):
+            raise TypeError("a local path must be a Path")
+        if is_local:
+            if local_path is not None and target != f"LOCAL:{local_path}":
+                raise ValueError("a local source target must name its local path")
+            if not target.startswith("LOCAL:"):
+                raise ValueError("a local source target must start with LOCAL:")
+            return LocalRepoSource(
+                name, local_path or Path(target.removeprefix("LOCAL:"))
+            )
+        if local_path is not None or target.startswith("LOCAL:"):
+            raise ValueError("a remote source cannot carry a local path")
+        return RemoteRepoSource.from_identifier(name, target)
+
+
+class RepoSource(metaclass=_RepoSourceMeta):
+    """Compatibility constructor for a validated local or remote source.
+
+    New production code constructs ``LocalRepoSource`` or ``RemoteRepoSource``
+    directly.  Keeping this boundary accepts old serialized/test-shaped input
+    while rejecting the impossible combinations that its old correlated fields
+    permitted.
+    """
+
+    def __init__(
+        self,
+        name: str,
+        target: str,
+        is_local: bool,
+        local_path: Path | None = None,
+    ) -> None:
+        raise TypeError("RepoSource constructs a local or remote variant")
+
     name: str
-    target: str  # "owner/repo", "LOCAL:/path", "https://...", or "backend:identifier"
-    is_local: bool
-    local_path: Path | None = None
+    target: str
+    local_path: Path | None
+
+    @property
+    def identity(self) -> str:
+        raise NotImplementedError
 
     @property
     def clone_url(self) -> str | None:
-        """GitHub clone URL for a bare "owner/repo" shorthand, or None if not resolvable.
+        raise NotImplementedError
 
-        Aqua's package identifier is itself an "owner/repo" pair, so an
-        "aqua:" prefix is stripped and linked; every other backend
-        ("npm:", "pipx:", "cargo:", ...) names a registry package with no
-        fixed relationship to a GitHub path, so guessing a link there would
-        point at the wrong repository rather than none.
-        """
-        if self.is_local:
-            return None
-        if self.target.startswith(("http://", "https://")):
-            return self.target
+    @property
+    def is_local(self) -> bool:
+        raise NotImplementedError
 
-        target = self.target
-        prefix_match = _BACKEND_PREFIX.match(target)
-        if prefix_match:
-            backend, rest = prefix_match.group(1), prefix_match.group(2)
-            if backend != "aqua":
-                return None
-            segments = rest.split("/")
-            if len(segments) < 2:
-                return None
-            target = "/".join(segments[:2])
 
-        if "/" in target:
-            return f"https://github.com/{target}.git"
+@dataclass(frozen=True, slots=True)
+class LocalRepoSource(RepoSource):
+    """A checkout on this machine, identified solely by its path."""
+
+    name: str
+    path: Path
+
+    def __post_init__(self) -> None:
+        if not self.name:
+            raise ValueError("a source name cannot be empty")
+
+    @property
+    def identity(self) -> str:
+        """Canonical local identity retained for presentation and provenance."""
+        return f"LOCAL:{self.path}"
+
+    @property
+    def clone_url(self) -> None:
+        return None
+
+    @property
+    def is_local(self) -> bool:
+        return True
+
+    @property
+    def local_path(self) -> Path:
+        return self.path
+
+    @property
+    def target(self) -> str:
+        """Legacy serialized/display spelling of ``identity``."""
+        return self.identity
+
+
+@dataclass(frozen=True, slots=True)
+class RemoteRepoSource(RepoSource):
+    """A remote source with display identity and already-resolved clone data."""
+
+    name: str
+    identity: str
+    clone_url: str | None
+
+    def __post_init__(self) -> None:
+        if not self.name or not self.identity:
+            raise ValueError("a remote source needs a name and identity")
+        expected_clone_url = _clone_url_for_identifier(self.identity)
+        if self.clone_url != expected_clone_url:
+            raise ValueError("a remote source clone URL must match its identity")
+
+    @classmethod
+    def from_identifier(cls, name: str, identifier: str) -> "RemoteRepoSource":
+        """Normalize a discovered identity once, retaining only a justified clone URL."""
+        return cls(name, identifier, _clone_url_for_identifier(identifier))
+
+    @property
+    def target(self) -> str:
+        """Legacy serialized/display spelling of ``identity``."""
+        return self.identity
+
+    @property
+    def is_local(self) -> bool:
+        return False
+
+    @property
+    def local_path(self) -> None:
         return None
 
 

@@ -11,7 +11,7 @@ from pathlib import Path
 
 from ...config import Config
 from ...logging import logger
-from ...models import Installation, RepoSource
+from ...models import Installation, RemoteRepoSource, RepoSource
 from .. import discovery
 from ..manpages import find_install_root_manpages
 from ..pathcache import resolve_cached
@@ -62,7 +62,7 @@ class HomebrewProvider:
         cleaned = discovery._clean_git_url(homepage)
         if cleaned == homepage:
             return None
-        return RepoSource(name=inst.binary, target=cleaned, is_local=False)
+        return RemoteRepoSource.from_identifier(inst.binary, cleaned)
 
     def local_docs(self, inst: Installation) -> list[Path]:
         return find_install_root_manpages(inst.root, inst.binary)

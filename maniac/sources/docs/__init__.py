@@ -9,7 +9,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from ...config import Config
-from ...models import DocFile, RepoSource
+from ...models import DocFile, LocalRepoSource, RepoSource
 from ..manpages import find_repo_manpage
 from . import cache, extraction, pages, release, repository
 from .extraction import MAX_TOTAL_DOC_CHARS
@@ -54,7 +54,7 @@ def fetch_and_extract_docs(
     doc_files = extraction.extract_docs_from_dir(
         target_path, max_total_chars=max_total_chars
     )
-    if source.is_local:
+    if isinstance(source, LocalRepoSource):
         return doc_files, matched
 
     remaining_chars = max_total_chars - sum(len(doc.content) for doc in doc_files)
@@ -109,10 +109,8 @@ def discover_repo_manpages(
     """
     cfg = config or Config()
     cache_dir_path = Path(cache_dir) if cache_dir is not None else cfg.cache_dir
-    if source.is_local:
-        if source.local_path is None:
-            return []
-        page = find_repo_manpage(source.local_path, binary_name)
+    if isinstance(source, LocalRepoSource):
+        page = find_repo_manpage(source.path, binary_name)
         return (
             [page] if page is not None and pages._valid_page(page, binary_name) else []
         )

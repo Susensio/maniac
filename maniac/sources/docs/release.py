@@ -37,7 +37,7 @@ def _discover_github_release_manpages_result(probe: _Probe) -> _ProbeResult:
 
 def _release_tag(probe: _Probe) -> str | _ProbeResult:
     """Validate the GitHub source and resolve its version-matched release tag."""
-    if probe.version is None or probe.source.target.count("/") != 1:
+    if probe.version is None or probe.source.identity.count("/") != 1:
         return _ProbeResult([], True)
     clone_url = probe.source.clone_url
     if clone_url is None:
@@ -51,7 +51,7 @@ def _release_tag(probe: _Probe) -> str | _ProbeResult:
 def _release_assets(probe: _Probe, tag: str) -> list[object] | _ProbeResult:
     """Fetch and validate GitHub release metadata before inspecting assets."""
     metadata, definitive = cache._download_cached_result(
-        f"https://api.github.com/repos/{probe.source.target}/releases/tags/{tag}",
+        f"https://api.github.com/repos/{probe.source.identity}/releases/tags/{tag}",
         probe.cache_dir,
         probe.cfg,
         max_age=_NEGATIVE_CACHE_TTL,

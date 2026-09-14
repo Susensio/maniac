@@ -11,7 +11,7 @@ from pathlib import Path
 
 from ..config import Config
 from ..logging import logger
-from ..models import Installation, RepoSource
+from ..models import Installation, LocalRepoSource, RepoSource
 from ..sources.docs import discover_repo_manpage
 from ..sources.docs.pages import discovered_manpage_uri
 from ..sources.documentation import documentation_source
@@ -59,7 +59,7 @@ def is_upstream_eligible(row: ToolRow, inst: Installation | None) -> bool:
 
 def probe_key(source: RepoSource, inst: Installation) -> ProbeKey:
     """Identity of one version-pinned availability probe."""
-    return (source.clone_url or source.target, inst.version or "", inst.binary)
+    return (source.clone_url or source.identity, inst.version or "", inst.binary)
 
 
 def probe_upstream(
@@ -78,7 +78,7 @@ def probe_upstream(
             return None
         uri = (
             page.absolute().as_uri()
-            if source.is_local
+            if isinstance(source, LocalRepoSource)
             else discovered_manpage_uri(page)
         )
         return page, uri
@@ -87,7 +87,7 @@ def probe_upstream(
         logger.debug(
             "Error probing upstream manpage",
             tool=inst.binary,
-            source=source.target,
+            source=source.identity,
             error=str(error),
         )
         return None

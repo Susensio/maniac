@@ -2,7 +2,50 @@
 
 from pathlib import Path
 
-from maniac.models import RepoSource
+import pytest
+
+from maniac.models import LocalRepoSource, RemoteRepoSource, RepoSource
+
+
+def test_source_variants_carry_identity_and_clone_data() -> None:
+    local = LocalRepoSource("tool", Path("/workspace/tool"))
+    remote = RemoteRepoSource.from_identifier("tool", "owner/tool")
+
+    assert local.identity == "LOCAL:/workspace/tool"
+    assert local.clone_url is None
+    assert remote.identity == "owner/tool"
+    assert remote.clone_url == "https://github.com/owner/tool.git"
+
+
+def test_direct_remote_variant_requires_its_derived_clone_data() -> None:
+    assert (
+        RemoteRepoSource(
+            "tool", "aqua:sharkdp/pastel", "https://github.com/sharkdp/pastel.git"
+        ).clone_url
+        == "https://github.com/sharkdp/pastel.git"
+    )
+    assert RemoteRepoSource("tool", "npm:tool", None).clone_url is None
+
+    with pytest.raises(ValueError, match="clone URL"):
+        RemoteRepoSource("tool", "npm:tool", "https://github.com/wrong/tool.git")
+    with pytest.raises(ValueError, match="reserved local"):
+        RemoteRepoSource("tool", "LOCAL:/workspace/tool", None)
+
+
+def test_legacy_constructor_rejects_impossible_correlated_fields() -> None:
+    with pytest.raises(ValueError, match="local source target"):
+        RepoSource(
+            name="tool",
+            target="https://example.com/tool",
+            is_local=True,
+            local_path=Path("/workspace/tool"),
+        )
+    with pytest.raises(ValueError, match="remote source"):
+        RepoSource(
+            name="tool",
+            target="LOCAL:/workspace/tool",
+            is_local=False,
+        )
 
 
 def test_clone_url_bare_owner_repo() -> None:

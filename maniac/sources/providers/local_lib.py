@@ -5,7 +5,7 @@ from pathlib import Path
 
 from ...config import Config
 from ...logging import logger
-from ...models import Installation, RepoSource
+from ...models import Installation, LocalRepoSource, RemoteRepoSource, RepoSource
 from .. import discovery
 from ..manpages import find_install_root_manpages
 from ..pathcache import resolve_cached
@@ -53,17 +53,10 @@ class LocalLibProvider:
         if (inst.root / ".git").exists():
             remote = _git_remote(inst.root)
             if remote:
-                return RepoSource(
-                    name=inst.binary,
-                    target=discovery._clean_git_url(remote),
-                    is_local=False,
+                return RemoteRepoSource.from_identifier(
+                    inst.binary, discovery._clean_git_url(remote)
                 )
-        return RepoSource(
-            name=inst.binary,
-            target=f"LOCAL:{inst.root}",
-            is_local=True,
-            local_path=inst.root,
-        )
+        return LocalRepoSource(inst.binary, inst.root)
 
     def local_docs(self, inst: Installation) -> list[Path]:
         return find_install_root_manpages(inst.root, inst.binary)

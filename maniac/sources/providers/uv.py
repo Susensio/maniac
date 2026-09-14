@@ -6,7 +6,7 @@ from pathlib import Path
 
 from ...config import Config
 from ...logging import logger
-from ...models import Installation, RepoSource
+from ...models import Installation, LocalRepoSource, RemoteRepoSource, RepoSource
 from ..manpages import find_install_root_manpages
 from ..pathcache import resolve_cached
 from .base import SourceResolver
@@ -47,17 +47,10 @@ class UvProvider:
     ) -> RepoSource | None:
         local_dir = _local_editable_dir(inst.root)
         if local_dir is not None:
-            return RepoSource(
-                name=inst.binary,
-                target=f"LOCAL:{local_dir}",
-                is_local=True,
-                local_path=local_dir,
-            )
+            return LocalRepoSource(inst.binary, local_dir)
         metadata = find_distribution_metadata(inst.root, inst.package)
         repo = repository_from_metadata(metadata) if metadata is not None else None
-        return (
-            RepoSource(name=inst.binary, target=repo, is_local=False) if repo else None
-        )
+        return RemoteRepoSource.from_identifier(inst.binary, repo) if repo else None
 
     def local_docs(self, inst: Installation) -> list[Path]:
         return find_install_root_manpages(inst.root, inst.binary)

@@ -3,6 +3,8 @@
 from pathlib import Path
 from typing import Any
 
+from ..models import LocalRepoSource, RemoteRepoSource
+
 
 def _home_relative(path: Path) -> str:
     """Path string with `$HOME` collapsed to `~`, or unchanged when outside it."""
@@ -15,7 +17,7 @@ def _home_relative(path: Path) -> str:
         return str(path)
 
 
-def _local_cell(source: Any) -> Any:
+def _local_cell(source: LocalRepoSource) -> Any:
     """Render a local checkout as a `file://` link to its path.
 
     The stored `LOCAL:` prefix is dropped: a leading `~` or `/` already
@@ -27,7 +29,7 @@ def _local_cell(source: Any) -> Any:
     from rich.style import Style
     from rich.text import Text
 
-    path = source.local_path or Path(source.target.removeprefix("LOCAL:"))
+    path = source.path
     text = Text(_home_relative(path))
     style = Style(color="yellow", italic=True)
     if path.is_absolute():
@@ -47,16 +49,16 @@ def _repo_cell(source: Any, *, blank_when_unresolvable: bool = False) -> Any:
     from rich.style import Style
     from rich.text import Text
 
-    if not source.is_local and source.target == source.name:
+    if isinstance(source, RemoteRepoSource) and source.identity == source.name:
         return Text("" if blank_when_unresolvable else "Unknown", style="dim")
 
-    if source.is_local:
+    if isinstance(source, LocalRepoSource):
         return _local_cell(source)
 
     clone_url = source.clone_url
     if clone_url is None:
-        return Text(source.target, style="yellow")
-    text = Text(source.target)
+        return Text(source.identity, style="yellow")
+    text = Text(source.identity)
     text.stylize(
         Style(
             color="green",

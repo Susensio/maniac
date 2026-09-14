@@ -12,7 +12,7 @@ from pathlib import Path
 
 from ...config import Config
 from ...logging import logger
-from ...models import Installation, RepoSource
+from ...models import Installation, RemoteRepoSource, RepoSource
 from ..manpages import find_install_root_manpages
 from ..pathcache import resolve_cached
 from .base import SourceResolver
@@ -74,9 +74,7 @@ class GoProvider:
         segments = mod_path.removeprefix("github.com/").split("/")
         if len(segments) < 2:
             return None
-        return RepoSource(
-            name=inst.binary, target="/".join(segments[:2]), is_local=False
-        )
+        return RemoteRepoSource.from_identifier(inst.binary, "/".join(segments[:2]))
 
     def local_docs(self, inst: Installation) -> list[Path]:
         return find_install_root_manpages(inst.root, inst.binary)

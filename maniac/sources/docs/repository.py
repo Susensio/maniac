@@ -11,7 +11,7 @@ from pathlib import Path
 
 from ...config import Config
 from ...logging import logger
-from ...models import DocFile, RepoSource
+from ...models import DocFile, LocalRepoSource, RepoSource
 from . import cache, extraction, pages
 from .cache import _NEGATIVE_CACHE_TTL, _lookup_state
 from .extraction import DOC_DIRS
@@ -33,8 +33,8 @@ def resolve_repo_dir(
     Returns None, rather than falling back to the default branch, when no
     tag matches.
     """
-    if source.is_local and source.local_path:
-        return source.local_path
+    if isinstance(source, LocalRepoSource):
+        return source.path
 
     cache_dir_path.mkdir(parents=True, exist_ok=True)
     clone_url = source.clone_url

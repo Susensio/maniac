@@ -59,7 +59,7 @@ def docs(
             return
         source = documentation_source(source, cfg.documentation_repository_overrides)
         console.print(
-            f"[bold green]Discovered repository source:[/bold green] {source.target} (local={source.is_local})"
+            f"[bold green]Discovered repository source:[/bold green] {source.identity} (local={source.is_local})"
         )
         doc_files, _ = fetch_and_extract_docs(source, cache_dir=cache_dir, config=cfg)
         console.print(
