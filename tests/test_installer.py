@@ -5,12 +5,7 @@ import pytest
 from maniac import manifest as manifest_module
 from maniac.config import Config
 from maniac.generation.compiler import build_provenance_header
-from maniac.installer import (
-    install_manpage,
-    list_installed_manpages,
-    read_provenance_header,
-    uninstall_manpage,
-)
+from maniac.installer import install_manpage, uninstall_manpage
 from maniac.manifest import Tier
 
 
@@ -19,22 +14,6 @@ def _isolated_xdg_paths(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None
     """Keep default Config instances away from a developer's MANIAC state."""
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg-data"))
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "xdg-state"))
-
-
-def test_read_provenance_header(tmp_path: Path) -> None:
-    f = tmp_path / "mytool.1"
-    header = build_provenance_header(tool_name="mytool", model="Gemini 3.7 Flash")
-    f.write_text(header + ".TH MYTOOL 1\n", encoding="utf-8")
-
-    meta = read_provenance_header(f)
-    assert meta is not None
-    assert meta["tool"] == "mytool"
-    assert meta["model"] == "Gemini 3.7 Flash"
-    assert "date" in meta
-
-    foreign_file = tmp_path / "vendor.1"
-    foreign_file.write_text(".TH VENDOR 1\nOfficial manual", encoding="utf-8")
-    assert read_provenance_header(foreign_file) is None
 
 
 def test_install_manpage_clean(tmp_path: Path) -> None:
@@ -777,35 +756,6 @@ def test_uninstall_manpage_vanished_entry_is_forgotten(tmp_path: Path) -> None:
     assert result.removed == []
     assert result.foreign_kept is None
     assert manifest_module.lookup("tool", config=cfg) is None
-
-
-def test_read_provenance_header_permission_denied(tmp_path: Path) -> None:
-    """Low: EACCES must not be silently treated as 'foreign page'."""
-    f = tmp_path / "tool.1"
-    f.write_text(".TH TOOL 1", encoding="utf-8")
-    f.chmod(0o000)
-    try:
-        with pytest.raises(PermissionError):
-            read_provenance_header(f)
-    finally:
-        f.chmod(0o644)
-
-
-def test_list_installed_manpages(tmp_path: Path) -> None:
-    man_dir = tmp_path / "man1"
-    man_dir.mkdir(parents=True)
-
-    header1 = build_provenance_header("tool1", model="Flash")
-    (man_dir / "tool1.1").write_text(header1 + ".TH TOOL1 1", encoding="utf-8")
-
-    (man_dir / "vendor.1").write_text(".TH VENDOR 1 vendor page", encoding="utf-8")
-
-    cfg = Config(man_dir=man_dir, output_dir=tmp_path / "data_empty")
-    items = list_installed_manpages(config=cfg)
-
-    assert len(items) == 1
-    assert items[0]["tool"] == "tool1"
-    assert items[0]["model"] == "Flash"
 
 
 def test_round_trip_install_root(tmp_path: Path) -> None:

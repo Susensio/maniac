@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from ..config import Config
-from ..installer import PROVENANCE_SIGNATURE
+from ..lifecycle import PROVENANCE_SIGNATURE
 from ..logging import logger
 
 

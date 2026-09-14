@@ -7,14 +7,12 @@ expected manpath link; a provenance header on tier-3 pages is informational.
 
 import hashlib
 import json
-import shutil
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from typing import Any
 
 from .config import Config
-from .logging import logger
 
 # Unbumped for the `version` field (ADR-0018): a mismatch here empties the
 # whole manifest on load, and an absent `version` already reads None on its
@@ -157,81 +155,19 @@ def _row_to_entry(row: Any) -> Entry | None:
         return None
 
 
-def _seed_from_headers(config: Config | None) -> dict[str, Entry]:
-    """Migrate pre-ADR-0017 state: a page carrying a provenance header was synthesized.
-
-    Tiers 1 and 2 copy their page verbatim and carry no header, so they are
-    not recoverable here -- accepted in ADR-0017 as the cost of migration,
-    since they already reported foreign under the code this replaces.
-
-    `list_installed_manpages` also scans `output_dir`, a staging copy of
-    what synthesis produced, not proof anything is on the manpath -- a page
-    seeded from there rather than `man_dir` would report MANAGED for a tool
-    with nothing installed, so only a `man_dir` hit is kept.
-    """
-    from .installer import list_installed_manpages  # deferred: breaks the import cycle
-
-    cfg = config or Config()
-    entries = {
-        item["tool"]: Entry(
-            path=item["path"],
-            tier=Tier.SYNTHESIS,
-            source=item["model"],
-            checksum=checksum_of(item["path"]),
-        )
-        for item in list_installed_manpages(config)
-        if item["path"].parent == cfg.man_dir
-    }
-    _migrate_backups(entries, config)
-    return entries
-
-
-def _migrate_backups(entries: dict[str, Entry], config: Config | None) -> None:
-    """Relocate stray `.maniac_bak` files out of `man_dir`, attributed by matching filename.
-
-    Repairs the pre-ADR-0017 bug where a backup's name (`dest_file.name`
-    plus `.maniac_bak`) never matched what restore reconstructed
-    (`f"{tool_name}.1.maniac_bak"`), so a backup of a compressed page was
-    created and never found. A backup matching no entry's destination
-    filename is left where it is -- nothing on record to attribute it to.
-    """
-    cfg = config or Config()
-    if not cfg.man_dir.exists():
-        return
-    by_filename = {entry.path.name: tool for tool, entry in entries.items()}
-    for backup_file in cfg.man_dir.glob("*.maniac_bak"):
-        original_name = backup_file.name.removesuffix(".maniac_bak")
-        tool = by_filename.get(original_name)
-        if tool is None:
-            continue
-        cfg.backup_dir.mkdir(parents=True, exist_ok=True)
-        destination = cfg.backup_dir / original_name
-        # shutil.move, not Path.rename: man_dir (XDG_DATA_HOME) and
-        # backup_dir (XDG_STATE_HOME) can be separate mounts, where a bare
-        # rename raises EXDEV.
-        shutil.move(backup_file, destination)
-        entries[tool] = replace(entries[tool], backup=destination)
-
-
 def load(config: Config | None = None) -> dict[str, Entry]:
     """Return every recorded entry, keyed by tool.
 
-    Seeds the manifest by scanning for provenance headers when no manifest
-    file exists yet, and persists that seed so it runs once. A manifest
-    that exists but fails to parse -- corrupt JSON, wrong shape, an
-    unrecognized version -- degrades to empty instead of raising; a
-    corrupt store costs a rebuild, never a crash. That degradation never
-    triggers a reseed, so a manifest emptied by uninstalling everything is
-    not mistaken for "never migrated".
+    Pure deserialization: an absent manifest reads empty, and nothing here
+    touches the filesystem beyond reading the manifest file, so a read-only
+    command sees ownership exactly as persisted. Seeding and link
+    reconciliation belong to `lifecycle.reconcile`, which write paths call.
+
+    A manifest that exists but fails to parse -- corrupt JSON, wrong shape,
+    an unrecognized version -- degrades to empty instead of raising; a
+    corrupt store costs a rebuild, never a crash.
     """
     path = _manifest_path(config)
-    if not path.exists():
-        entries = _seed_from_headers(config)
-        _migrate_links(entries, config)
-        _migrate_install_root_links(entries, config)
-        _save(path, entries)
-        return entries
-
     try:
         document = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
@@ -248,149 +184,12 @@ def load(config: Config | None = None) -> dict[str, Entry]:
         entry = _row_to_entry(row)
         if entry is not None:
             entries[tool] = entry
-    migrated = _migrate_links(entries, config)
-    if _migrate_install_root_links(entries, config):
-        migrated = True
-    if migrated:
-        _save(path, entries)
     return entries
 
 
-def _migrate_links(entries: dict[str, Entry], config: Config | None) -> bool:
-    """Convert safely recoverable pre-ADR-0028 copies into owned links.
-
-    The installed copy is the only trustworthy bytes source for an older
-    entry.  It is materialized under MANIAC's durable output directory before
-    replacing the manpath path.  A changed, missing, or pre-existing-link
-    entry is deliberately retained: guessing at its provenance could destroy
-    a usable user page.
-    """
-    cfg = config or Config()
-    migrated = False
-    for tool, entry in entries.items():
-        if entry.target is not None:
-            continue
-        path = entry.path
-        if path.is_symlink() or not path.is_file():
-            logger.warning(
-                "Retained unsafe legacy manpage entry", tool=tool, path=str(path)
-            )
-            continue
-        try:
-            if checksum_of(path) != entry.checksum:
-                logger.warning(
-                    "Retained changed legacy manpage entry", tool=tool, path=str(path)
-                )
-                continue
-            target = cfg.output_dir / path.name
-            target.parent.mkdir(parents=True, exist_ok=True)
-            temporary_target = target.with_name(f".{target.name}.tmp")
-            shutil.copy2(path, temporary_target)
-            temporary_target.replace(target)
-            temporary_link = path.with_name(f".{path.name}.maniac.tmp")
-            temporary_link.symlink_to(target)
-            temporary_link.replace(path)
-        except OSError as error:
-            logger.warning(
-                "Retained legacy manpage entry after migration failure",
-                tool=tool,
-                path=str(path),
-                error=str(error),
-            )
-            continue
-        entries[tool] = replace(entry, target=target)
-        migrated = True
-    return migrated
-
-
-def _migrate_install_root_links(
-    entries: dict[str, Entry], config: Config | None
-) -> bool:
-    """Replace safely identified durable vendor copies with direct provider links."""
-    cfg = config or Config()
-    target_users: dict[Path, int] = {}
-    for entry in entries.values():
-        if entry.target is None:
-            continue
-        target = expected_target_path(entry).absolute()
-        if is_maniac_owned_target(target, cfg):
-            target_users[target] = target_users.get(target, 0) + 1
-
-    migrated = False
-    for tool, entry in entries.items():
-        migrated_entry = _migrate_install_root_entry(tool, entry, cfg, target_users)
-        if migrated_entry is None:
-            continue
-        entries[tool] = migrated_entry
-        migrated = True
-    return migrated
-
-
-def _migrate_install_root_entry(
-    tool: str, entry: Entry, config: Config, target_users: dict[Path, int]
-) -> Entry | None:
-    """Return a direct-provider entry after safely relinking one durable vendor copy."""
-    from .sources.manpages import find_install_root_manpages, select_primary_manpage
-    from .sources.pathcache import resolve_cached
-
-    if (
-        entry.tier is not Tier.INSTALL_ROOT
-        or entry.provider_target
-        or not is_expected_link(entry)
-    ):
-        return None
-    old_target = expected_target_path(entry)
-    if not is_maniac_owned_target(old_target, config):
-        return None
-    try:
-        if checksum_of(old_target) != entry.checksum:
-            return None
-        root = Path(entry.source).expanduser()
-        if not root.is_dir():
-            return None
-        page = select_primary_manpage(find_install_root_manpages(root, tool), tool)
-        if page is None:
-            return None
-        resolved_root = resolve_cached(root)
-        resolve_cached(page).relative_to(resolved_root)
-        if is_maniac_owned_target(page, config):
-            return None
-        page_checksum = checksum_of(page)
-    except (OSError, ValueError):
-        return None
-
-    try:
-        temporary_link = entry.path.with_name(f".{entry.path.name}.maniac.tmp")
-        temporary_link.symlink_to(page.absolute())
-        temporary_link.replace(entry.path)
-    except OSError as error:
-        logger.warning(
-            "Retained durable vendor manpage after migration failure",
-            tool=tool,
-            path=str(entry.path),
-            error=str(error),
-        )
-        return None
-
-    if target_users[old_target.absolute()] == 1:
-        try:
-            old_target.unlink()
-        except OSError as error:
-            logger.warning(
-                "Retained superseded durable vendor target",
-                tool=tool,
-                path=str(old_target),
-                error=str(error),
-            )
-    return replace(
-        entry,
-        checksum=page_checksum,
-        target=page.absolute(),
-        provider_target=True,
-    )
-
-
-def _save(path: Path, entries: dict[str, Entry]) -> None:
+def save(entries: dict[str, Entry], config: Config | None = None) -> None:
+    """Persist `entries` as the whole manifest, replacing what it held."""
+    path = _manifest_path(config)
     path.parent.mkdir(parents=True, exist_ok=True)
     document = {
         "version": SCHEMA_VERSION,
@@ -418,7 +217,6 @@ def record(
     provider_target: bool = False,
 ) -> None:
     """Record `tool`'s installed page and its expected manpath-link target."""
-    manifest_path = _manifest_path(config)
     entries = load(config)
     entries[tool] = Entry(
         path=Path(path),
@@ -431,7 +229,7 @@ def record(
         target=target,
         provider_target=provider_target,
     )
-    _save(manifest_path, entries)
+    save(entries, config)
 
 
 def lookup(tool: str, config: Config | None = None) -> Entry | None:
@@ -441,8 +239,7 @@ def lookup(tool: str, config: Config | None = None) -> Entry | None:
 
 def forget(tool: str, config: Config | None = None) -> None:
     """Remove `tool`'s entry, if any. A no-op if it was never recorded."""
-    manifest_path = _manifest_path(config)
     entries = load(config)
     if tool in entries:
         del entries[tool]
-        _save(manifest_path, entries)
+        save(entries, config)

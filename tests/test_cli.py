@@ -229,7 +229,7 @@ def test_cli_install_reuses_config_for_existing_destination(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """An existing destination must not make installation create another Config."""
-    from maniac.manifest import lookup as real_lookup
+    from maniac.lifecycle import reconcile as real_reconcile
     from maniac.models import Installation
 
     constructed: list[Config] = []
@@ -266,9 +266,9 @@ def test_cli_install_reuses_config_for_existing_destination(
 
     observed: list[Config | None] = []
 
-    def lookup(tool: str, config: Config | None = None) -> object:
+    def reconcile(config: Config | None = None) -> object:
         observed.append(config)
-        return real_lookup(tool, config=config)
+        return real_reconcile(config)
 
     monkeypatch.setattr(cli_module, "Config", TrackingConfig)
     monkeypatch.setattr(
@@ -280,7 +280,7 @@ def test_cli_install_reuses_config_for_existing_destination(
         lambda tool, bin_dir=None: (Provider(), installation),
     )
     monkeypatch.setattr("maniac.manifest.Config", TrackingConfig)
-    monkeypatch.setattr("maniac.installer.manifest.lookup", lookup)
+    monkeypatch.setattr("maniac.installer.lifecycle.reconcile", reconcile)
 
     result = runner.invoke(app, ["install", "mytool"])
 
