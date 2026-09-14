@@ -19,7 +19,8 @@ Rows whose local or upstream availability is unresolved will say `checking` rath
 Rendering updates will be coalesced at a bounded refresh rate rather than forcing a full terminal repaint for every completed row.
 Row count, order, labels, and grouping will remain fixed for the lifetime of the live table.
 If the row model exceeds the terminal height, the live phase will render a stable leading slice plus the number of hidden tools in a cropped alternate-screen viewport, so layout and updates are bounded to one screen.
-After that viewport closes, the complete final table will be printed once on the normal screen; a short table remains in place directly without a duplicate rendering or final regrouping.
+After that viewport closes, the complete final table will be printed once on the normal screen; a short table is rendered transiently and replaced once by the grouped final table.
+That last clause was amended on 2026-09-14: the completed table now collapses sibling binaries, because streaming ungrouped and filtering grouped had the same tools rendering in two shapes. The live table is unchanged and still never regroups mid-run.
 
 Filtered, `--names`, and non-terminal output will wait for final classification before emitting anything.
 Those modes define membership or machine-readable output from final states, so provisional output would be incorrect or would break pipelines.

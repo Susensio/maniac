@@ -10,6 +10,18 @@ These are findings the work surfaced and deliberately did not take; they are fir
 
 ### Correctness
 
+- Disambiguate list rows whose grouping renders the same visible label for different binaries or states.
+  Preserve bare-name pipeline output; choose either package-plus-binary labels or a width-capped binary list.
+  Now the common case rather than an edge one: the default unfiltered table groups since
+  2026-09-14, and the live inventory renders `python (7 binaries) | missing` above
+  `python (2 binaries) | unverified` -- two rows no label tells apart.
+- Key a display group on its members' pages, or stop linking Source on a collapsed row.
+  A group's Source hyperlink is the representative's page alone: `page_path` and `page_uri`
+  are not in the group key, unlike state, source and upstream. On the live inventory 5 of 68
+  binaries link somewhere other than the row now standing for them -- `npm`'s own `npm.1`
+  under `node (3 binaries)`, `pandoc-lua.1.gz` under `pandoc (3 binaries)`.
+  Pre-existing and previously reachable only through a filtered view; grouping the default
+  table made it the common case.
 - Decide what `maniac list` should print when stdout is not a terminal.
   It currently renders the Tool column alone, because Rich falls back to 80 columns and the
   other three are dropped; `--names` already exists for the bare-name pipeline case, so this
@@ -25,6 +37,9 @@ These are findings the work surfaced and deliberately did not take; they are fir
 
 ### Structure
 
+- Remove `_grouped_for_display`'s dead `pending` parameter.
+  No caller passes it, so the `row.tool in pending` element of the group key is constantly
+  `False` and the parameter silently widens the key for nobody.
 - Delete `maniac/sources/__init__.py`'s remaining re-exports if they are as dead as the three already removed.
   `extract_subcommands`, `find_subcommands`, `format_help_block`, `get_help` and `discover_repo` are re-exported from `crawler` and `resolution`, but every importer reaches for the submodule instead (`from ..sources import resolution`).
   Three sibling re-exports were confirmed unreferenced and deleted with the facade cleanup; check these the same way rather than assuming.
@@ -58,8 +73,6 @@ These are findings the work surfaced and deliberately did not take; they are fir
   Exercise real shim resolution before choosing a safe fallback; `mise which -C $HOME` remains cwd-sensitive and needs ADR-0029-style root validation.
 - Serialize manifest load-modify-save with a sidecar lock and transactional update API.
   Atomic replacement prevents torn files but not concurrent installs losing ownership entries; choose a short blocking timeout or a fail-fast lock policy.
-- Disambiguate list rows whose grouping renders the same visible label for different binaries or states.
-  Preserve bare-name pipeline output; choose either package-plus-binary labels or a width-capped binary list.
 - Treat a multi-page upstream release as one uninstallable installation.
   Uninstalling the primary page must checksum-protect, remove, and restore every companion page and displaced vendor page.
 
