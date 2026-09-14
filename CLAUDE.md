@@ -3,6 +3,17 @@
 - `docs/BACKLOG.md` — open work nobody has committed to. The main agent writes it.
 - `docs/STATE.md` — work committed to and not yet finished. The main agent writes it.
 
+# Moving fast before 1.0.0
+
+No interface is frozen. Rename, move, merge or delete any module,
+function, parameter or CLI surface when a better shape is found, and update
+every caller in the same change. Do not add shims, aliases or deprecated
+parameters to spare a caller — the repository is the whole world and
+`just check` proves it still builds.
+
+Shape is free; behavior is not. A change described as a refactor must leave
+observable behavior identical and verify that it did.
+
 <!-- code-review-graph MCP tools -->
 ## MCP Tools: code-review-graph
 
