@@ -1,5 +1,6 @@
 import json
 import multiprocessing
+import os
 import time
 from pathlib import Path
 
@@ -987,3 +988,133 @@ def test_the_scan_costs_one_check_per_manifest_entry_whatever_path_holds(
 
     assert sorted(checked) == sorted(entry.path for entry in result.entries.values())
     assert len(checked) == 2
+
+
+_SYNTHESIZED_PAGE = (
+    f"{manifest.PROVENANCE_SIGNATURE}\n"
+    '.\\" Tool: eza | Date: 2026-09-09 17:38:07Z | Model: gemini/gemini-flash-latest\n'
+    ".TH EZA 1\n"
+)
+
+
+def _corrupt_the_manifest(cfg: Config) -> None:
+    cfg.manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.manifest_path.write_text("{not json", encoding="utf-8")
+
+
+def test_a_reconstructed_page_with_a_provenance_header_recovers_its_tier_and_model(
+    tmp_path: Path,
+) -> None:
+    """The header synthesis stamped is still on disk; recovery reads it rather than guessing."""
+    cfg = _linked_config(tmp_path)
+    _managed_link(cfg, "eza", _SYNTHESIZED_PAGE)
+    _corrupt_the_manifest(cfg)
+
+    with manifest.transaction(config=cfg) as txn:
+        assert txn.recovery is not None
+        assert txn.recovery.reconstructed == ("eza",)
+
+    recovered = manifest.load(config=cfg)["eza"]
+    assert recovered.tier is Tier.SYNTHESIS
+    assert recovered.source == "gemini/gemini-flash-latest"
+
+
+def test_a_reconstructed_page_without_a_provenance_header_recovers_as_repository(
+    tmp_path: Path,
+) -> None:
+    """A tier-2 page is copied verbatim from upstream, so it carries no stamp."""
+    cfg = _linked_config(tmp_path)
+    _managed_link(cfg, "eza", ".TH EZA 1\nupstream bytes\n")
+    _corrupt_the_manifest(cfg)
+
+    with manifest.transaction(config=cfg) as txn:
+        assert txn.recovery is not None
+
+    recovered = manifest.load(config=cfg)["eza"]
+    assert recovered.tier is Tier.REPOSITORY
+    assert recovered.source == "reconstructed"
+
+
+def test_a_stamped_page_with_no_model_recovers_as_synthesis_without_inventing_one(
+    tmp_path: Path,
+) -> None:
+    cfg = _linked_config(tmp_path)
+    _managed_link(
+        cfg,
+        "eza",
+        f'{manifest.PROVENANCE_SIGNATURE}\n.\\" Tool: eza | Date: 2026-09-09\n.TH EZA 1\n',
+    )
+    _corrupt_the_manifest(cfg)
+
+    with manifest.transaction(config=cfg):
+        pass
+
+    recovered = manifest.load(config=cfg)["eza"]
+    assert recovered.tier is Tier.SYNTHESIS
+    assert recovered.source == "reconstructed"
+
+
+def test_an_unreadable_header_degrades_instead_of_failing_the_recovery(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """One page nobody may read must not take the whole rebuild down with it."""
+    cfg = _linked_config(tmp_path)
+    _managed_link(cfg, "eza", _SYNTHESIZED_PAGE)
+    _corrupt_the_manifest(cfg)
+
+    def denied(_path: str | Path) -> dict[str, str]:
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr(manifest, "read_provenance_header", denied)
+
+    with manifest.transaction(config=cfg) as txn:
+        assert txn.recovery is not None
+        assert txn.recovery.reconstructed == ("eza",)
+
+    recovered = manifest.load(config=cfg)["eza"]
+    assert recovered.tier is Tier.REPOSITORY
+    assert recovered.source == "reconstructed"
+
+
+def test_reading_a_header_off_an_unreadable_file_raises_rather_than_reporting_no_header(
+    tmp_path: Path,
+) -> None:
+    """A permission failure is not evidence that a page is foreign."""
+    page = tmp_path / "eza.1"
+    page.write_text(_SYNTHESIZED_PAGE, encoding="utf-8")
+    page.chmod(0o000)
+    if os.access(page, os.R_OK):
+        pytest.skip("running as root, where mode 000 is still readable")
+
+    with pytest.raises(PermissionError):
+        manifest.read_provenance_header(page)
+
+
+def test_reading_a_header_off_a_directory_reports_no_header(tmp_path: Path) -> None:
+    directory = tmp_path / "man1"
+    directory.mkdir()
+
+    assert manifest.read_provenance_header(directory) is None
+
+
+def test_a_provenance_header_never_seeds_ownership_of_an_unlinked_page(
+    tmp_path: Path,
+) -> None:
+    """The header discriminates tier for a page the link already proved MANIAC owns.
+
+    `_seed_from_headers` adopted pages on the strength of the header alone
+    and was deleted for it (ADR-0043, ADR-0044). A stamped file with no
+    manpath symlink into `output_dir` stays unrecovered.
+    """
+    cfg = _linked_config(tmp_path)
+    cfg.output_dir.mkdir(parents=True)
+    cfg.man_dir.mkdir(parents=True)
+    (cfg.output_dir / "eza.1").write_text(_SYNTHESIZED_PAGE, encoding="utf-8")
+    (cfg.man_dir / "eza.1").write_text(_SYNTHESIZED_PAGE, encoding="utf-8")
+    _corrupt_the_manifest(cfg)
+
+    with manifest.transaction(config=cfg) as txn:
+        assert txn.recovery is not None
+        assert txn.recovery.reconstructed == ()
+
+    assert manifest.load(config=cfg) == {}

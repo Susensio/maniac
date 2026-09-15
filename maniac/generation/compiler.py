@@ -6,8 +6,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from ..config import Config
-from ..lifecycle import PROVENANCE_SIGNATURE
 from ..logging import logger
+from ..manifest import PROVENANCE_SIGNATURE
 
 
 def build_provenance_header(tool_name: str, model: str | None = None) -> str:
