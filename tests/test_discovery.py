@@ -736,7 +736,7 @@ def test_login_shell_env_scrubs_activation_markers_and_sets_bootstrap_path(
     monkeypatch.setenv("UV_PROJECT_ENVIRONMENT", "/project/.venv")
     monkeypatch.setenv("DIRENV_DIR", "/project")
     monkeypatch.setenv("CONDA_PREFIX", "/opt/conda/envs/x")
-    monkeypatch.setenv("XDG_CONFIG_HOME", "/tmp/redirected-config")
+    monkeypatch.setenv("XDG_CONFIG_HOME", "/some/config")
     monkeypatch.setenv("XDG_RUNTIME_DIR", "/run/user/1000")
     monkeypatch.setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path=/run/user/1000/bus")
     monkeypatch.setenv("XDG_CONFIG_DIRS", "/etc/xdg")
@@ -749,12 +749,11 @@ def test_login_shell_env_scrubs_activation_markers_and_sets_bootstrap_path(
     assert "UV_PROJECT_ENVIRONMENT" not in env
     assert "DIRENV_DIR" not in env
     assert "CONDA_PREFIX" not in env
-    # XDG_CONFIG_HOME decides which profile the login shell reads --
-    # redirecting it (a test harness protecting a real manifest, say)
-    # points the shell at a profile that doesn't exist, which trips the
-    # sixth fallback and hands back the caller's own $PATH. The bus
-    # variables must survive scrubbing or the systemd pull breaks.
-    assert "XDG_CONFIG_HOME" not in env
+    # XDG_CONFIG_HOME selects which profile the login shell reads and is
+    # passed through untouched -- scrubbing it would force the shell onto
+    # $HOME/.config's profile even where the caller's real one lives
+    # elsewhere.
+    assert env["XDG_CONFIG_HOME"] == "/some/config"
     assert env["XDG_RUNTIME_DIR"] == "/run/user/1000"
     assert env["DBUS_SESSION_BUS_ADDRESS"] == "unix:path=/run/user/1000/bus"
     assert env["XDG_CONFIG_DIRS"] == "/etc/xdg"
@@ -789,12 +788,11 @@ def test_login_path_does_not_leak_the_callers_path_or_virtualenv(
     monkeypatch.setenv("SHELL", "/bin/sh")
     monkeypatch.setenv("PATH", f"{sentinel_bin}:/usr/bin:/bin")
     monkeypatch.setenv("VIRTUAL_ENV", sentinel_venv)
-    # A directory that does not exist: on a machine where
-    # /etc/profile.d/profile_xdg.sh sources ${XDG_CONFIG_HOME}/profile to
-    # pull the real environment, an unscrubbed redirect like this would
-    # point the login shell at nothing to source. Not observable via the
-    # systemd pull itself here -- the sandbox blocks the user bus -- but
-    # the redirected value must not reach the child regardless.
+    # Passed through to the child untouched (deliberately, since it selects
+    # a real profile elsewhere on a real machine); harmless here because
+    # HOME above points the login shell at tmp_path's own .profile
+    # directly, not at /etc/profile.d/profile_xdg.sh's redirect. The
+    # assertion below only checks it never ends up as a $PATH entry.
     monkeypatch.setenv("XDG_CONFIG_HOME", redirected_xdg_config)
 
     result = login_path()

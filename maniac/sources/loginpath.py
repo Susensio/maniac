@@ -70,21 +70,19 @@ _ACTIVATION_ENV_PREFIXES = ("UV_", "DIRENV_", "MISE_", "__MISE_")
 # an install directory by convention instead of by evidence.
 _ACTIVATION_ROOT_ENV_KEYS = ("VIRTUAL_ENV", "CONDA_PREFIX")
 
-# XDG_CONFIG_HOME decides which profile the login shell reads --
+# XDG_CONFIG_HOME is passed through deliberately, not scrubbed:
 # /etc/profile.d/profile_xdg.sh does
-# `_profile=${XDG_CONFIG_HOME:-$HOME/.config}/profile` and sources it, and
-# that profile is what pulls the real environment from systemd. A caller
-# that redirects XDG_CONFIG_HOME (a test harness protecting a real
-# manifest, say) points the login shell at a profile that doesn't exist,
-# so it finds nothing to source and the sixth fallback (login_path())
-# hands back the caller's own inherited $PATH instead, degraded-flagged
-# and activation-sanitized but still the caller's. Scrubbing
-# it is also the more correct answer, not merely the more isolated one: in
-# a real login sequence the shell doesn't receive XDG_CONFIG_HOME, it
-# *sets* it from environment.d, so letting the shell fall through to its
-# own $HOME/.config default matches what a real login does. Same reasoning
-# as VIRTUAL_ENV -- a channel the caller's context could use to answer a
-# question that's supposed to be about the machine.
+# `_confdir=${XDG_CONFIG_HOME:-$HOME/.config}; . "${_confdir}/profile"`, so
+# it selects which profile the login shell reads -- the user's real one, on
+# a machine where something (a display manager, a container entrypoint, a
+# wrapper) sets it ahead of MANIAC rather than the shell deriving it itself.
+# Scrubbing it forces the shell onto $HOME/.config's profile even when that
+# isn't where the caller's real profile lives, which answers with a $PATH
+# the user doesn't have -- and nothing catches it, because the degraded-
+# login-path warning only fires when the shell builds no entries at all.
+# The isolation this used to buy (a test harness redirecting it to protect
+# the real manifest) belonged to the tests, not to this function; they now
+# arrange it themselves.
 #
 # XDG_RUNTIME_DIR, DBUS_SESSION_BUS_ADDRESS and XDG_CONFIG_DIRS stay
 # unscrubbed on purpose: the systemd pull needs the first two to reach the
@@ -92,22 +90,20 @@ _ACTIVATION_ROOT_ENV_KEYS = ("VIRTUAL_ENV", "CONDA_PREFIX")
 # redirect. Removing one of these to "finish the job" breaks the systemd
 # pull with no test failing, because on a correctly configured machine the
 # sixth fallback covers it.
-_XDG_ENV_KEYS = frozenset({"XDG_CONFIG_HOME"})
 
 
 def _login_shell_env() -> dict[str, str]:
     """The caller's environment, minus $PATH and every activation marker.
 
-    Everything else (`$HOME`, locale, `$SHELL` itself) passes through
-    unchanged -- only the channels a directory- or venv-triggered
-    activation could use to reconstruct a project `$PATH`, plus
-    `XDG_CONFIG_HOME` (which decides which profile the shell reads), are
+    Everything else (`$HOME`, locale, `$SHELL` itself, `XDG_CONFIG_HOME`)
+    passes through unchanged -- only the channels a directory- or venv-
+    triggered activation could use to reconstruct a project `$PATH` are
     scrubbed.
     """
     env = {
         key: value
         for key, value in os.environ.items()
-        if key not in _ACTIVATION_ENV_KEYS | _XDG_ENV_KEYS
+        if key not in _ACTIVATION_ENV_KEYS
         and not key.startswith(_ACTIVATION_ENV_PREFIXES)
     }
     env["PATH"] = _BOOTSTRAP_PATH + os.pathsep + _LOGIN_PATH_PROBE
