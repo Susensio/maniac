@@ -5,9 +5,13 @@ The manifest, not a page's own bytes, is what `install`, `uninstall` and
 expected manpath link; a provenance header on tier-3 pages is informational.
 """
 
+import fcntl
 import hashlib
 import json
 import os
+import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -24,6 +28,7 @@ from .config import Config
 SCHEMA_VERSION = 1
 _CHUNK_SIZE = 65_536
 _CHECKPOINT_SUFFIX = ".good"
+_LOCK_SUFFIX = ".lock"
 
 
 class Tier(Enum):
@@ -313,50 +318,82 @@ def promote(read_result: Read, config: Config | None = None) -> bool:
     return True
 
 
-def record(
-    tool: str,
-    path: Path,
-    tier: Tier,
-    source: str,
-    checksum: str,
-    backup: Path | None = None,
-    config: Config | None = None,
-    *,
-    version: str | None = None,
-    source_uri: str | None = None,
-    target: Path | None = None,
-    provider_target: bool = False,
-    group: str | None = None,
-) -> None:
-    """Record `tool`'s installed page and its expected manpath-link target."""
-    current = read(config)
-    promote(current, config)
-    entries = current.entries
-    entries[tool] = Entry(
-        path=Path(path),
-        tier=tier,
-        source=source,
-        checksum=checksum,
-        backup=backup,
-        version=version,
-        source_uri=source_uri,
-        target=target,
-        provider_target=provider_target,
-        group=group,
-    )
-    save(entries, config)
-
-
 def lookup(tool: str, config: Config | None = None) -> Entry | None:
     """Return `tool`'s recorded entry, or None if MANIAC never installed it."""
     return load(config).get(tool)
 
 
-def forget(tool: str, config: Config | None = None) -> None:
-    """Remove `tool`'s entry, if any. A no-op if it was never recorded."""
-    current = read(config)
-    promote(current, config)
-    entries = current.entries
-    if tool in entries:
-        del entries[tool]
-        save(entries, config)
+_transaction_locks: dict[Path, threading.Lock] = {}
+_transaction_locks_guard = threading.Lock()
+
+
+def lock_path(config: Config | None = None) -> Path:
+    """Return the lock file serializing manifest writers, beside the manifest."""
+    path = _manifest_path(config)
+    return path.with_name(path.name + _LOCK_SUFFIX)
+
+
+@contextmanager
+def _exclusive(config: Config) -> Iterator[None]:
+    """Serialize manifest writers across threads and processes.
+
+    `flock` alone serializes processes but not two threads sharing one
+    descriptor, so a process-local lock guards the same path first.
+    """
+    path = lock_path(config)
+    with _transaction_locks_guard:
+        thread_lock = _transaction_locks.setdefault(path, threading.Lock())
+    with thread_lock:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("w", encoding="utf-8") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            yield
+
+
+@dataclass(slots=True)
+class Transaction:
+    """One operation's read-modify-write of the whole manifest, under the lock.
+
+    `entries` is the live working set: callers read it to decide and mutate
+    it through `put` and `forget`.  Every mutation an operation makes lands
+    in one write at exit, so a multi-page release is recorded whole or not
+    at all, and a crash mid-operation cannot leave half its pages recorded.
+
+    An exception leaving the block discards every mutation, including
+    migrations `lifecycle.reconcile` made -- the manifest then still
+    describes the state the operation started from.
+    """
+
+    config: Config
+    read: Read
+    entries: dict[str, Entry]
+    dirty: bool = False
+
+    def put(self, tool: str, entry: Entry) -> None:
+        """Record `entry` as `tool`'s, replacing any entry it already had."""
+        self.entries[tool] = entry
+        self.dirty = True
+
+    def forget(self, tool: str) -> None:
+        """Drop `tool`'s entry. A no-op if it was never recorded."""
+        if self.entries.pop(tool, None) is not None:
+            self.dirty = True
+
+
+@contextmanager
+def transaction(config: Config | None = None) -> Iterator[Transaction]:
+    """Open the manifest for one operation: load once, mutate, write once.
+
+    The lock is held for the whole block, so the block is the commit phase
+    and nothing slow belongs in it (ADR-0043).  Generation -- synthesis,
+    pandoc, crawling -- touches nothing the manifest owns and must stay
+    outside, or parallel installs in other processes stall on model calls.
+    """
+    cfg = config or Config()
+    with _exclusive(cfg):
+        current = read(cfg)
+        promote(current, cfg)
+        txn = Transaction(config=cfg, read=current, entries=dict(current.entries))
+        yield txn
+        if txn.dirty:
+            save(txn.entries, cfg)

@@ -8,6 +8,8 @@ from maniac.generation.compiler import build_provenance_header
 from maniac.installer import install_manpage, uninstall_manpage
 from maniac.manifest import Tier
 
+from .manifest_support import record_entry
+
 
 @pytest.fixture(autouse=True)
 def _isolated_xdg_paths(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -124,7 +126,7 @@ def test_install_manpage_maniac_overwrite(tmp_path: Path) -> None:
     target_dir.mkdir(parents=True)
     existing_dest = target_dir / "tool.1"
     existing_dest.write_text(".TH TOOL 1 old", encoding="utf-8")
-    manifest_module.record(
+    record_entry(
         "tool",
         existing_dest,
         Tier.SYNTHESIS,
@@ -401,7 +403,7 @@ def test_uninstall_manpage_and_restore_backup(tmp_path: Path) -> None:
     backup_file.write_text(".TH TOOL 1 Official vendor doc", encoding="utf-8")
 
     cfg = Config(man_dir=man_dir, output_dir=tmp_path / "data_manpages")
-    manifest_module.record(
+    record_entry(
         "tool",
         installed_file,
         Tier.SYNTHESIS,
@@ -435,7 +437,7 @@ def test_uninstall_manpage_compressed_page_restores_backup(tmp_path: Path) -> No
     backup_file.write_bytes(b"vendor-bytes")
 
     cfg = Config(man_dir=man_dir, output_dir=tmp_path / "data_manpages")
-    manifest_module.record(
+    record_entry(
         "pandoc",
         installed_file,
         Tier.INSTALL_ROOT,
@@ -462,7 +464,7 @@ def test_uninstall_manpage_null_backup_removes_and_restores_nothing(
     installed_file.write_text(".TH TOOL 1", encoding="utf-8")
 
     cfg = Config(man_dir=man_dir, output_dir=tmp_path / "data_manpages")
-    manifest_module.record(
+    record_entry(
         "tool",
         installed_file,
         Tier.SYNTHESIS,
@@ -499,7 +501,7 @@ def test_uninstall_manpage_purge(tmp_path: Path) -> None:
     prompt_file.write_text("Prompt", encoding="utf-8")
 
     cfg = Config(man_dir=man_dir, output_dir=out_dir, intermediate_dir=inter_dir)
-    manifest_module.record(
+    record_entry(
         "tool",
         installed_file,
         Tier.SYNTHESIS,
@@ -557,7 +559,7 @@ def test_uninstall_manpage_checksum_mismatch_is_kept_modified(tmp_path: Path) ->
     backup_file.write_text(".TH TOOL 1 vendor", encoding="utf-8")
 
     cfg = Config(man_dir=man_dir, output_dir=tmp_path / "data_manpages")
-    manifest_module.record(
+    record_entry(
         "tool",
         installed_file,
         Tier.SYNTHESIS,
@@ -623,7 +625,7 @@ def test_uninstall_preserves_retargeted_link_and_backup(tmp_path: Path) -> None:
     installed = install_manpage(source, "tool", Tier.SYNTHESIS, "model", config=cfg)
     entry = manifest_module.lookup("tool", config=cfg)
     assert entry is not None and entry.target is not None
-    manifest_module.record(
+    record_entry(
         "tool",
         installed,
         entry.tier,
@@ -684,7 +686,7 @@ def test_uninstall_accepts_a_recorded_relative_link_target(tmp_path: Path) -> No
         output_dir=target.parent,
         manifest_path=tmp_path / "state" / "installed.json",
     )
-    manifest_module.record(
+    record_entry(
         "tool",
         installed,
         Tier.SYNTHESIS,
@@ -747,7 +749,7 @@ def test_uninstall_manpage_vanished_entry_is_forgotten(tmp_path: Path) -> None:
     man_dir = tmp_path / "man1"
     man_dir.mkdir(parents=True)
     cfg = Config(man_dir=man_dir, output_dir=tmp_path / "data_manpages")
-    manifest_module.record(
+    record_entry(
         "tool", man_dir / "tool.1", Tier.SYNTHESIS, "model", "deadbeef", config=cfg
     )
 
@@ -979,7 +981,7 @@ def _legacy_unmigratable_entry(tmp_path: Path) -> tuple[Config, Path]:
         output_dir=output_dir,
         manifest_path=tmp_path / "state" / "installed.json",
     )
-    manifest_module.record(
+    record_entry(
         "tool",
         installed,
         Tier.SYNTHESIS,
@@ -1106,7 +1108,7 @@ def test_uninstall_keeps_a_durable_target_a_second_entry_still_records(
         link = man_dir / "page.1"
         link.symlink_to(target)
         links[tool] = link
-        manifest_module.record(
+        record_entry(
             tool, link, Tier.SYNTHESIS, "model", checksum, target=target, config=cfg
         )
 
@@ -1125,3 +1127,138 @@ def test_uninstall_keeps_a_durable_target_a_second_entry_still_records(
     assert target in second.removed
     assert not target.exists()
     assert manifest_module.lookup("second", config=cfg) is None
+
+
+def _crash_config(tmp_path: Path) -> Config:
+    return Config(
+        man_dir=tmp_path / "man1",
+        output_dir=tmp_path / "durable",
+        backup_dir=tmp_path / "backup",
+        manifest_path=tmp_path / "state" / "installed.json",
+    )
+
+
+def _source_page(tmp_path: Path, text: str = ".TH TOOL 1 upstream") -> Path:
+    source = tmp_path / "cache" / "tool.1"
+    source.parent.mkdir(parents=True, exist_ok=True)
+    source.write_text(text, encoding="utf-8")
+    return source
+
+
+def _vendor_page(cfg: Config, text: str = ".TH TOOL 1 vendor") -> Path:
+    cfg.man_dir.mkdir(parents=True, exist_ok=True)
+    page = cfg.man_dir / "tool.1"
+    page.write_text(text, encoding="utf-8")
+    return page
+
+
+def test_install_interrupted_before_materialize_leaves_no_backup_behind(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A displaced page not displaced after all must not leave a stray backup.
+
+    The backup would otherwise sit in `backup_dir` named after a page that
+    was never replaced, and a later install of the same tool would carry it
+    forward as the vendor page to restore.
+    """
+    cfg = _crash_config(tmp_path)
+    source = _source_page(tmp_path)
+    vendor = _vendor_page(cfg)
+    monkeypatch.setattr(
+        "maniac.lifecycle.materialize_target",
+        lambda *a, **kw: (_ for _ in ()).throw(OSError("no space")),
+    )
+
+    with pytest.raises(OSError):
+        install_manpage(
+            source, "tool", Tier.REPOSITORY, "owner/tool", force=True, config=cfg
+        )
+
+    assert vendor.read_text(encoding="utf-8") == ".TH TOOL 1 vendor"
+    assert list(cfg.backup_dir.glob("*")) == []
+    assert manifest_module.load(config=cfg) == {}
+
+    monkeypatch.undo()
+    installed = install_manpage(
+        source, "tool", Tier.REPOSITORY, "owner/tool", force=True, config=cfg
+    )
+    entry = manifest_module.lookup("tool", config=cfg)
+    assert entry is not None and entry.backup == cfg.backup_dir / "tool.1"
+    assert installed.is_symlink()
+
+
+def test_install_interrupted_before_linking_leaves_no_orphan_target(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A materialized target nothing links to is unreachable litter under output_dir."""
+    cfg = _crash_config(tmp_path)
+    source = _source_page(tmp_path)
+    monkeypatch.setattr(
+        "maniac.lifecycle.link_manpath_entry",
+        lambda *a, **kw: (_ for _ in ()).throw(OSError("read-only manpath")),
+    )
+
+    with pytest.raises(OSError):
+        install_manpage(source, "tool", Tier.REPOSITORY, "owner/tool", config=cfg)
+
+    assert list(cfg.output_dir.glob("*")) == []
+    assert manifest_module.load(config=cfg) == {}
+
+    monkeypatch.undo()
+    installed = install_manpage(
+        source, "tool", Tier.REPOSITORY, "owner/tool", config=cfg
+    )
+    assert installed.is_symlink()
+    assert (cfg.output_dir / "tool.1").exists()
+
+
+def test_install_interrupted_before_linking_restores_the_displaced_page(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The vendor page the failed install displaced must still be on the manpath."""
+    cfg = _crash_config(tmp_path)
+    source = _source_page(tmp_path)
+    vendor = _vendor_page(cfg)
+
+    def unlink_then_fail(path: Path, target: Path) -> None:
+        path.unlink()
+        raise OSError("interrupted after replacing the manpath entry")
+
+    monkeypatch.setattr("maniac.lifecycle.link_manpath_entry", unlink_then_fail)
+
+    with pytest.raises(OSError):
+        install_manpage(
+            source, "tool", Tier.REPOSITORY, "owner/tool", force=True, config=cfg
+        )
+
+    assert vendor.read_text(encoding="utf-8") == ".TH TOOL 1 vendor"
+    assert list(cfg.backup_dir.glob("*")) == []
+    assert manifest_module.load(config=cfg) == {}
+
+
+def test_uninstall_interrupted_before_the_manifest_write_reruns_clean(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The page goes before the record does; a rerun must finish the job."""
+    cfg = _crash_config(tmp_path)
+    source = _source_page(tmp_path)
+    installed = install_manpage(
+        source, "tool", Tier.REPOSITORY, "owner/tool", config=cfg
+    )
+    monkeypatch.setattr(
+        "maniac.manifest.save",
+        lambda *a, **kw: (_ for _ in ()).throw(OSError("interrupted")),
+    )
+
+    with pytest.raises(OSError):
+        uninstall_manpage("tool", config=cfg)
+
+    assert not installed.exists()
+    assert manifest_module.lookup("tool", config=cfg) is not None
+
+    monkeypatch.undo()
+    result = uninstall_manpage("tool", config=cfg)
+
+    assert result.modified_kept == [] and result.legacy_kept == []
+    assert manifest_module.load(config=cfg) == {}
+    assert list(cfg.output_dir.glob("*.1")) == []

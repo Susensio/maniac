@@ -40,6 +40,7 @@ from .listing_support import (
     _FakeProvider,
     _installation,
 )
+from .manifest_support import record_entry
 
 
 @pytest.fixture(autouse=True)
@@ -271,7 +272,7 @@ def test_compute_rows_recovers_the_uri_for_an_older_repository_manifest(
     installed = cfg.man_dir / "tool.1"
     installed.parent.mkdir(parents=True)
     installed.write_text(".TH TOOL 1\n", encoding="utf-8")
-    manifest.record(
+    record_entry(
         "tool",
         installed,
         Tier.REPOSITORY,
@@ -985,7 +986,7 @@ def test_classify_source_keeps_vendor_provenance_when_manifest_owns_the_page(
     cfg.man_dir.mkdir(parents=True)
     installed = cfg.man_dir / "tool.1"
     installed.write_text(".TH TOOL 1\n", encoding="utf-8")
-    manifest.record("tool", installed, Tier.INSTALL_ROOT, "src", "abc123", config=cfg)
+    record_entry("tool", installed, Tier.INSTALL_ROOT, "src", "abc123", config=cfg)
     monkeypatch.setattr(
         "maniac.listing.classification.find_installed_manpage_path",
         lambda man_bin, tool_name: installed,
@@ -1015,7 +1016,7 @@ def test_managed_page_keeps_content_provenance_separate_from_ownership(
     cfg.man_dir.mkdir(parents=True)
     installed = cfg.man_dir / "tool.1"
     installed.write_text(".TH TOOL 1\n", encoding="utf-8")
-    manifest.record("tool", installed, tier, "origin", "abc123", config=cfg)
+    record_entry("tool", installed, tier, "origin", "abc123", config=cfg)
     monkeypatch.setattr(
         "maniac.listing.classification.find_installed_manpage_path",
         lambda man_bin, tool_name: installed,
@@ -1082,7 +1083,7 @@ def test_classify_managed_page_can_be_compressed(
     entry_dir.mkdir(parents=True)
     entry_path = entry_dir / "tool.1"
     entry_path.write_text(".TH TOOL 1\n", encoding="utf-8")
-    manifest.record("tool", entry_path, Tier.INSTALL_ROOT, "src", "abc123", config=cfg)
+    record_entry("tool", entry_path, Tier.INSTALL_ROOT, "src", "abc123", config=cfg)
     installed = entry_dir / "tool.1.gz"  # same base page, compressed
     monkeypatch.setattr(
         "maniac.listing.classification.find_installed_manpage_path",
@@ -1104,7 +1105,7 @@ def test_classify_managed_page_matched_through_a_symlink(
     real_dir.mkdir()
     real_page = real_dir / "tool.1"
     real_page.write_text(".TH TOOL 1\n", encoding="utf-8")
-    manifest.record("tool", real_page, Tier.INSTALL_ROOT, "src", "abc123", config=cfg)
+    record_entry("tool", real_page, Tier.INSTALL_ROOT, "src", "abc123", config=cfg)
 
     link_dir = tmp_path / "man" / "man1"
     link_dir.mkdir(parents=True)
@@ -1131,7 +1132,7 @@ def test_classify_outdated_when_recorded_version_differs_from_installed(
     cfg.man_dir.mkdir(parents=True)
     installed = cfg.man_dir / "tool.1"
     installed.write_text(".TH TOOL 1\n", encoding="utf-8")
-    manifest.record(
+    record_entry(
         "tool",
         installed,
         Tier.SYNTHESIS,
@@ -1178,7 +1179,7 @@ def test_classify_outdated_when_mise_latest_alias_drifts(
     installed = cfg.man_dir / "tool.1"
     installed.parent.mkdir(parents=True)
     installed.symlink_to(alias_page)
-    manifest.record(
+    record_entry(
         "tool",
         installed,
         Tier.INSTALL_ROOT,
@@ -1232,7 +1233,7 @@ def test_classify_outdated_for_an_unaliased_mise_provider_target(
     installed = cfg.man_dir / "tool.1"
     installed.parent.mkdir(parents=True)
     installed.symlink_to(page)
-    manifest.record(
+    record_entry(
         "tool",
         installed,
         Tier.INSTALL_ROOT,
@@ -1265,7 +1266,7 @@ def test_classify_ok_for_a_generic_direct_provider_target(
     installed = cfg.man_dir / "tool.1"
     installed.parent.mkdir(parents=True)
     installed.symlink_to(page)
-    manifest.record(
+    record_entry(
         "tool",
         installed,
         Tier.INSTALL_ROOT,
@@ -1309,7 +1310,7 @@ def test_classify_ok_when_mise_latest_and_binary_advance_together(
     installed = cfg.man_dir / "tool.1"
     installed.parent.mkdir(parents=True)
     installed.symlink_to(alias_page)
-    manifest.record(
+    record_entry(
         "tool",
         installed,
         Tier.INSTALL_ROOT,
@@ -1351,7 +1352,7 @@ def test_classify_ok_when_entry_records_no_version(
     cfg.man_dir.mkdir(parents=True)
     installed = cfg.man_dir / "tool.1"
     installed.write_text(".TH TOOL 1\n", encoding="utf-8")
-    manifest.record(
+    record_entry(
         "tool", installed, Tier.SYNTHESIS, "model", "abc123", config=cfg, version=None
     )
     monkeypatch.setattr(
@@ -1373,7 +1374,7 @@ def test_classify_ok_when_installation_version_is_unknown(
     cfg.man_dir.mkdir(parents=True)
     installed = cfg.man_dir / "tool.1"
     installed.write_text(".TH TOOL 1\n", encoding="utf-8")
-    manifest.record(
+    record_entry(
         "tool",
         installed,
         Tier.SYNTHESIS,
@@ -1403,7 +1404,7 @@ def test_classify_outdated_when_unclaimed_binarys_own_version_differs(
     cfg.man_dir.mkdir(parents=True)
     installed = cfg.man_dir / "tool.1"
     installed.write_text(".TH TOOL 1\n", encoding="utf-8")
-    manifest.record(
+    record_entry(
         "tool",
         installed,
         Tier.SYNTHESIS,
@@ -1433,7 +1434,7 @@ def test_classify_ok_when_unclaimed_binarys_own_version_matches(
     cfg.man_dir.mkdir(parents=True)
     installed = cfg.man_dir / "tool.1"
     installed.write_text(".TH TOOL 1\n", encoding="utf-8")
-    manifest.record(
+    record_entry(
         "tool",
         installed,
         Tier.SYNTHESIS,
@@ -1465,7 +1466,7 @@ def test_classify_ok_when_unclaimed_binarys_version_is_unavailable(
     cfg.man_dir.mkdir(parents=True)
     installed = cfg.man_dir / "tool.1"
     installed.write_text(".TH TOOL 1\n", encoding="utf-8")
-    manifest.record(
+    record_entry(
         "tool",
         installed,
         Tier.SYNTHESIS,
@@ -1518,7 +1519,7 @@ def test_classify_no_subprocess_for_unowned_or_versionless_row(
     # Owned, but the entry itself records no version.
     versionless = cfg.man_dir / "versionless.1"
     versionless.write_text(".TH VERSIONLESS 1\n", encoding="utf-8")
-    manifest.record(
+    record_entry(
         "versionless",
         versionless,
         Tier.SYNTHESIS,
@@ -1618,7 +1619,7 @@ def test_classify_manifest_entry_with_vanished_file_and_no_man_hit_is_missing(
     """A manifest entry recorded before a crash between record and copy (ADR-0017)
     is not enough on its own once `man` is also asked."""
     cfg = _config(tmp_path)
-    manifest.record(
+    record_entry(
         "tool", cfg.man_dir / "tool.1", Tier.SYNTHESIS, "model", "abc123", config=cfg
     )
 
@@ -1639,7 +1640,7 @@ def test_classify_managed_file_present_but_unreachable_by_man_is_not_managed(
     cfg.man_dir.mkdir(parents=True)
     entry_path = cfg.man_dir / "tool.1"
     entry_path.write_text(".TH TOOL 1\n", encoding="utf-8")
-    manifest.record("tool", entry_path, Tier.INSTALL_ROOT, "src", "abc123", config=cfg)
+    record_entry("tool", entry_path, Tier.INSTALL_ROOT, "src", "abc123", config=cfg)
     # find_installed_manpage_path stays patched to None by the autouse fixture:
     # `man` does not resolve this tool at all, despite the manifest entry.
 

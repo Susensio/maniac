@@ -1,4 +1,6 @@
 import json
+import multiprocessing
+import time
 from pathlib import Path
 
 import pytest
@@ -6,6 +8,8 @@ import pytest
 from maniac import manifest
 from maniac.config import Config
 from maniac.manifest import Tier
+
+from .manifest_support import forget_entry, record_entry
 
 
 def _config(tmp_path: Path) -> Config:
@@ -30,7 +34,7 @@ def test_record_lookup_forget_round_trip(tmp_path: Path) -> None:
     cfg = _config(tmp_path)
     page = tmp_path / "man1" / "tool.1"
 
-    manifest.record(
+    record_entry(
         "tool", page, Tier.INSTALL_ROOT, "install-root-source", "abc123", config=cfg
     )
     entry = manifest.lookup("tool", config=cfg)
@@ -40,7 +44,7 @@ def test_record_lookup_forget_round_trip(tmp_path: Path) -> None:
     assert entry.source == "install-root-source"
     assert entry.checksum == "abc123"
 
-    manifest.forget("tool", config=cfg)
+    forget_entry("tool", config=cfg)
     assert manifest.lookup("tool", config=cfg) is None
 
 
@@ -48,7 +52,7 @@ def test_record_lookup_round_trip_preserves_version(tmp_path: Path) -> None:
     cfg = _config(tmp_path)
     page = tmp_path / "man1" / "tool.1"
 
-    manifest.record(
+    record_entry(
         "tool",
         page,
         Tier.INSTALL_ROOT,
@@ -66,7 +70,7 @@ def test_record_lookup_round_trip_preserves_source_uri(tmp_path: Path) -> None:
     cfg = _config(tmp_path)
     uri = "https://github.com/owner/tool/blob/v1.2.3/man/tool.1"
 
-    manifest.record(
+    record_entry(
         "tool",
         tmp_path / "man1" / "tool.1",
         Tier.REPOSITORY,
@@ -85,7 +89,7 @@ def test_record_lookup_round_trip_preserves_link_target(tmp_path: Path) -> None:
     cfg = _config(tmp_path)
     target = tmp_path / "data" / "tool.1"
 
-    manifest.record(
+    record_entry(
         "tool",
         tmp_path / "man1" / "tool.1",
         Tier.SYNTHESIS,
@@ -156,13 +160,13 @@ def test_malformed_source_uri_is_ignored(tmp_path: Path) -> None:
 
 def test_forget_missing_tool_is_a_noop(tmp_path: Path) -> None:
     cfg = _config(tmp_path)
-    manifest.forget("nonexistent", config=cfg)  # must not raise
+    forget_entry("nonexistent", config=cfg)  # must not raise
     assert manifest.lookup("nonexistent", config=cfg) is None
 
 
 def test_record_persists_across_loads(tmp_path: Path) -> None:
     cfg = _config(tmp_path)
-    manifest.record(
+    record_entry(
         "tool", tmp_path / "tool.1", Tier.SYNTHESIS, "model", "abc123", config=cfg
     )
 
@@ -242,7 +246,7 @@ def test_load_does_not_migrate_a_legacy_entry(tmp_path: Path) -> None:
         man_dir=man_dir,
         output_dir=tmp_path / "data",
     )
-    manifest.record(
+    record_entry(
         "tool", page, Tier.SYNTHESIS, "model", manifest.checksum_of(page), config=cfg
     )
     before = _tree_state(tmp_path)
@@ -271,7 +275,7 @@ def _tree_state(root: Path) -> dict[str, tuple[float, int]]:
 def test_record_lookup_round_trip_preserves_group(tmp_path: Path) -> None:
     cfg = _config(tmp_path)
 
-    manifest.record(
+    record_entry(
         "eza_colors",
         tmp_path / "man5" / "eza_colors.5",
         Tier.REPOSITORY,
@@ -438,8 +442,8 @@ def test_record_promotes_the_manifest_it_read_before_mutating_it(
 ) -> None:
     """The checkpoint holds the generation before the write, not the one after."""
     cfg = _config(tmp_path)
-    manifest.record("first", tmp_path / "first.1", Tier.SYNTHESIS, "m", "a", config=cfg)
-    manifest.record("second", tmp_path / "sec.1", Tier.SYNTHESIS, "m", "b", config=cfg)
+    record_entry("first", tmp_path / "first.1", Tier.SYNTHESIS, "m", "a", config=cfg)
+    record_entry("second", tmp_path / "sec.1", Tier.SYNTHESIS, "m", "b", config=cfg)
 
     checkpointed = manifest.read(
         config=Config(manifest_path=manifest.checkpoint_path(cfg))
@@ -467,3 +471,100 @@ def test_read_of_a_damaged_manifest_writes_nothing(tmp_path: Path) -> None:
 
     assert result.health is manifest.Health.DAMAGED
     assert _tree_state(tmp_path) == before
+
+
+def _write_holding_the_lock(manifest_path: str, tool: str, hold: float) -> None:
+    """Take the manifest lock in this process, dawdle inside it, then write."""
+    cfg = Config(manifest_path=Path(manifest_path))
+    with manifest.transaction(config=cfg) as txn:
+        time.sleep(hold)
+        txn.put(
+            tool,
+            manifest.Entry(
+                path=Path(f"/x/{tool}.1"),
+                tier=Tier.SYNTHESIS,
+                source="m",
+                checksum="abc123",
+            ),
+        )
+
+
+def test_two_concurrent_writers_neither_loses_the_other_entry(tmp_path: Path) -> None:
+    """The whole point of the lock: an unserialized read-modify-save drops a writer.
+
+    Both processes write the whole document, so the loser of a race silently
+    replaces the winner's entry with a manifest that never held it.
+    """
+    cfg = _config(tmp_path)
+    other = multiprocessing.get_context("fork").Process(
+        target=_write_holding_the_lock, args=(str(cfg.manifest_path), "held", 1.0)
+    )
+    other.start()
+    try:
+        time.sleep(0.3)
+        _write_holding_the_lock(str(cfg.manifest_path), "waited", 0.0)
+    finally:
+        other.join(10)
+
+    assert other.exitcode == 0
+    assert set(manifest.load(config=cfg)) == {"held", "waited"}
+
+
+def test_a_transaction_writes_once_for_every_mutation_it_holds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """One operation is one write: a three-page release lands whole or not at all."""
+    cfg = _config(tmp_path)
+    writes: list[dict[str, manifest.Entry]] = []
+    real_save = manifest.save
+
+    def counting_save(
+        entries: dict[str, manifest.Entry], config: Config | None = None
+    ) -> None:
+        writes.append(dict(entries))
+        real_save(entries, config)
+
+    monkeypatch.setattr(manifest, "save", counting_save)
+
+    with manifest.transaction(config=cfg) as txn:
+        for page in ("eza", "eza_colors", "eza_colors-explanation"):
+            txn.put(
+                page,
+                manifest.Entry(
+                    path=Path(f"/x/{page}.1"),
+                    tier=Tier.REPOSITORY,
+                    source="eza-community/eza",
+                    checksum="abc123",
+                    group="eza",
+                ),
+            )
+        assert writes == []
+
+    assert len(writes) == 1
+    assert set(manifest.load(config=cfg)) == {
+        "eza",
+        "eza_colors",
+        "eza_colors-explanation",
+    }
+
+
+def test_a_failed_transaction_writes_nothing(tmp_path: Path) -> None:
+    """An operation that raises leaves the manifest describing where it started."""
+    cfg = _config(tmp_path)
+    record_entry("first", tmp_path / "first.1", Tier.SYNTHESIS, "m", "a", config=cfg)
+    before = cfg.manifest_path.read_bytes()
+
+    with pytest.raises(RuntimeError), manifest.transaction(config=cfg) as txn:
+        txn.forget("first")
+        txn.put(
+            "second",
+            manifest.Entry(
+                path=tmp_path / "second.1",
+                tier=Tier.SYNTHESIS,
+                source="m",
+                checksum="b",
+            ),
+        )
+        raise RuntimeError("install failed after linking")
+
+    assert cfg.manifest_path.read_bytes() == before

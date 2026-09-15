@@ -12,6 +12,8 @@ from maniac.generation.compiler import build_provenance_header
 from maniac.lifecycle import list_installed_manpages, read_provenance_header
 from maniac.manifest import Entry, Tier
 
+from .manifest_support import reconcile, record_entry
+
 
 def _config(tmp_path: Path) -> Config:
     return Config(manifest_path=tmp_path / "state" / "installed.json")
@@ -38,7 +40,7 @@ def test_empty_manifest_is_not_reseeded_from_headers(tmp_path: Path) -> None:
         json.dumps({"version": 1, "entries": {}}), encoding="utf-8"
     )
 
-    assert lifecycle.reconcile(config=full_cfg) == {}
+    assert reconcile(config=full_cfg) == {}
 
 
 def test_migration_ignores_a_header_carrying_page_only_in_output_dir(
@@ -57,7 +59,7 @@ def test_migration_ignores_a_header_carrying_page_only_in_output_dir(
         man_dir=man_dir,
         output_dir=output_dir,
     )
-    assert lifecycle.reconcile(config=cfg) == {}
+    assert reconcile(config=cfg) == {}
 
 
 def test_migration_seeds_and_links_a_header_carrying_page(tmp_path: Path) -> None:
@@ -68,7 +70,7 @@ def test_migration_seeds_and_links_a_header_carrying_page(tmp_path: Path) -> Non
     (man_dir / "tool.1").write_text(header + ".TH TOOL 1", encoding="utf-8")
 
     cfg = Config(manifest_path=tmp_path / "state" / "installed.json", man_dir=man_dir)
-    entries = lifecycle.reconcile(config=cfg)
+    entries = reconcile(config=cfg)
 
     assert set(entries) == {"tool"}
     assert entries["tool"].tier is Tier.SYNTHESIS
@@ -89,7 +91,7 @@ def test_migration_does_not_recover_headerless_tier1_pages(tmp_path: Path) -> No
     (man_dir / "vendor.1").write_text(".TH VENDOR 1 no header", encoding="utf-8")
 
     cfg = Config(manifest_path=tmp_path / "state" / "installed.json", man_dir=man_dir)
-    assert lifecycle.reconcile(config=cfg) == {}
+    assert reconcile(config=cfg) == {}
 
 
 def test_migration_converts_legacy_copy_to_durable_link(tmp_path: Path) -> None:
@@ -106,7 +108,7 @@ def test_migration_converts_legacy_copy_to_durable_link(tmp_path: Path) -> None:
         output_dir=tmp_path / "data",
         backup_dir=backup.parent,
     )
-    manifest.record(
+    record_entry(
         "tool",
         page,
         Tier.REPOSITORY,
@@ -118,7 +120,7 @@ def test_migration_converts_legacy_copy_to_durable_link(tmp_path: Path) -> None:
         config=cfg,
     )
 
-    entry = lifecycle.reconcile(config=cfg)["tool"]
+    entry = reconcile(config=cfg)["tool"]
 
     assert page.is_symlink()
     assert entry.target == cfg.output_dir / page.name
@@ -139,12 +141,12 @@ def test_migration_retains_changed_legacy_copy(tmp_path: Path) -> None:
         man_dir=man_dir,
         output_dir=tmp_path / "data",
     )
-    manifest.record(
+    record_entry(
         "tool", page, Tier.SYNTHESIS, "model", manifest.checksum_of(page), config=cfg
     )
     page.write_text("user changed", encoding="utf-8")
 
-    entry = lifecycle.reconcile(config=cfg)["tool"]
+    entry = reconcile(config=cfg)["tool"]
 
     assert not page.is_symlink()
     assert page.read_text(encoding="utf-8") == "user changed"
@@ -173,7 +175,7 @@ def test_migration_relinks_an_unmodified_vendor_copy_to_its_provider_page(
         man_dir=man_dir,
         output_dir=durable_target.parent,
     )
-    manifest.record(
+    record_entry(
         "tool",
         installed,
         Tier.INSTALL_ROOT,
@@ -183,7 +185,7 @@ def test_migration_relinks_an_unmodified_vendor_copy_to_its_provider_page(
         config=cfg,
     )
 
-    entry = lifecycle.reconcile(config=cfg)["tool"]
+    entry = reconcile(config=cfg)["tool"]
 
     assert installed.readlink() == provider_page.absolute()
     assert entry.target == provider_page.absolute()
@@ -209,7 +211,7 @@ def test_migration_retains_a_modified_vendor_copy(tmp_path: Path) -> None:
         man_dir=man_dir,
         output_dir=durable_target.parent,
     )
-    manifest.record(
+    record_entry(
         "tool",
         installed,
         Tier.INSTALL_ROOT,
@@ -219,7 +221,7 @@ def test_migration_retains_a_modified_vendor_copy(tmp_path: Path) -> None:
         config=cfg,
     )
 
-    entry = lifecycle.reconcile(config=cfg)["tool"]
+    entry = reconcile(config=cfg)["tool"]
 
     assert installed.readlink() == durable_target
     assert entry.target == durable_target
@@ -242,7 +244,7 @@ def test_migration_relocates_a_stray_backup_out_of_man_dir(tmp_path: Path) -> No
         man_dir=man_dir,
         backup_dir=tmp_path / "state" / "backups",
     )
-    entries = lifecycle.reconcile(config=cfg)
+    entries = reconcile(config=cfg)
 
     assert not stray_backup.exists()
     relocated = cfg.backup_dir / "tool.1"
@@ -263,7 +265,7 @@ def test_migration_leaves_an_unattributable_backup_in_place(tmp_path: Path) -> N
         man_dir=man_dir,
         backup_dir=tmp_path / "state" / "backups",
     )
-    lifecycle.reconcile(config=cfg)
+    reconcile(config=cfg)
 
     assert stray_backup.exists()
 
@@ -414,7 +416,7 @@ def _durable_vendor_copy_fixture(tmp_path: Path) -> tuple[Config, Path, Path, Pa
         man_dir=man_dir,
         output_dir=durable_target.parent,
     )
-    manifest.record(
+    record_entry(
         "tool",
         installed,
         Tier.INSTALL_ROOT,
@@ -446,7 +448,7 @@ def test_read_only_reconcile_reports_no_removals(tmp_path: Path) -> None:
         tmp_path
     )
 
-    entry = lifecycle.reconcile(config=cfg)["tool"]
+    entry = reconcile(config=cfg)["tool"]
 
     assert installed.readlink() == provider_page.absolute()
     assert entry.provider_target is True
@@ -465,7 +467,7 @@ def test_reconcile_reports_no_removal_for_a_retained_shared_target(
     manifest.save(entries, cfg)
 
     removed: list[Path] = []
-    lifecycle.reconcile(config=cfg, removed=removed)
+    reconcile(config=cfg, removed=removed)
 
     assert durable_target.exists()
     assert removed == []

@@ -55,84 +55,138 @@ def install_manpage(
 
     dest_file = dest_dir / src.name
 
-    entries = lifecycle.reconcile(cfg)
-
-    backup_path: Path | None = None
-    previous_entry: Entry | None = None
-    if _path_exists(dest_file):
-        existing = entries.get(tool)
-        owned = (
-            existing is not None
-            and existing.path == dest_file
-            and manifest.is_expected_link(existing)
+    # The generate phase is over by here -- `src` exists. Everything below is
+    # backup, link and record, which is milliseconds, so it is the whole of
+    # what the lock spans (ADR-0043).
+    with manifest.transaction(cfg) as txn:
+        entries = lifecycle.reconcile(txn)
+        backup_path, fresh_backup = _take_backup(
+            dest_file, entries.get(tool), cfg, force=force
         )
-        if owned:
-            # Reinstalling over our own page: carry the prior backup forward
-            # rather than dropping it, or a vendor page backed up on an
-            # earlier `--force` install becomes unrestorable on uninstall.
-            assert existing is not None
-            backup_path = existing.backup
-            previous_entry = existing
-        else:
-            if not force:
-                raise FileExistsError(
-                    f"A foreign or vendor manpage already exists at '{dest_file}'. "
-                    f"Use --force to create a backup and overwrite."
-                )
-            backup_dir = cfg.backup_dir
-            backup_dir.mkdir(parents=True, exist_ok=True)
-            backup_path = backup_dir / dest_file.name
-            shutil.copy2(dest_file, backup_path)
-            logger.info(
-                "Created backup of foreign manpage", backup_file=str(backup_path)
-            )
+        target = _materialize_and_link(
+            src,
+            dest_file,
+            cfg,
+            entries=entries,
+            tool=tool,
+            durable_source=durable_source,
+            backup_path=backup_path if fresh_backup else None,
+        )
+        txn.put(
+            tool,
+            Entry(
+                path=dest_file,
+                tier=tier,
+                source=source,
+                checksum=checksum,
+                backup=backup_path,
+                version=version,
+                source_uri=source_uri,
+                target=target,
+                provider_target=provider_target,
+                group=group,
+            ),
+        )
+    logger.info("Installed manpage", path=str(dest_file))
+    return dest_file
 
+
+def _take_backup(
+    dest_file: Path,
+    existing: Entry | None,
+    cfg: Config,
+    *,
+    force: bool,
+) -> tuple[Path | None, bool]:
+    """Return the backup to record and whether this call created it.
+
+    Reinstalling over our own page carries the prior backup forward rather
+    than dropping it, or a vendor page backed up on an earlier `--force`
+    install becomes unrestorable on uninstall.  A fresh backup is named after
+    the manpath entry it displaced, which is what makes an orphaned one
+    traceable to the page it must be restored over.
+    """
+    if not _path_exists(dest_file):
+        return None, False
+    owned = (
+        existing is not None
+        and existing.path == dest_file
+        and manifest.is_expected_link(existing)
+    )
+    if owned:
+        assert existing is not None
+        return existing.backup, False
+    if not force:
+        raise FileExistsError(
+            f"A foreign or vendor manpage already exists at '{dest_file}'. "
+            f"Use --force to create a backup and overwrite."
+        )
+    cfg.backup_dir.mkdir(parents=True, exist_ok=True)
+    backup_path = cfg.backup_dir / dest_file.name
+    shutil.copy2(dest_file, backup_path)
+    logger.info("Created backup of foreign manpage", backup_file=str(backup_path))
+    return backup_path, True
+
+
+def _materialize_and_link(
+    src: Path,
+    dest_file: Path,
+    cfg: Config,
+    *,
+    entries: dict[str, Entry],
+    tool: str,
+    durable_source: bool,
+    backup_path: Path | None,
+) -> Path:
+    """Return the linked target, undoing every partial step if one of them fails.
+
+    A failure here leaves nothing behind: the transaction discards the
+    manifest side, and this discards the filesystem side -- the durable
+    target this call materialized, and the backup this call took of a page
+    that is consequently still in place.
+    """
+    target: Path | None = None
     try:
         target = lifecycle.materialize_target(
             src, cfg, durable_source=durable_source, entries=entries, tool=tool
         )
         lifecycle.link_manpath_entry(dest_file, target)
     except Exception:
-        if previous_entry is not None:
-            # A reinstall over our own page failed mid-copy: restore the
-            # prior entry rather than forgetting it outright, or its
-            # vendor backup (still on disk, still valid) becomes orphaned.
-            # previous_entry.version, not the new `version` param: the copy
-            # never happened, so the old page (and the version it documents)
-            # is still what's on disk.
-            manifest.record(
-                tool,
-                previous_entry.path,
-                previous_entry.tier,
-                previous_entry.source,
-                previous_entry.checksum,
-                backup=previous_entry.backup,
-                version=previous_entry.version,
-                source_uri=previous_entry.source_uri,
-                target=previous_entry.target,
-                provider_target=previous_entry.provider_target,
-                group=previous_entry.group,
-                config=cfg,
-            )
-        else:
-            manifest.forget(tool, config=cfg)
+        _discard_partial_target(target, cfg, entries, durable_source=durable_source)
+        if backup_path is not None:
+            _restore_or_discard_backup(backup_path, dest_file)
         raise
-    manifest.record(
-        tool,
-        dest_file,
-        tier,
-        source,
-        checksum,
-        backup=backup_path,
-        version=version,
-        source_uri=source_uri,
-        target=target,
-        provider_target=provider_target,
-        group=group,
-        config=cfg,
-    )
-    logger.info("Installed manpage", path=str(dest_file))
-    return dest_file
+    return target
+
+
+def _discard_partial_target(
+    target: Path | None,
+    cfg: Config,
+    entries: dict[str, Entry],
+    *,
+    durable_source: bool,
+) -> None:
+    """Remove a durable target this call materialized and no entry records.
+
+    A recorded target is another install's, or this tool's own previous one:
+    unlinking it would dangle a link that is still correct.
+    """
+    if target is None or durable_source:
+        return
+    if not manifest.is_maniac_owned_target(target, cfg):
+        return
+    if lifecycle.target_users(entries, cfg).get(target.absolute()):
+        return
+    target.unlink(missing_ok=True)
+
+
+def _restore_or_discard_backup(backup_path: Path, dest_file: Path) -> None:
+    """Put a failed install's backup back, or drop it if its page never moved."""
+    if _path_exists(dest_file):
+        backup_path.unlink(missing_ok=True)
+        return
+    shutil.move(backup_path, dest_file)
+    logger.info("Restored displaced manpage after failed install", path=str(dest_file))
 
 
 def _path_exists(path: Path) -> bool:
@@ -224,24 +278,25 @@ def _kept_reason(entry: Entry, *, force: bool) -> KeptReason | None:
 
 def _remove_recorded_manpage(
     tool_name: str,
-    cfg: Config,
+    txn: manifest.Transaction,
     *,
-    entries: dict[str, Entry],
     force: bool,
     removed_paths: list[Path],
 ) -> tuple[Entry | None, Path | None, KeptReason | None]:
     """Remove a recorded link, returning its entry and why any page was kept.
 
-    `entries` is the reconciled manifest and is mutated as records are
-    forgotten, so a later member of the same group sees what the earlier
-    ones already removed -- which is what decides whether a shared durable
-    target still has a user.
+    The transaction's entries are mutated as records are forgotten, so a
+    later member of the same group sees what the earlier ones already
+    removed -- which is what decides whether a shared durable target still
+    has a user.  All of it lands in one write when the whole group is done.
     """
+    cfg = txn.config
+    entries = txn.entries
     entry = entries.get(tool_name)
     if entry is None:
         return None, _foreign_manpage(tool_name, cfg), None
     if not _path_exists(entry.path):
-        _forget(tool_name, entries, cfg)
+        txn.forget(tool_name)
         return entry, None, None
     kept = _kept_reason(entry, force=force)
     if kept is not None:
@@ -258,18 +313,12 @@ def _remove_recorded_manpage(
         logger.info("Restored vendor backup manpage", path=str(installed_file))
     else:
         removed_paths.append(installed_file)
-    _forget(tool_name, entries, cfg)
+    txn.forget(tool_name)
 
     discarded = lifecycle.discard_durable_target(entry, cfg, entries)
     if discarded is not None:
         removed_paths.append(discarded)
     return entry, None, None
-
-
-def _forget(tool_name: str, entries: dict[str, Entry], cfg: Config) -> None:
-    """Drop a tool's record from the manifest and from the reconciled snapshot."""
-    entries.pop(tool_name, None)
-    manifest.forget(tool_name, config=cfg)
 
 
 def _group_members(tool_name: str, entries: dict[str, Entry]) -> list[str]:
@@ -344,20 +393,40 @@ def uninstall_manpage(
     # removed_paths, not a bare reconcile: ADR-0032's migration can delete
     # the superseded durable copy itself, and uninstall reports every path
     # it removed.
-    entries = lifecycle.reconcile(cfg, removed=removed_paths)
+    with manifest.transaction(cfg) as txn:
+        lifecycle.reconcile(txn, removed=removed_paths)
+        foreign_kept, modified_kept, legacy_kept = _uninstall_group(
+            tool_name, txn, purge=purge, force=force, removed_paths=removed_paths
+        )
+    return UninstallResult(
+        removed=removed_paths,
+        foreign_kept=foreign_kept,
+        modified_kept=modified_kept,
+        legacy_kept=legacy_kept,
+    )
 
+
+def _uninstall_group(
+    tool_name: str,
+    txn: manifest.Transaction,
+    *,
+    purge: bool,
+    force: bool,
+    removed_paths: list[Path],
+) -> tuple[Path | None, list[Path], list[Path]]:
+    """Remove every member of `tool_name`'s release, reporting what was kept."""
+    cfg = txn.config
     foreign_kept: Path | None = None
     modified_kept: list[Path] = []
     legacy_kept: list[Path] = []
-    for member in _group_members(tool_name, entries):
+    for member in _group_members(tool_name, txn.entries):
         # 1. Active installed manpage, wherever the manifest says MANIAC put
         # it -- the manifest's recorded path, not a `<tool>.1` guess, is what
         # closes the compressed-page hole (a tier-1 `pandoc.1.gz` was
         # previously unreachable here) (ADR-0017).
         entry, member_foreign, member_kept = _remove_recorded_manpage(
             member,
-            cfg,
-            entries=entries,
+            txn,
             force=force,
             removed_paths=removed_paths,
         )
@@ -376,9 +445,4 @@ def uninstall_manpage(
         if purge:
             _purge_artifacts(member, cfg, removed_paths)
 
-    return UninstallResult(
-        removed=removed_paths,
-        foreign_kept=foreign_kept,
-        modified_kept=modified_kept,
-        legacy_kept=legacy_kept,
-    )
+    return foreign_kept, modified_kept, legacy_kept

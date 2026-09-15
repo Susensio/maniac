@@ -91,17 +91,18 @@ def list_installed_manpages(
 
 
 def reconcile(
-    config: Config | None = None, *, removed: list[Path] | None = None
+    txn: manifest.Transaction, *, removed: list[Path] | None = None
 ) -> dict[str, Entry]:
-    """Return every entry after bringing the manifest back in step with the disk.
+    """Return `txn`'s entries after bringing them back in step with the disk.
 
-    Seeds from provenance headers when no manifest file exists yet, and
-    persists that seed so it runs once.  Then converts recoverable legacy
-    copies into owned links (ADR-0028) and verified vendor copies into direct
-    provider links (ADR-0032), saving only when something moved.
+    Converts recoverable legacy copies into owned links (ADR-0028) and
+    verified vendor copies into direct provider links (ADR-0032), marking
+    the transaction dirty only when something moved.  What it returns is
+    `txn.entries` itself, so a caller that mutates the manifest further
+    mutates the same working set.
 
-    Write paths call this; `manifest.load` never does, so a read-only command
-    observes the manifest exactly as persisted.
+    Write paths call this inside their transaction; `manifest.load` never
+    does, so a read-only command observes the manifest exactly as persisted.
 
     `removed` collects every path migration deletes, for a caller that reports
     its own removals.  Omitting it deletes the same files silently, which is
@@ -109,16 +110,15 @@ def reconcile(
     only such caller, since ADR-0034 routed `list` through `manifest.load`
     and nothing read-only reconciles at all.
     """
-    cfg = config or Config()
-    seeding = not cfg.manifest_path.exists()
-    entries = _seed_from_headers(cfg) if seeding else manifest.load(cfg)
-
-    migrated = _migrate_links(entries, cfg)
-    if _migrate_install_root_links(entries, cfg, removed):
-        migrated = True
-    if seeding or migrated:
-        manifest.save(entries, cfg)
-    return entries
+    if txn.read.health is manifest.Health.ABSENT:
+        for tool, entry in _seed_from_headers(txn.config).items():
+            txn.put(tool, entry)
+        # Dirty even when the seed is empty: the written file is what stops
+        # the scan running again on every later operation.
+        txn.dirty = True
+    _migrate_links(txn)
+    _migrate_install_root_links(txn, removed)
+    return txn.entries
 
 
 def materialize_target(
@@ -158,7 +158,7 @@ def materialize_target(
     return target
 
 
-def _target_users(entries: dict[str, Entry], config: Config) -> dict[Path, list[str]]:
+def target_users(entries: dict[str, Entry], config: Config) -> dict[Path, list[str]]:
     """Which tools record each MANIAC-owned durable target, keyed by absolute path.
 
     One durable target can carry more than one entry, so every decision to
@@ -178,15 +178,22 @@ def _recorded_target_owner(
     target: Path, entries: dict[str, Entry], config: Config, tool: str
 ) -> str | None:
     """Name of another tool whose entry already records `target`, or None."""
-    users = _target_users(entries, config).get(target.absolute(), [])
+    users = target_users(entries, config).get(target.absolute(), [])
     return next((other for other in users if other != tool), None)
 
 
 def link_manpath_entry(path: Path, target: Path) -> None:
     """Point a manpath entry at `target`, replacing whatever occupies it atomically."""
     temporary_link = path.with_name(f".{path.name}.maniac.tmp")
-    temporary_link.symlink_to(target)
-    temporary_link.replace(path)
+    temporary_link.unlink(missing_ok=True)
+    try:
+        temporary_link.symlink_to(target)
+        temporary_link.replace(path)
+    except OSError:
+        # A staged link nothing reached is invisible litter on the manpath;
+        # `man` would still scan it.
+        temporary_link.unlink(missing_ok=True)
+        raise
 
 
 def discard_durable_target(
@@ -206,7 +213,7 @@ def discard_durable_target(
     target = manifest.expected_target_path(entry)
     if not manifest.is_maniac_owned_target(target, config) or not target.exists():
         return None
-    sharers = _target_users(entries, config).get(target.absolute(), [])
+    sharers = target_users(entries, config).get(target.absolute(), [])
     if sharers:
         logger.info(
             "Retained durable target still recorded elsewhere",
@@ -270,7 +277,7 @@ def _migrate_backups(entries: dict[str, Entry], config: Config) -> None:
         entries[tool] = replace(entries[tool], backup=destination)
 
 
-def _migrate_links(entries: dict[str, Entry], config: Config) -> bool:
+def _migrate_links(txn: manifest.Transaction) -> None:
     """Convert safely recoverable pre-ADR-0028 copies into owned links.
 
     The installed copy is the only trustworthy bytes source for an older
@@ -279,8 +286,9 @@ def _migrate_links(entries: dict[str, Entry], config: Config) -> bool:
     entry is deliberately retained: guessing at its provenance could destroy
     a usable user page.
     """
-    migrated = False
-    for tool, entry in entries.items():
+    entries = txn.entries
+    config = txn.config
+    for tool, entry in list(entries.items()):
         if entry.target is not None:
             continue
         path = entry.path
@@ -307,26 +315,21 @@ def _migrate_links(entries: dict[str, Entry], config: Config) -> bool:
                 error=str(error),
             )
             continue
-        entries[tool] = replace(entry, target=target)
-        migrated = True
-    return migrated
+        txn.put(tool, replace(entry, target=target))
 
 
 def _migrate_install_root_links(
-    entries: dict[str, Entry], config: Config, removed: list[Path] | None
-) -> bool:
+    txn: manifest.Transaction, removed: list[Path] | None
+) -> None:
     """Replace safely identified durable vendor copies with direct provider links."""
-    target_users = _target_users(entries, config)
-    migrated = False
-    for tool, entry in entries.items():
+    users = target_users(txn.entries, txn.config)
+    for tool, entry in list(txn.entries.items()):
         migrated_entry = _migrate_install_root_entry(
-            tool, entry, config, target_users, removed
+            tool, entry, txn.config, users, removed
         )
         if migrated_entry is None:
             continue
-        entries[tool] = migrated_entry
-        migrated = True
-    return migrated
+        txn.put(tool, migrated_entry)
 
 
 def _migrate_install_root_entry(

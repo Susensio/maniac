@@ -10,6 +10,7 @@ from rich.text import Text
 from typer.testing import CliRunner
 
 import maniac.cli as cli_module
+from maniac import manifest
 from maniac.cli import _render_eval_table, _repo_cell, app
 from maniac.config import Config
 from maniac.installer import UninstallResult
@@ -323,9 +324,11 @@ def test_cli_install_reuses_config_for_existing_destination(
 
     observed: list[Config | None] = []
 
-    def reconcile(config: Config | None = None) -> object:
-        observed.append(config)
-        return real_reconcile(config)
+    def reconcile(
+        txn: manifest.Transaction, *, removed: list[Path] | None = None
+    ) -> object:
+        observed.append(txn.config)
+        return real_reconcile(txn, removed=removed)
 
     monkeypatch.setattr(cli_module, "Config", TrackingConfig)
     monkeypatch.setattr(
