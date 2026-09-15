@@ -334,3 +334,26 @@ The live manifest holds two entries, `aichat` and `ty`, both `tier=synthesis` wi
 Neither migration has ever had anything to do on the only machine that exists, and both ran on every install and uninstall this session.
 This is pre-1.0 (`CLAUDE.md`: the repository is the whole world, no shims to spare a caller), and the ADR-0032 path carries a permanent-corruption bug.
 Deleting both migrations rather than fixing that bug is on the table; it turns on whether any manifest exists on another machine or in a restorable backup.
+
+### Migrations deleted -- 2026-09-15
+
+Both historical migrations are gone (`07b7f56`), with `lifecycle.reconcile` itself: its entire body was the three migration calls.
+Net -617 lines across 9 files; `lifecycle.py` fell from 327 to 120 and lost the module's only file-deleting code paths.
+`select_historical_install_root` went with them, and the ADR-0032 `BUG:` marker disappeared with the code that carried it.
+
+The premise was verified before deleting, twice.
+ADR-0028's `_migrate_links` fires only on `target is None`; ADR-0032's `_migrate_install_root_links` only on `tier=INSTALL_ROOT`; `_migrate_backups` only on a stray `*.maniac_bak` in `man_dir`.
+The live manifest holds `aichat` and `ty`, both `tier=synthesis` with targets set, and no stray backup exists.
+Neither guard could ever have fired, and this is the only MANIAC installation there is -- solo tool, solo developer, pre-1.0, `CLAUDE.md`'s "the repository is the whole world".
+
+`reconcile`'s `removed` sink went too, undoing `5edb89d`. That commit fixed a real defect -- uninstall deleting a migrated file without reporting it -- but with no migration there is no such file.
+`UninstallResult.removed` stays: live removals (backups, orphaned roff, purge artifacts) still populate it.
+
+Verified at 663 tests, `just check` exit 0, and against real data: `maniac list` works on the live manifest, and an install/uninstall round trip on a throwaway config records and removes correctly with `reconcile` absent from the path.
+
+Five `tests/test_installer.py` fixtures were not migration tests by name but silently depended on migration converting a plain-file legacy record into a linked entry before uninstall would treat it as removable; they now build entries the way `install_manpage` actually produces them.
+
+That exposed a live consequence worth watching.
+A `target=None` entry is now permanently `legacy_kept` -- never auto-removed, never restored from backup -- unless `--force` is given, which `e3287fa` made work.
+Nothing MANIAC does can create such an entry any more: `install_manpage` always sets `target`, and recovery reconstructs from link targets.
+It is reachable only from a hand-edited or foreign manifest, so the branch is now defensive rather than migratory and was deliberately kept.
