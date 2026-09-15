@@ -968,6 +968,32 @@ def test_cli_streaming_groups_sibling_binaries_once_the_run_completes(
     assert "pandoc-lua" not in final[final.rindex("Manpage Reachability") :]
 
 
+def test_cli_verbose_list_disables_streaming(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    output = io.StringIO()
+    monkeypatch.setattr(
+        cli_module.console,
+        "_instance",
+        Console(file=output, force_terminal=True, no_color=True, width=120),
+    )
+    monkeypatch.setattr(cli_module, "Config", lambda: _config(tmp_path))
+    monkeypatch.setattr(
+        "maniac.cli.listing.Live",
+        lambda *args, **kwargs: pytest.fail("verbose list must not start Live"),
+    )
+    provider = _FakeProvider()
+    monkeypatch.setattr(
+        "maniac.listing.inventory.resolution.enumerate_installations",
+        lambda on_start=None, on_scan=None: [(provider, _installation(binary="gum"))],
+    )
+
+    result = runner.invoke(app, ["--verbose", "list"])
+
+    assert result.exit_code == 0
+    assert "Manpage Reachability" in output.getvalue()
+
+
 def test_cli_streaming_stops_row_progress_after_the_skeleton(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

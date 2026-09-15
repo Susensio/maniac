@@ -615,11 +615,12 @@ def list_tools(
         available=available,
         missing=missing,
     )
+    verbose = bool(ctx.find_root().params.get("verbose"))
     interactive = not names and console.is_terminal
     # A filter selects final-state membership, so a provisional row could lie
     # by appearing or disappearing. Keep those calls blocking; the unfiltered
     # terminal inventory is the path that streams in place.
-    streaming = interactive and not tools and not states and not managed
+    streaming = interactive and not verbose and not tools and not states and not managed
     reporter = _ProgressReporter(console) if interactive else None
     renderer = _StreamingList(console, reporter) if streaming and reporter else None
 
