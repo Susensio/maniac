@@ -107,6 +107,12 @@ These are findings the work surfaced and deliberately did not take; they are fir
   Measured on 2026-09-15: 20 of 22 unauthenticated benchmark runs hit `rate limit exceeded`, 9 to 26 times each.
   Reusing the `gh` credential raises the ceiling from 60 to 5000 requests an hour and is the practical fix, but a throttled probe still needs a bounded retreat of its own.
 
+- Invalidate the process-local provider memoization that hides a mid-run filesystem change.
+  `providers/uv.py`'s `_local_editable_dir` and `_installed_version` are `functools.cache`d by install root, and `providers/pipx.py`'s `find_distribution_metadata` is `functools.cache`d by `(root, package)`, neither with any invalidation.
+  Reproduced on 2026-09-15: a uv editable checkout appearing after an earlier lookup still reads `None`, and a `METADATA` version rewritten between two calls for one root still reads the first value.
+  Within a single `list` run the inputs rarely change, so this is latent rather than observed in normal use; it matters for a long-lived process and for any caller that installs and then re-reads.
+  The abandoned fact-cache branch neutralized both with an evidence-driven `clear_source_cache()` call, so dropping that branch leaves this unaddressed; a fix here needs its own invalidation boundary rather than that machinery.
+
 ## Refactors and architecture
 
 ### List performance
