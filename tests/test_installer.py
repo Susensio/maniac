@@ -1231,6 +1231,31 @@ def test_install_interrupted_before_linking_leaves_no_orphan_target(
     assert (cfg.output_dir / "tool.1").exists()
 
 
+def test_install_interrupted_before_linking_keeps_the_synthesized_page(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Tier 3 installs from its own durable target; rollback must not delete it.
+
+    Synthesis compiles straight into `output_dir` and hands that path in as
+    the source, so nothing is copied and the page predates the install.
+    Removing it on a failed link throws away a paid LLM call.
+    """
+    cfg = _crash_config(tmp_path)
+    cfg.output_dir.mkdir(parents=True)
+    synthesized = cfg.output_dir / "tool.1"
+    synthesized.write_text(".TH TOOL 1 synthesized", encoding="utf-8")
+    monkeypatch.setattr(
+        "maniac.lifecycle.link_manpath_entry",
+        lambda *a, **kw: (_ for _ in ()).throw(OSError("read-only manpath")),
+    )
+
+    with pytest.raises(OSError):
+        install_manpage(synthesized, "tool", Tier.SYNTHESIS, "model", config=cfg)
+
+    assert synthesized.read_text(encoding="utf-8") == ".TH TOOL 1 synthesized"
+    assert manifest_module.load(config=cfg) == {}
+
+
 def test_install_interrupted_before_linking_restores_the_displaced_page(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

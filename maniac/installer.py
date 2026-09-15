@@ -164,39 +164,39 @@ def _materialize_and_link(
 
     A failure here leaves nothing behind: the transaction discards the
     manifest side, and this discards the filesystem side -- the durable
-    target this call materialized, and the backup this call took of a page
-    that is consequently still in place.
+    target this call wrote, and the backup this call took of a page that is
+    consequently still in place.
     """
-    target: Path | None = None
+    materialized: lifecycle.Materialized | None = None
     try:
-        target = lifecycle.materialize_target(
+        materialized = lifecycle.materialize_target(
             src, cfg, durable_source=durable_source, entries=entries, tool=tool
         )
-        lifecycle.link_manpath_entry(dest_file, target)
+        lifecycle.link_manpath_entry(dest_file, materialized.path)
     except Exception:
-        _discard_partial_target(target, cfg, entries, durable_source=durable_source)
+        _discard_materialized_target(materialized, cfg, entries)
         if backup_path is not None:
             _restore_or_discard_backup(backup_path, dest_file)
         raise
-    return target
+    return materialized.path
 
 
-def _discard_partial_target(
-    target: Path | None,
+def _discard_materialized_target(
+    materialized: lifecycle.Materialized | None,
     cfg: Config,
     entries: dict[str, Entry],
-    *,
-    durable_source: bool,
 ) -> None:
-    """Remove a durable target this call materialized and no entry records.
+    """Remove a durable target this call wrote and no entry records.
 
+    Only one this call wrote: a tier-3 source already sits at its durable
+    path, so the failed install created nothing, and unlinking there would
+    throw away the synthesized page a paid LLM call produced.
     A recorded target is another install's, or this tool's own previous one:
     unlinking it would dangle a link that is still correct.
     """
-    if target is None or durable_source:
+    if materialized is None or not materialized.copied:
         return
-    if not manifest.is_maniac_owned_target(target, cfg):
-        return
+    target = materialized.path
     if lifecycle.target_users(entries, cfg).get(target.absolute()):
         return
     target.unlink(missing_ok=True)

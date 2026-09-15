@@ -7,12 +7,26 @@ deserializing it.
 """
 
 import shutil
+from dataclasses import dataclass
 from pathlib import Path
 
 from . import manifest
 from .config import Config
 from .logging import logger
 from .manifest import Entry
+
+
+@dataclass(frozen=True, slots=True)
+class Materialized:
+    """A link target and whether this call wrote it.
+
+    Tier-3 synthesis compiles its roff straight into `output_dir`, so source
+    and target are one file and nothing is copied -- rollback must leave
+    such a target alone, it predates the install that failed.
+    """
+
+    path: Path
+    copied: bool
 
 
 def materialize_target(
@@ -22,7 +36,7 @@ def materialize_target(
     durable_source: bool,
     entries: dict[str, Entry],
     tool: str,
-) -> Path:
+) -> Materialized:
     """Return an upgrade-safe link target, materializing it before link replacement.
 
     The durable target is named after the source page, so two tools whose
@@ -34,7 +48,7 @@ def materialize_target(
     keys is a mistake worth surfacing.
     """
     if durable_source:
-        return src.absolute()
+        return Materialized(src.absolute(), copied=False)
     target = config.output_dir / src.name
     owner = _recorded_target_owner(target, entries, config, tool)
     if owner is not None:
@@ -44,12 +58,12 @@ def materialize_target(
             f"'{tool}'."
         )
     if src.absolute() == target.absolute():
-        return target
+        return Materialized(target, copied=False)
     target.parent.mkdir(parents=True, exist_ok=True)
     temporary_target = target.with_name(f".{target.name}.tmp")
     shutil.copy2(src, temporary_target)
     temporary_target.replace(target)
-    return target
+    return Materialized(target, copied=True)
 
 
 def target_users(entries: dict[str, Entry], config: Config) -> dict[Path, list[str]]:
