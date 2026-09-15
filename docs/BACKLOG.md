@@ -102,8 +102,10 @@ These are findings the work surfaced and deliberately did not take; they are fir
   `Entry.group` (ADR-0042) records membership at install time and install has no pruning pass, so a member that a later release no longer ships stays recorded.
   Uninstall then looks for a page that upstream stopped shipping.
 
-- Let a rate-limited release-metadata probe converge instead of re-probing forever.
-  `_release_assets` requests the release JSON through `_download_cached_result` behind a five-minute freshness record that is written only on success, while `_download_result` classifies `403` as non-definitive, so a throttled probe records nothing and the next run repeats it identically.
+- Reconcile the release-metadata freshness TTL with the request budget it has to live inside.
+  `_release_assets` requests the release JSON through `_download_cached_result` behind a five-minute freshness record, and one `list` run makes about 26 such calls, so continuous use demands roughly 312 requests an hour against an unauthenticated ceiling of 60 -- a mismatch of about five times, leaving room for two useful runs an hour.
+  Throttling then compounds it: `_download_result` classifies `403` as non-definitive, correctly, since a transient failure must never be cached as absence, so a throttled probe records nothing and the next run arrives with identical work.
+  It does recover when the hourly window resets, so this is a sustained-throttling problem rather than a trap, but every run past the second in an hour spends 26 failing calls to learn nothing.
   Measured on 2026-09-15: 20 of 22 unauthenticated benchmark runs hit `rate limit exceeded`, 9 to 26 times each.
   Reusing the `gh` credential raises the ceiling from 60 to 5000 requests an hour and is the practical fix, but a throttled probe still needs a bounded retreat of its own.
 
