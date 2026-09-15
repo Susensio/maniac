@@ -67,7 +67,7 @@ def enumerate_installations(
     binary that actually runs when two providers claim the same name
     (ADR-0016's tie-break).
 
-    Walks `loginpath.login_path_dirs()` (ADR-0020) rather than the `$PATH`
+    Walks `loginpath.login_path().dirs` (ADR-0020) rather than the `$PATH`
     MANIAC inherited, so the answer describes the machine rather than the
     shell that happened to invoke this.
 
@@ -78,7 +78,7 @@ def enumerate_installations(
     once per candidate processed in that loop.
     """
     seen: dict[str, Path] = {}
-    for entry in loginpath.login_path_dirs():
+    for entry in loginpath.login_path().dirs:
         try:
             children = list(os.scandir(entry))
         except OSError:

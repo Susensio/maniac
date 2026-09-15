@@ -12,8 +12,9 @@ would be catastrophic where one is free.
 
 import os
 import subprocess
+from dataclasses import dataclass
 from functools import cache
-from pathlib import Path
+from pathlib import Path, PurePath
 
 from ..logging import logger
 
@@ -45,7 +46,7 @@ _LOGIN_PATH_PROBE = "/nonexistent/maniac-login-path-probe"
 # through env instead of cwd. Trimmed here later by someone who doesn't
 # know what it defends against is the likely way this regresses, hence the
 # comment: each one is a real activation marker observed in the wild
-# (venv, conda, uv, direnv), not a guess.
+# (venv, conda, uv, direnv, mise), not a guess.
 _ACTIVATION_ENV_KEYS = frozenset(
     {
         "VIRTUAL_ENV",
@@ -56,7 +57,18 @@ _ACTIVATION_ENV_KEYS = frozenset(
         "CONDA_PROMPT_MODIFIER",
     }
 )
-_ACTIVATION_ENV_PREFIXES = ("UV_", "DIRENV_")
+# `__MISE_` alongside `MISE_`: `mise activate bash` exports `__MISE_EXE`,
+# `__MISE_DIFF` and `__MISE_ORIG_PATH` (the whole pre-activation $PATH)
+# under the underscored form, observed on this machine, and a shell hook
+# reading any of them re-applies the project's tool versions.
+_ACTIVATION_ENV_PREFIXES = ("UV_", "DIRENV_", "MISE_", "__MISE_")
+
+# Activation markers that name their root directly, so a $PATH entry below
+# one is attributable to that activation rather than to the machine. Only
+# these can drive fallback sanitization -- mise's markers name no per-tool
+# root, so its entries stay, since removing them would mean reconstructing
+# an install directory by convention instead of by evidence.
+_ACTIVATION_ROOT_ENV_KEYS = ("VIRTUAL_ENV", "CONDA_PREFIX")
 
 # XDG_CONFIG_HOME decides which profile the login shell reads --
 # /etc/profile.d/profile_xdg.sh does
@@ -65,7 +77,8 @@ _ACTIVATION_ENV_PREFIXES = ("UV_", "DIRENV_")
 # that redirects XDG_CONFIG_HOME (a test harness protecting a real
 # manifest, say) points the login shell at a profile that doesn't exist,
 # so it finds nothing to source and the sixth fallback (login_path())
-# quietly hands back the caller's own inherited $PATH instead. Scrubbing
+# hands back the caller's own inherited $PATH instead, degraded-flagged
+# and activation-sanitized but still the caller's. Scrubbing
 # it is also the more correct answer, not merely the more isolated one: in
 # a real login sequence the shell doesn't receive XDG_CONFIG_HOME, it
 # *sets* it from environment.d, so letting the shell fall through to its
@@ -78,7 +91,7 @@ _ACTIVATION_ENV_PREFIXES = ("UV_", "DIRENV_")
 # user bus, and the third is the system-wide search path, not a per-user
 # redirect. Removing one of these to "finish the job" breaks the systemd
 # pull with no test failing, because on a correctly configured machine the
-# sixth fallback quietly covers it.
+# sixth fallback covers it.
 _XDG_ENV_KEYS = frozenset({"XDG_CONFIG_HOME"})
 
 
@@ -101,21 +114,71 @@ def _login_shell_env() -> dict[str, str]:
     return env
 
 
-@cache
-def login_path() -> str:
-    """The login shell's `$PATH`, stripped.
+@dataclass(frozen=True, slots=True)
+class LoginPath:
+    """`$PATH` for lookups, plus whether a login shell actually produced it.
 
-    Falls back to the inherited `$PATH` (`os.environ`) and logs a warning
-    when `$SHELL` is unset, the shell exits non-zero, spawning it raises
+    `degraded` marks a fallback: the caller's own `$PATH` with activation
+    entries removed, standing in for an answer about the machine. A caller
+    that validates a resolved root (ADR-0029 does this for Mise aliases)
+    can refuse a degraded answer instead of treating it as authoritative.
+    """
+
+    path: str
+    degraded: bool
+
+    @property
+    def dirs(self) -> list[Path]:
+        """`path` split on `os.pathsep`, empty entries dropped."""
+        return [Path(entry) for entry in self.path.split(os.pathsep) if entry]
+
+
+def _activation_roots() -> list[PurePath]:
+    """Roots named by a currently set activation marker."""
+    return [
+        PurePath(os.path.normpath(value))
+        for key in _ACTIVATION_ROOT_ENV_KEYS
+        if (value := os.environ.get(key))
+    ]
+
+
+def _degraded_login_path() -> LoginPath:
+    """Inherited `$PATH`, minus every entry under a set activation root.
+
+    A fallback still has to answer a question about the machine, so an
+    entry the environment itself attributes to an activation goes. An
+    entry with no marker behind it stays: without evidence, dropping it
+    would be guessing at which directories belong to the machine.
+    """
+    roots = _activation_roots()
+    entries = [entry for entry in os.environ.get("PATH", "").split(os.pathsep) if entry]
+    kept = [
+        entry
+        for entry in entries
+        if not any(
+            PurePath(os.path.normpath(entry)).is_relative_to(root) for root in roots
+        )
+    ]
+    return LoginPath(path=os.pathsep.join(kept), degraded=True)
+
+
+@cache
+def login_path() -> LoginPath:
+    """The login shell's `$PATH`, stripped, as a `LoginPath`.
+
+    Falls back to `_degraded_login_path()` -- the inherited `$PATH` minus
+    every entry under a set activation root -- and logs a warning when
+    `$SHELL` is unset, the shell exits non-zero, spawning it raises
     `OSError`, it times out, or it produces empty output. ADR-0020's
     Consequences names a container or CI runner as the case this makes
     unexamined rather than fatal: it degrades instead of crashing, and the
-    warning is what keeps that degradation from being silent.
+    warning plus `LoginPath.degraded` is what keeps that degradation from
+    being silent.
     """
     shell = os.environ.get("SHELL")
     if not shell:
         logger.warning("$SHELL is unset; falling back to the inherited $PATH")
-        return os.environ.get("PATH", "")
+        return _degraded_login_path()
 
     try:
         # `printenv PATH`, not `echo $PATH`: fish prints $PATH space-
@@ -140,14 +203,14 @@ def login_path() -> str:
             "inherited $PATH",
             shell=shell,
         )
-        return os.environ.get("PATH", "")
+        return _degraded_login_path()
     except OSError as e:
         logger.warning(
             "Failed to spawn login shell; falling back to the inherited $PATH",
             shell=shell,
             error=str(e),
         )
-        return os.environ.get("PATH", "")
+        return _degraded_login_path()
 
     if result.returncode != 0:
         logger.warning(
@@ -156,7 +219,7 @@ def login_path() -> str:
             shell=shell,
             returncode=result.returncode,
         )
-        return os.environ.get("PATH", "")
+        return _degraded_login_path()
 
     path = (result.stdout or "").strip()
     if not path:
@@ -164,7 +227,7 @@ def login_path() -> str:
             "Login shell produced an empty $PATH; falling back to the inherited $PATH",
             shell=shell,
         )
-        return os.environ.get("PATH", "")
+        return _degraded_login_path()
 
     # A login shell inherits $PATH rather than constructing it -- scrubbing
     # to _BOOTSTRAP_PATH is what forces it to prove it can build one. The
@@ -189,25 +252,20 @@ def login_path() -> str:
     if probe in result_entries and result_entries <= bootstrap_entries | {probe}:
         logger.warning(
             "Login shell produced no $PATH entries of its own; falling back "
-            "to the inherited $PATH, which may include environment-local "
-            "directories",
+            "to the inherited $PATH, sanitized of entries under a set "
+            "activation root",
             shell=shell,
         )
-        return os.environ.get("PATH", "")
+        return _degraded_login_path()
 
     # The probe is an implementation detail of the check above -- strip it
     # before it can reach a caller.
     entries = [entry for entry in path.split(os.pathsep) if entry.rstrip("/") != probe]
-    return os.pathsep.join(entries)
-
-
-def login_path_dirs() -> list[Path]:
-    """`login_path()` split on `os.pathsep`, empty entries dropped."""
-    return [Path(entry) for entry in login_path().split(os.pathsep) if entry]
+    return LoginPath(path=os.pathsep.join(entries), degraded=False)
 
 
 def which_login(name: str) -> Path | None:
-    """First executable, non-directory match for `name` across `login_path_dirs()`.
+    """First executable, non-directory match for `name` across `login_path().dirs`.
 
     Stops at the first hit rather than falling through to a later `$PATH`
     entry when it is unclaimed by any provider -- ADR-0020 rejects that
@@ -216,7 +274,7 @@ def which_login(name: str) -> Path | None:
     trying the next entry would attribute one binary's documentation to
     another with no evidence for it.
     """
-    for directory in login_path_dirs():
+    for directory in login_path().dirs:
         candidate = directory / name
         if candidate.is_file() and os.access(candidate, os.X_OK):
             return candidate

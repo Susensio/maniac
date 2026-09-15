@@ -22,7 +22,7 @@ from maniac.sources.discovery import (
     _read_mise_registry_archive,
     _resolve_from_mise,
 )
-from maniac.sources.loginpath import login_path, login_path_dirs, which_login
+from maniac.sources.loginpath import LoginPath, login_path, which_login
 from maniac.sources.resolution import discover_repo, enumerate_installations
 
 
@@ -159,7 +159,9 @@ def test_enumerate_installations_walks_path_and_keeps_only_claimed_binaries(
     claimed.touch(mode=0o755)
     unclaimed = tmp_path / "unclaimed"
     unclaimed.touch(mode=0o755)
-    monkeypatch.setattr(loginpath, "login_path", lambda: str(tmp_path))
+    monkeypatch.setattr(
+        loginpath, "login_path", lambda: LoginPath(path=str(tmp_path), degraded=False)
+    )
 
     def fake_detect(bin_path: Path):
         if bin_path.name == "claimed":
@@ -183,7 +185,11 @@ def test_enumerate_installations_resolves_a_name_once_at_its_first_path_entry(
     second_dir.mkdir()
     (first_dir / "tool").touch(mode=0o755)
     (second_dir / "tool").touch(mode=0o755)
-    monkeypatch.setattr(loginpath, "login_path", lambda: f"{first_dir}:{second_dir}")
+    monkeypatch.setattr(
+        loginpath,
+        "login_path",
+        lambda: LoginPath(path=f"{first_dir}:{second_dir}", degraded=False),
+    )
 
     seen_paths: list[Path] = []
 
@@ -202,7 +208,9 @@ def test_enumerate_installations_skips_non_executable_files(
     monkeypatch, tmp_path: Path
 ) -> None:
     (tmp_path / "not_executable").touch(mode=0o644)
-    monkeypatch.setattr(loginpath, "login_path", lambda: str(tmp_path))
+    monkeypatch.setattr(
+        loginpath, "login_path", lambda: LoginPath(path=str(tmp_path), degraded=False)
+    )
     monkeypatch.setattr(
         resolution, "_detect_via_registry", lambda p: pytest.fail("must not be called")
     )
@@ -216,7 +224,9 @@ def test_enumerate_installations_on_start_and_on_scan_are_optional_and_no_op_by_
     """Existing callers omitting the callbacks see unchanged behaviour."""
     claimed = tmp_path / "claimed"
     claimed.touch(mode=0o755)
-    monkeypatch.setattr(loginpath, "login_path", lambda: str(tmp_path))
+    monkeypatch.setattr(
+        loginpath, "login_path", lambda: LoginPath(path=str(tmp_path), degraded=False)
+    )
     monkeypatch.setattr(
         resolution,
         "_detect_via_registry",
@@ -233,7 +243,9 @@ def test_enumerate_installations_reports_candidate_count_then_one_scan_per_candi
 ) -> None:
     for name in ("one", "two", "three"):
         (tmp_path / name).touch(mode=0o755)
-    monkeypatch.setattr(loginpath, "login_path", lambda: str(tmp_path))
+    monkeypatch.setattr(
+        loginpath, "login_path", lambda: LoginPath(path=str(tmp_path), degraded=False)
+    )
     monkeypatch.setattr(
         resolution,
         "_detect_via_registry",
@@ -447,7 +459,7 @@ def test_login_path_falls_back_when_shell_is_unset(monkeypatch) -> None:
     monkeypatch.delenv("SHELL", raising=False)
     monkeypatch.setenv("PATH", "/inherited/bin")
 
-    assert login_path() == "/inherited/bin"
+    assert login_path() == LoginPath(path="/inherited/bin", degraded=True)
 
 
 def test_login_path_falls_back_when_the_shell_exits_non_zero(monkeypatch) -> None:
@@ -459,7 +471,7 @@ def test_login_path_falls_back_when_the_shell_exits_non_zero(monkeypatch) -> Non
         lambda *a, **k: subprocess.CompletedProcess(["sh"], 1, stdout="/bad/bin"),
     )
 
-    assert login_path() == "/inherited/bin"
+    assert login_path() == LoginPath(path="/inherited/bin", degraded=True)
 
 
 def test_login_path_falls_back_on_timeout(monkeypatch) -> None:
@@ -471,7 +483,7 @@ def test_login_path_falls_back_on_timeout(monkeypatch) -> None:
 
     monkeypatch.setattr(loginpath.subprocess, "run", fake_run)
 
-    assert login_path() == "/inherited/bin"
+    assert login_path() == LoginPath(path="/inherited/bin", degraded=True)
 
 
 def test_login_path_parses_a_normal_colon_separated_result(monkeypatch) -> None:
@@ -484,8 +496,10 @@ def test_login_path_parses_a_normal_colon_separated_result(monkeypatch) -> None:
         ),
     )
 
-    assert login_path() == "/opt/homebrew/bin:/usr/local/bin"
-    assert login_path_dirs() == [Path("/opt/homebrew/bin"), Path("/usr/local/bin")]
+    assert login_path() == LoginPath(
+        path="/opt/homebrew/bin:/usr/local/bin", degraded=False
+    )
+    assert login_path().dirs == [Path("/opt/homebrew/bin"), Path("/usr/local/bin")]
 
 
 def test_login_path_falls_back_when_the_shell_passes_the_probe_through_untouched(
@@ -508,7 +522,7 @@ def test_login_path_falls_back_when_the_shell_passes_the_probe_through_untouched
         ),
     )
 
-    assert login_path() == "/inherited/bin"
+    assert login_path() == LoginPath(path="/inherited/bin", degraded=True)
 
 
 def test_login_path_falls_back_when_the_passthrough_is_reordered_or_has_trailing_slashes(
@@ -526,7 +540,7 @@ def test_login_path_falls_back_when_the_passthrough_is_reordered_or_has_trailing
         ),
     )
 
-    assert login_path() == "/inherited/bin"
+    assert login_path() == LoginPath(path="/inherited/bin", degraded=True)
 
 
 def test_login_path_keeps_a_prepended_real_directory_and_strips_the_probe(
@@ -552,7 +566,9 @@ def test_login_path_keeps_a_prepended_real_directory_and_strips_the_probe(
         ),
     )
 
-    assert login_path() == f"/home/tester/.local/bin:{loginpath._BOOTSTRAP_PATH}"
+    assert login_path() == LoginPath(
+        path=f"/home/tester/.local/bin:{loginpath._BOOTSTRAP_PATH}", degraded=False
+    )
 
 
 def test_login_path_treats_a_bootstrap_subset_without_the_probe_as_real(
@@ -574,7 +590,142 @@ def test_login_path_treats_a_bootstrap_subset_without_the_probe_as_real(
         ),
     )
 
-    assert login_path() == "/usr/bin:/bin"
+    assert login_path() == LoginPath(path="/usr/bin:/bin", degraded=False)
+
+
+def _trigger_fallback(monkeypatch: pytest.MonkeyPatch, mode: str) -> None:
+    """Put `login_path()` on the named fallback branch."""
+    monkeypatch.setenv("SHELL", "/bin/sh")
+    if mode == "shell_unset":
+        monkeypatch.delenv("SHELL", raising=False)
+        return
+    if mode == "oserror":
+
+        def raise_oserror(*args: object, **kwargs: object) -> None:
+            raise OSError("no such shell")
+
+        monkeypatch.setattr(loginpath.subprocess, "run", raise_oserror)
+        return
+    if mode == "timeout":
+
+        def raise_timeout(*args: object, **kwargs: object) -> None:
+            raise subprocess.TimeoutExpired(cmd="sh", timeout=5)
+
+        monkeypatch.setattr(loginpath.subprocess, "run", raise_timeout)
+        return
+    stdout = {
+        "non_zero": "/bad/bin",
+        "empty": "\n",
+        "probe_only": f"{loginpath._BOOTSTRAP_PATH}:{loginpath._LOGIN_PATH_PROBE}\n",
+    }[mode]
+    returncode = 1 if mode == "non_zero" else 0
+    monkeypatch.setattr(
+        loginpath.subprocess,
+        "run",
+        lambda *a, **k: subprocess.CompletedProcess(["sh"], returncode, stdout=stdout),
+    )
+
+
+_FALLBACK_MODES = (
+    "shell_unset",
+    "oserror",
+    "timeout",
+    "non_zero",
+    "empty",
+    "probe_only",
+)
+
+
+@pytest.mark.parametrize("mode", _FALLBACK_MODES)
+def test_every_fallback_returns_a_sanitized_degraded_path(
+    monkeypatch: pytest.MonkeyPatch, mode: str
+) -> None:
+    """Every fallback answers about the machine, not about the caller's
+    activation: `uv run` inside a project puts `.venv/bin` on the inherited
+    `$PATH`, and handing that back reintroduces exactly the caller-dependence
+    ADR-0020 exists to remove.
+    """
+    monkeypatch.setenv("PATH", "/project/.venv/bin:/usr/bin")
+    monkeypatch.setenv("VIRTUAL_ENV", "/project/.venv")
+    _trigger_fallback(monkeypatch, mode)
+
+    assert login_path() == LoginPath(path="/usr/bin", degraded=True)
+
+
+def test_fallback_drops_a_conda_rooted_entry_and_keeps_unmarked_ones(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("SHELL", raising=False)
+    monkeypatch.setenv("CONDA_PREFIX", "/opt/conda/envs/x/")
+    monkeypatch.setenv(
+        "PATH", "/opt/conda/envs/x/bin:/opt/conda/envs/y/bin:/usr/local/bin"
+    )
+
+    assert login_path() == LoginPath(
+        path="/opt/conda/envs/y/bin:/usr/local/bin", degraded=True
+    )
+
+
+def test_fallback_keeps_a_venv_looking_entry_with_no_marker_set(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Nothing in the environment attributes `/project/.venv/bin` to an
+    activation once `VIRTUAL_ENV` is unset, and dropping it on the strength
+    of its name alone would be guessing at what belongs to the machine.
+    """
+    monkeypatch.delenv("SHELL", raising=False)
+    monkeypatch.delenv("VIRTUAL_ENV", raising=False)
+    monkeypatch.delenv("CONDA_PREFIX", raising=False)
+    monkeypatch.setenv("PATH", "/project/.venv/bin:/usr/bin")
+
+    assert login_path() == LoginPath(path="/project/.venv/bin:/usr/bin", degraded=True)
+
+
+def test_a_caller_can_tell_a_degraded_result_from_a_real_one(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The verdict travels with the path, so a root validation (ADR-0029's
+    shape) can refuse an answer no login shell produced.
+    """
+    (tmp_path / "tool").touch(mode=0o755)
+    monkeypatch.delenv("SHELL", raising=False)
+    monkeypatch.setenv("PATH", str(tmp_path))
+
+    degraded = login_path()
+
+    assert degraded.degraded is True
+    assert degraded.dirs == [tmp_path]
+    assert which_login("tool") == tmp_path / "tool"
+
+    login_path.cache_clear()
+    monkeypatch.setenv("SHELL", "/bin/sh")
+    monkeypatch.setattr(
+        loginpath.subprocess,
+        "run",
+        lambda *a, **k: subprocess.CompletedProcess(["sh"], 0, stdout=f"{tmp_path}\n"),
+    )
+
+    assert login_path().degraded is False
+
+
+def test_login_shell_env_scrubs_mise_activation_markers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`mise activate bash` exports these; a shell hook reading them
+    re-applies the project's tool versions, which is a cwd-sensitive answer
+    to a question about the machine.
+    """
+    monkeypatch.setenv("MISE_SHELL", "bash")
+    monkeypatch.setenv("__MISE_EXE", "/usr/bin/mise")
+    monkeypatch.setenv("__MISE_ORIG_PATH", "/project/bin:/usr/bin")
+    monkeypatch.setenv("__MISE_DIFF", "{}")
+
+    env = loginpath._login_shell_env()
+
+    assert "MISE_SHELL" not in env
+    assert "__MISE_EXE" not in env
+    assert "__MISE_ORIG_PATH" not in env
+    assert "__MISE_DIFF" not in env
 
 
 def test_login_shell_env_scrubs_activation_markers_and_sets_bootstrap_path(
@@ -648,9 +799,9 @@ def test_login_path_does_not_leak_the_callers_path_or_virtualenv(
 
     result = login_path()
 
-    assert sentinel_bin not in result
-    assert loginpath._LOGIN_PATH_PROBE not in result
-    assert redirected_xdg_config not in result
+    assert sentinel_bin not in result.path
+    assert loginpath._LOGIN_PATH_PROBE not in result.path
+    assert redirected_xdg_config not in result.path
 
 
 def test_login_path_runs_the_login_shell_once_across_many_lookups(monkeypatch) -> None:
@@ -685,6 +836,10 @@ def test_which_login_stops_at_the_first_path_entry(monkeypatch, tmp_path: Path) 
     second_dir.mkdir()
     (first_dir / "tool").touch(mode=0o755)
     (second_dir / "tool").touch(mode=0o755)
-    monkeypatch.setattr(loginpath, "login_path_dirs", lambda: [first_dir, second_dir])
+    monkeypatch.setattr(
+        loginpath,
+        "login_path",
+        lambda: LoginPath(path=f"{first_dir}:{second_dir}", degraded=False),
+    )
 
     assert which_login("tool") == first_dir / "tool"
