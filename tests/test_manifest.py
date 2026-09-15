@@ -234,10 +234,10 @@ def test_one_malformed_entry_is_skipped_not_the_whole_file(tmp_path: Path) -> No
 
 
 def test_load_does_not_migrate_a_legacy_entry(tmp_path: Path) -> None:
-    """The core read-only invariant: deserializing a migration-eligible entry writes nothing.
+    """The core read-only invariant: deserializing a targetless legacy entry writes nothing.
 
-    A pre-ADR-0028 copy is exactly what `lifecycle.reconcile` converts into an
-    owned link. `lookup()` from `list` must observe it as persisted instead.
+    A pre-ADR-0028 copy has no recorded target. `lookup()` from `list` must
+    observe it as persisted, not reach for the page on disk.
     """
     man_dir = tmp_path / "man1"
     man_dir.mkdir()

@@ -2,12 +2,12 @@
 
 Production code writes through `manifest.transaction`, one transaction per
 operation.  A test building a fixture has no operation to hang one off, so
-these wrap a single put, forget or reconcile in their own transaction.
+these wrap a single put or forget in their own transaction.
 """
 
 from pathlib import Path
 
-from maniac import lifecycle, manifest
+from maniac import manifest
 from maniac.config import Config
 from maniac.manifest import Entry, Tier
 
@@ -50,12 +50,3 @@ def forget_entry(tool: str, config: Config | None = None) -> None:
     """Drop one tool's entry, if it has one."""
     with manifest.transaction(config) as txn:
         txn.forget(tool)
-
-
-def reconcile(
-    config: Config | None = None, *, removed: list[Path] | None = None
-) -> dict[str, Entry]:
-    """Reconcile in its own transaction and return the entries it left."""
-    with manifest.transaction(config) as txn:
-        entries = dict(lifecycle.reconcile(txn, removed=removed))
-    return entries

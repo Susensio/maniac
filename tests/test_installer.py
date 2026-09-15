@@ -123,15 +123,15 @@ def test_uninstall_removes_a_concrete_provider_target_but_keeps_its_source(
 def test_install_manpage_maniac_overwrite(tmp_path: Path) -> None:
     """A page the manifest already attributes to `tool` is ours to overwrite, no `--force`."""
     target_dir = tmp_path / "man1"
-    target_dir.mkdir(parents=True)
-    existing_dest = target_dir / "tool.1"
-    existing_dest.write_text(".TH TOOL 1 old", encoding="utf-8")
-    record_entry(
+    old_src = tmp_path / "old-src" / "tool.1"
+    old_src.parent.mkdir(parents=True)
+    old_src.write_text(".TH TOOL 1 old", encoding="utf-8")
+    install_manpage(
+        old_src,
         "tool",
-        existing_dest,
         Tier.SYNTHESIS,
         "old-model",
-        manifest_module.checksum_of(existing_dest),
+        target_dir=target_dir,
     )
 
     src_file = tmp_path / "src" / "tool.1"
@@ -395,21 +395,26 @@ def test_uninstall_manpage_and_restore_backup(tmp_path: Path) -> None:
     man_dir.mkdir(parents=True)
     backup_dir = tmp_path / "backups"
     backup_dir.mkdir(parents=True)
+    output_dir = tmp_path / "data_manpages"
+    output_dir.mkdir(parents=True)
 
+    target = output_dir / "tool.1"
+    target.write_text(".TH TOOL 1 maniac", encoding="utf-8")
     installed_file = man_dir / "tool.1"
-    installed_file.write_text(".TH TOOL 1 maniac", encoding="utf-8")
+    installed_file.symlink_to(target)
 
     backup_file = backup_dir / "tool.1"
     backup_file.write_text(".TH TOOL 1 Official vendor doc", encoding="utf-8")
 
-    cfg = Config(man_dir=man_dir, output_dir=tmp_path / "data_manpages")
+    cfg = Config(man_dir=man_dir, output_dir=output_dir)
     record_entry(
         "tool",
         installed_file,
         Tier.SYNTHESIS,
         "model",
-        manifest_module.checksum_of(installed_file),
+        manifest_module.checksum_of(target),
         backup=backup_file,
+        target=target,
         config=cfg,
     )
     result = uninstall_manpage("tool", purge=False, config=cfg)
@@ -429,21 +434,26 @@ def test_uninstall_manpage_compressed_page_restores_backup(tmp_path: Path) -> No
     man_dir.mkdir(parents=True)
     backup_dir = tmp_path / "backups"
     backup_dir.mkdir(parents=True)
+    output_dir = tmp_path / "data_manpages"
+    output_dir.mkdir(parents=True)
 
+    target = output_dir / "pandoc.1.gz"
+    target.write_bytes(b"maniac-bytes")
     installed_file = man_dir / "pandoc.1.gz"
-    installed_file.write_bytes(b"maniac-bytes")
+    installed_file.symlink_to(target)
 
     backup_file = backup_dir / "pandoc.1.gz"
     backup_file.write_bytes(b"vendor-bytes")
 
-    cfg = Config(man_dir=man_dir, output_dir=tmp_path / "data_manpages")
+    cfg = Config(man_dir=man_dir, output_dir=output_dir)
     record_entry(
         "pandoc",
         installed_file,
         Tier.INSTALL_ROOT,
         str(man_dir),
-        manifest_module.checksum_of(installed_file),
+        manifest_module.checksum_of(target),
         backup=backup_file,
+        target=target,
         config=cfg,
     )
     result = uninstall_manpage("pandoc", purge=False, config=cfg)
@@ -459,18 +469,23 @@ def test_uninstall_manpage_null_backup_removes_and_restores_nothing(
 ) -> None:
     man_dir = tmp_path / "man1"
     man_dir.mkdir(parents=True)
+    output_dir = tmp_path / "data_manpages"
+    output_dir.mkdir(parents=True)
 
+    target = output_dir / "tool.1"
+    target.write_text(".TH TOOL 1", encoding="utf-8")
     installed_file = man_dir / "tool.1"
-    installed_file.write_text(".TH TOOL 1", encoding="utf-8")
+    installed_file.symlink_to(target)
 
-    cfg = Config(man_dir=man_dir, output_dir=tmp_path / "data_manpages")
+    cfg = Config(man_dir=man_dir, output_dir=output_dir)
     record_entry(
         "tool",
         installed_file,
         Tier.SYNTHESIS,
         "model",
-        manifest_module.checksum_of(installed_file),
+        manifest_module.checksum_of(target),
         backup=None,
+        target=target,
         config=cfg,
     )
     result = uninstall_manpage("tool", purge=False, config=cfg)
@@ -488,8 +503,10 @@ def test_uninstall_manpage_purge(tmp_path: Path) -> None:
     inter_dir = tmp_path / "intermediate"
     inter_dir.mkdir(parents=True)
 
+    target = out_dir / "tool.1"
+    target.write_text(".TH TOOL 1 maniac", encoding="utf-8")
     installed_file = man_dir / "tool.1"
-    installed_file.write_text(".TH TOOL 1 maniac", encoding="utf-8")
+    installed_file.symlink_to(target)
 
     md_file = out_dir / "tool.1.md"
     md_file.write_text("# TOOL", encoding="utf-8")
@@ -506,7 +523,8 @@ def test_uninstall_manpage_purge(tmp_path: Path) -> None:
         installed_file,
         Tier.SYNTHESIS,
         "model",
-        manifest_module.checksum_of(installed_file),
+        manifest_module.checksum_of(target),
+        target=target,
         config=cfg,
     )
     result = uninstall_manpage("tool", purge=True, config=cfg)
@@ -963,22 +981,15 @@ def test_uninstalling_an_ungrouped_entry_touches_only_itself(tmp_path: Path) -> 
     assert manifest_module.lookup("beta", config=cfg) is not None
 
 
-def _legacy_unmigratable_entry(tmp_path: Path) -> tuple[Config, Path]:
-    """Record a pre-ADR-0028 entry whose migration cannot succeed.
-
-    `output_dir` is a regular file, so `materialize_target`'s `mkdir` raises
-    and `_migrate_links` retains the entry with `target=None` -- the state a
-    real migration failure leaves behind, permanently.
-    """
+def _legacy_targetless_entry(tmp_path: Path) -> tuple[Config, Path]:
+    """Record a pre-ADR-0028 entry with no recorded target, matching bytes."""
     man_dir = tmp_path / "man1"
     man_dir.mkdir(parents=True)
     installed = man_dir / "tool.1"
     installed.write_text(".TH TOOL 1 legacy", encoding="utf-8")
-    output_dir = tmp_path / "durable"
-    output_dir.write_text("not a directory", encoding="utf-8")
     cfg = Config(
         man_dir=man_dir,
-        output_dir=output_dir,
+        output_dir=tmp_path / "durable",
         manifest_path=tmp_path / "state" / "installed.json",
     )
     record_entry(
@@ -992,9 +1003,9 @@ def _legacy_unmigratable_entry(tmp_path: Path) -> tuple[Config, Path]:
     return cfg, installed
 
 
-def test_uninstall_keeps_an_unmigratable_legacy_entry(tmp_path: Path) -> None:
+def test_uninstall_keeps_a_legacy_targetless_entry(tmp_path: Path) -> None:
     """Without --force a targetless entry stays, reported as legacy, not modified."""
-    cfg, installed = _legacy_unmigratable_entry(tmp_path)
+    cfg, installed = _legacy_targetless_entry(tmp_path)
 
     result = uninstall_manpage("tool", config=cfg)
 
@@ -1005,9 +1016,9 @@ def test_uninstall_keeps_an_unmigratable_legacy_entry(tmp_path: Path) -> None:
     assert manifest_module.lookup("tool", config=cfg) is not None
 
 
-def test_uninstall_force_removes_an_unmigratable_legacy_entry(tmp_path: Path) -> None:
+def test_uninstall_force_removes_a_legacy_targetless_entry(tmp_path: Path) -> None:
     """--force reaches a targetless entry; checking `target` first made it unremovable."""
-    cfg, installed = _legacy_unmigratable_entry(tmp_path)
+    cfg, installed = _legacy_targetless_entry(tmp_path)
 
     result = uninstall_manpage("tool", force=True, config=cfg)
 

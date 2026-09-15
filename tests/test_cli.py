@@ -287,7 +287,8 @@ def test_cli_install_reuses_config_for_existing_destination(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """An existing destination must not make installation create another Config."""
-    from maniac.lifecycle import reconcile as real_reconcile
+    import contextlib
+
     from maniac.models import Installation
 
     constructed: list[Config] = []
@@ -323,12 +324,13 @@ def test_cli_install_reuses_config_for_existing_destination(
             return [page]
 
     observed: list[Config | None] = []
+    real_transaction = manifest.transaction
 
-    def reconcile(
-        txn: manifest.Transaction, *, removed: list[Path] | None = None
-    ) -> object:
-        observed.append(txn.config)
-        return real_reconcile(txn, removed=removed)
+    @contextlib.contextmanager
+    def transaction(config: Config | None = None):
+        observed.append(config)
+        with real_transaction(config) as txn:
+            yield txn
 
     monkeypatch.setattr(cli_module, "Config", TrackingConfig)
     monkeypatch.setattr(
@@ -340,7 +342,7 @@ def test_cli_install_reuses_config_for_existing_destination(
         lambda tool, bin_dir=None: (Provider(), installation),
     )
     monkeypatch.setattr("maniac.manifest.Config", TrackingConfig)
-    monkeypatch.setattr("maniac.installer.lifecycle.reconcile", reconcile)
+    monkeypatch.setattr("maniac.installer.manifest.transaction", transaction)
 
     result = runner.invoke(app, ["install", "mytool"])
 

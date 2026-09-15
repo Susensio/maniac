@@ -1,4 +1,4 @@
-"""Verified source evidence shared by install, list, and lifecycle.
+"""Verified source evidence shared by install and list.
 
 This module selects and validates pages; callers keep their own tier order,
 availability verdicts, persistence, and provider freshness policy (ADR-0040).
@@ -12,12 +12,7 @@ from ..config import Config
 from ..models import Installation, LocalRepoSource, RepoSource
 from .docs import discover_repo_manpages
 from .docs.pages import discovered_manpage_uri
-from .manpages import (
-    find_install_root_manpages,
-    manpage_documents,
-    read_manpage_source,
-    select_primary_manpage,
-)
+from .manpages import manpage_documents, read_manpage_source, select_primary_manpage
 from .pathcache import resolve_cached
 from .providers.base import DirectPageProvider, Provider
 
@@ -124,19 +119,4 @@ def select_repository(
         pages=pages,
         primary=pages[0],
         version_matched=None if isinstance(source, LocalRepoSource) else True,
-    )
-
-
-def select_historical_install_root(
-    root: Path, binary: str
-) -> InstallRootCandidate | None:
-    """Rediscover a legacy root without consulting providers or inferring freshness."""
-    discovered = select_primary_manpage(
-        find_install_root_manpages(root, binary), binary
-    )
-    if discovered is None:
-        return None
-    page = CandidatePage(discovered, discovered.absolute().as_uri())
-    return InstallRootCandidate(
-        (page,), page, discovered, discovered, _contained(discovered, root)
     )

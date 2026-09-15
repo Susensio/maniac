@@ -82,16 +82,3 @@ def test_repository_candidate_requires_a_version_for_remote_and_keeps_page_uris(
         "https://example.test/tool-extra.1",
     ]
     assert candidates.select_repository(local, "tool") is not None
-
-
-def test_historical_selection_never_uses_provider_aliases(tmp_path: Path) -> None:
-    root = tmp_path / "root"
-    page = root / "man" / "tool.1"
-    page.parent.mkdir(parents=True)
-    page.write_text(".TH TOOL 1\n", encoding="utf-8")
-
-    evidence = candidates.select_historical_install_root(root, "tool")
-
-    assert evidence is not None
-    assert evidence.final_target == page
-    assert evidence.provider_owned

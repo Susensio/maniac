@@ -1,8 +1,4 @@
-"""Manpage system installation, conflict resolution, and uninstallation.
-
-Both write paths reconcile through `lifecycle` first, so an entry recorded
-under an older storage policy is migrated before ownership is judged.
-"""
+"""Manpage system installation, conflict resolution, and uninstallation."""
 
 import shutil
 from dataclasses import dataclass, field
@@ -59,7 +55,7 @@ def install_manpage(
     # backup, link and record, which is milliseconds, so it is the whole of
     # what the lock spans (ADR-0043).
     with manifest.transaction(cfg) as txn:
-        entries = lifecycle.reconcile(txn)
+        entries = txn.entries
         # Ownership read before the duplicates go, or the backup the owning
         # record carries is dropped with it.
         owner = _owner_of(dest_file, entries)
@@ -277,8 +273,7 @@ def _kept_reason(entry: Entry, *, force: bool) -> KeptReason | None:
     """Why a manifest entry is no longer safe to remove, or None when it is.
 
     `force` is consulted before the missing-target check, not after: a
-    pre-ADR-0028 entry whose migration failed keeps `target=None` forever
-    (`lifecycle._migrate_links` retains it on OSError), so checking first
+    pre-ADR-0028 entry has no recorded target at all, so checking first
     made such an entry permanently un-uninstallable with no override.
     A replaced, retargeted or dangling entry still outranks `force`,
     because the page occupying the manpath is then not the one recorded.
@@ -416,11 +411,7 @@ def uninstall_manpage(
     """
     cfg = config or Config()
     removed_paths: list[Path] = []
-    # removed_paths, not a bare reconcile: ADR-0032's migration can delete
-    # the superseded durable copy itself, and uninstall reports every path
-    # it removed.
     with manifest.transaction(cfg) as txn:
-        lifecycle.reconcile(txn, removed=removed_paths)
         foreign_kept, modified_kept, legacy_kept = _uninstall_group(
             tool_name, txn, purge=purge, force=force, removed_paths=removed_paths
         )
