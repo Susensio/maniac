@@ -6,12 +6,14 @@ it as wrong on the development system (`~/.local/share/cargo` there).
 
 import json
 import os
+import tomllib
 from functools import cache
 from pathlib import Path
 
 from ...config import Config
 from ...logging import logger
-from ...models import Installation, RepoSource
+from ...models import Installation, RemoteRepoSource, RepoSource
+from .. import discovery
 from ..manpages import find_install_root_manpages
 from ..pathcache import resolve_cached
 from .base import SourceResolver
@@ -22,6 +24,10 @@ class CargoProvider:
     `installs`, not merely by living in `$CARGO_HOME/bin` -- rustup ships its
     own shims there (`cargo`, `rustc`, `rust-analyzer`, ...), none a `cargo
     install` and none listed in `.crates2.json`.
+
+    Resolves it from the `repository` field of the crate's own unpacked
+    registry source -- an explicit field, never inferred from the crate or
+    binary name.
     """
 
     name = "cargo"
@@ -56,9 +62,10 @@ class CargoProvider:
     def resolve_source(
         self, inst: Installation, *, config: Config, sources: SourceResolver
     ) -> RepoSource | None:
-        # `.crates2.json` records no upstream repository -- crates.io itself
-        # would have to be queried, and nothing here guesses one.
-        return None
+        repo = _repo_from_registry_source(
+            inst.root.parent, crate=inst.package, version=inst.version
+        )
+        return RemoteRepoSource.from_identifier(inst.binary, repo) if repo else None
 
     def local_docs(self, inst: Installation) -> list[Path]:
         return find_install_root_manpages(inst.root, inst.binary)
@@ -110,3 +117,47 @@ def _crates_by_binary(crates2_path: Path) -> dict[str, tuple[str, str]]:
             if isinstance(binary, str):
                 crates.setdefault(binary, (name, version))
     return crates
+
+
+def _repo_from_registry_source(
+    cargo_home: Path, *, crate: str, version: str | None
+) -> str | None:
+    """GitHub `owner/repo` declared by the installed crate itself, or None.
+
+    `.crates2.json` records no upstream repository, but `cargo install` leaves
+    the crate's published manifest under
+    `$CARGO_HOME/registry/src/<index>/<crate>-<version>/Cargo.toml`, whose
+    `[package] repository` the crate author declared. The name is not
+    evidence: binary names collide across unrelated projects (`fmt`, `od`,
+    `envsubst`), so only the explicit field counts.
+
+    `<index>` is a per-registry, per-machine hash -- globbed, never spelled
+    out. Its absence is a real install shape (`cargo install --git`, a
+    vendored install, a pruned registry cache), answered with None.
+    """
+    if not version:
+        return None
+    pattern = f"*/{crate}-{version}/Cargo.toml"
+    for manifest in sorted((cargo_home / "registry" / "src").glob(pattern)):
+        url = _declared_repository(manifest)
+        if url is None:
+            continue
+        cleaned = discovery._clean_git_url(url)
+        if cleaned != url:
+            return cleaned
+    return None
+
+
+def _declared_repository(manifest: Path) -> str | None:
+    try:
+        data = tomllib.loads(manifest.read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError, UnicodeDecodeError) as e:
+        logger.debug("Error reading crate Cargo.toml", path=str(manifest), error=str(e))
+        return None
+    package = data.get("package")
+    if not isinstance(package, dict):
+        return None
+    # Workspace inheritance (`repository = { workspace = true }`) is flattened
+    # by `cargo publish`, so a non-string here is not a repository.
+    url = package.get("repository")
+    return url if isinstance(url, str) and url else None

@@ -159,21 +159,120 @@ def test_detect_rejects_a_binary_outside_cargo_bin(tmp_path, monkeypatch) -> Non
     assert provider.detect(bin_path) is None
 
 
-def test_resolve_source_returns_none(tmp_path, monkeypatch) -> None:
-    """`.crates2.json` records no upstream repository; nothing here guesses one."""
-    cargo_home = _make_cargo_home(
-        tmp_path,
-        {
-            "hexyl 0.17.0 (registry+https://github.com/rust-lang/crates.io-index)": [
-                "hexyl"
-            ]
-        },
-    )
+_HEXYL_INSTALL = {
+    "hexyl 0.17.0 (registry+https://github.com/rust-lang/crates.io-index)": ["hexyl"]
+}
+
+
+def _write_crate_source(
+    cargo_home: Path,
+    manifest: str,
+    *,
+    crate: str = "hexyl",
+    version: str = "0.17.0",
+    index: str = "index.crates.io-1949cf8c6b5b557f",
+) -> Path:
+    """Unpack a crate manifest where `cargo install` leaves it, under a
+    per-machine index hash directory.
+    """
+    src = cargo_home / "registry" / "src" / index / f"{crate}-{version}"
+    src.mkdir(parents=True)
+    path = src / "Cargo.toml"
+    path.write_text(manifest, encoding="utf-8")
+    return path
+
+
+def _hexyl_source(tmp_path, monkeypatch, manifest: str | None, **kwargs):
+    """`(provider, installation)` for `hexyl`, with `manifest` unpacked unless None."""
+    cargo_home = _make_cargo_home(tmp_path, _HEXYL_INSTALL)
     bin_path = cargo_home / "bin" / "hexyl"
     bin_path.touch()
+    if manifest is not None:
+        _write_crate_source(cargo_home, manifest, **kwargs)
     provider = _provider(tmp_path, monkeypatch, cargo_home)
     inst = provider.detect(bin_path)
     assert inst is not None
+    return provider, inst
+
+
+def test_resolve_source_reads_the_repository_the_crate_declares(
+    tmp_path, monkeypatch
+) -> None:
+    """The real case: `hexyl 0.17.0`'s own manifest names `sharkdp/hexyl`."""
+    provider, inst = _hexyl_source(
+        tmp_path,
+        monkeypatch,
+        '[package]\nname = "hexyl"\nrepository = "https://github.com/sharkdp/hexyl"\n',
+    )
+
+    source = provider.resolve_source(inst, config=Config(), sources=registry)
+
+    assert source is not None
+    assert source.name == "hexyl"
+    assert source.target == "sharkdp/hexyl"
+    assert not source.is_local
+
+
+def test_resolve_source_normalizes_a_git_suffixed_repository_url(
+    tmp_path, monkeypatch
+) -> None:
+    """Crates on the development system ship `.git` suffixes (`anstyle`)."""
+    provider, inst = _hexyl_source(
+        tmp_path,
+        monkeypatch,
+        '[package]\nrepository = "https://github.com/sharkdp/hexyl.git"\n',
+    )
+
+    source = provider.resolve_source(inst, config=Config(), sources=registry)
+
+    assert source is not None
+    assert source.target == "sharkdp/hexyl"
+
+
+def test_resolve_source_finds_the_crate_under_any_index_hash(
+    tmp_path, monkeypatch
+) -> None:
+    """The index directory name varies per machine and per registry."""
+    provider, inst = _hexyl_source(
+        tmp_path,
+        monkeypatch,
+        '[package]\nrepository = "https://github.com/sharkdp/hexyl"\n',
+        index="some-other-registry-0000000000000000",
+    )
+
+    source = provider.resolve_source(inst, config=Config(), sources=registry)
+
+    assert source is not None
+    assert source.target == "sharkdp/hexyl"
+
+
+def test_resolve_source_returns_none_without_registry_source(
+    tmp_path, monkeypatch
+) -> None:
+    """`cargo install --git`, a vendored install and a pruned registry cache
+    all leave no unpacked source -- never a repository guessed from the name.
+    """
+    provider, inst = _hexyl_source(tmp_path, monkeypatch, None)
+
+    assert provider.resolve_source(inst, config=Config(), sources=registry) is None
+
+
+def test_resolve_source_returns_none_when_the_manifest_declares_no_repository(
+    tmp_path, monkeypatch
+) -> None:
+    provider, inst = _hexyl_source(
+        tmp_path,
+        monkeypatch,
+        '[package]\nname = "hexyl"\nhomepage = "https://example.com"\n',
+    )
+
+    assert provider.resolve_source(inst, config=Config(), sources=registry) is None
+
+
+def test_resolve_source_returns_none_for_a_malformed_manifest(
+    tmp_path, monkeypatch
+) -> None:
+    provider, inst = _hexyl_source(tmp_path, monkeypatch, "[package\nname = ")
 
     assert provider.resolve_source(inst, config=Config(), sources=registry) is None
 
