@@ -283,7 +283,7 @@ Whether uninstalling a companion should remove its whole group is also open, wit
 Landed on `feature/manifest-rework`, branched from master so master stays a stable rebase target for the list fact cache.
 Verified at 668 tests, `just check` exit 0, pytest 24.05s -- faster than the 649-test baseline, so the new per-transaction scan costs nothing measurable.
 
-ADR-0043 settled what the manifest is; ADR-0044 settled how it is written.
+ADR-0043 settled what the manifest is; ADR-0046 settled how it is written.
 A full map of the machinery found considerably more than the four findings ADR-0043 was written against, which is why this was a rework rather than a set of patches.
 
 ### What was wrong
@@ -357,3 +357,15 @@ That exposed a live consequence worth watching.
 A `target=None` entry is now permanently `legacy_kept` -- never auto-removed, never restored from backup -- unless `--force` is given, which `e3287fa` made work.
 Nothing MANIAC does can create such an entry any more: `install_manpage` always sets `target`, and recovery reconstructs from link targets.
 It is reachable only from a hand-edited or foreign manifest, so the branch is now defensive rather than migratory and was deliberately kept.
+
+### Reconciled with the abandoned cache -- 2026-09-16
+
+The persistent fact cache was abandoned (ADR-0045) while the manifest rework ran on its own branch.
+That branch existed to keep master a stable rebase target for the cache work, so its reason is gone; the 17 manifest commits are rebased onto master and the branch is retired.
+
+Three sessions allocated ADR numbers concurrently and none could see the others' trees.
+0044 went to the XDG pass-through decision, 0045 to abandoning the cache, and the manifest transaction ADR moved twice before settling at 0046.
+Allocating a number before a decision lands is what causes this.
+
+Two of the manifest rework's backlog items were blocked on the cache landing and are now simply open: rendering drift in the `list` table (`Read.links` computes it, nothing shows it), and the `entry.version` -> `documented_version` rename.
+The third, `_grouped_for_display`'s dead `pending` parameter, is likewise unblocked.

@@ -1103,7 +1103,7 @@ def test_a_provenance_header_never_seeds_ownership_of_an_unlinked_page(
     """The header discriminates tier for a page the link already proved MANIAC owns.
 
     `_seed_from_headers` adopted pages on the strength of the header alone
-    and was deleted for it (ADR-0043, ADR-0044). A stamped file with no
+    and was deleted for it (ADR-0043, ADR-0046). A stamped file with no
     manpath symlink into `output_dir` stays unrecovered.
     """
     cfg = _linked_config(tmp_path)

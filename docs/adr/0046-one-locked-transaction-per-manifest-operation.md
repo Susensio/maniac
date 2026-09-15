@@ -1,4 +1,4 @@
-# ADR-0044: One locked transaction per manifest operation, and no journal
+# ADR-0046: One locked transaction per manifest operation, and no journal
 
 Status: Accepted
 Date: 2026-09-15
@@ -130,3 +130,9 @@ wrong.
 Repairing that needs a cross-page filesystem undo log -- a new mechanism and its own decision,
 not a correction to this one. `BUG:` at `orchestration/install.py:211`, recorded in
 `docs/BACKLOG.md`.
+
+## Numbering note
+
+Filed as ADR-0044 and renumbered to 0046 on 2026-09-16.
+Three sessions allocated numbers concurrently without being able to see each other's trees: 0044 went to the XDG pass-through decision, 0045 to abandoning the persistent fact cache, and this one moved twice before landing.
+Allocating a number before the decision lands is what causes this; a session holding an unmerged ADR should expect its number to be taken.

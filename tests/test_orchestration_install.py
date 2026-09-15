@@ -400,7 +400,7 @@ def _resolve_eza_release(monkeypatch: pytest.MonkeyPatch, pages: list[Path]) -> 
 def test_run_install_records_a_release_in_one_manifest_write(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Three pages, one transaction, one write -- the atomicity ADR-0044 claims."""
+    """Three pages, one transaction, one write -- the atomicity ADR-0046 claims."""
     cfg = _release_config(tmp_path)
     _resolve_eza_release(monkeypatch, _eza_release(tmp_path))
     writes = []

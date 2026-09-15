@@ -444,7 +444,7 @@ def _provenance_of(target: Path) -> tuple[Tier, str]:
     Synthesis stamps every page it writes; a tier-2 page is copied verbatim
     from upstream and carries no stamp.  That is the only question asked
     here.  Ownership is already settled by the link target before this runs
-    (ADR-0028, ADR-0044) -- the header never seeds it, which is what
+    (ADR-0028, ADR-0046) -- the header never seeds it, which is what
     `_seed_from_headers` did and was deleted for.
     """
     try:
@@ -712,7 +712,7 @@ def joined(
     """Yield the caller's open transaction, or open one for the block.
 
     An operation spanning several recorded pages opens one transaction and
-    passes it down, so the pages land in a single write (ADR-0044).  Opening
+    passes it down, so the pages land in a single write (ADR-0046).  Opening
     a nested one instead would deadlock: `flock` and the process-local lock
     both block the second acquisition against the first.
     """

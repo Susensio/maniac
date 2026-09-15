@@ -206,7 +206,7 @@ def _try_repository(tool: ResolvedTool, *, force: bool) -> InstallOutcome | None
     # One transaction around the whole loop, not one per page: the release's
     # entries land in a single write or none of them do, so a failure partway
     # cannot record a group naming a primary that was never written
-    # (ADR-0044, ADR-0042).  The pages are already materialized by here, so
+    # (ADR-0046, ADR-0042).  The pages are already materialized by here, so
     # no generation happens under the lock (ADR-0043).
     # BUG: reinstalling a recorded release that fails partway leaves the
     # earlier pages' new bytes on disk under their old entries' checksums,

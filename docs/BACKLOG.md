@@ -64,19 +64,19 @@ These are findings the work surfaced and deliberately did not take; they are fir
   Using it is Mise-specific, so decide whether the fallback gets per-provider evidence adapters or stays generic.
   Shim resolution remains unexercised: this machine has no populated shim directory, and `mise which -C $HOME` is cwd-sensitive and needs ADR-0029-style root validation.
 - Run the structural link scan on every manifest load, not only on transaction open.
-  ADR-0044 built it on transaction open, which is write paths only -- so `maniac list` still never notices drift, and the scan runs when you install rather than when you look.
+  ADR-0046 built it on transaction open, which is write paths only -- so `maniac list` still never notices drift, and the scan runs when you install rather than when you look.
   The reason given was ADR-0034's load purity, but that conflates two things: promotion mutates and cannot live in `load`, while the scan is `lstat`/`readlink` only and mutates nothing.
   Measured at ~0.046 ms/entry against an 11.8 s `maniac list`, and it walks what MANIAC owns (2 entries here), not what is on `$PATH` (68 rows).
   Divergence is the common failure, corruption the rare one: a page deleted by hand, `output_dir` or `backup_dir` cleaned, another user-level installer writing into `~/.local/share/man/man1`.
   Note the seam with the list fact cache, whose reachability records take the manifest as an input.
 - Repair an ADR-0032 migration interrupted between relinking and its manifest write.
   `BUG:` marked at `maniac/lifecycle.py:276`.
-  The eligibility guard skips the entry forever and uninstall reports it MODIFIED; found by a Codex review of ADR-0044's work, whose four other findings were fixed.
+  The eligibility guard skips the entry forever and uninstall reports it MODIFIED; found by a Codex review of ADR-0046's work, whose four other findings were fixed.
 - Give a reconstructed entry an honest tier.
-  ADR-0044's recovery stamps `Tier.SYNTHESIS` with `source="reconstructed"`; the source is true and the tier is a guess, because `output_dir` holds tier-2 and tier-3 pages alike with nothing on disk separating them.
+  ADR-0046's recovery stamps `Tier.SYNTHESIS` with `source="reconstructed"`; the source is true and the tier is a guess, because `output_dir` holds tier-2 and tier-3 pages alike with nothing on disk separating them.
   Either find evidence that separates them or admit an unknown tier.
 - Reconstruct tier-1 direct provider links, or accept losing them.
-  ADR-0044 refused: "not under `output_dir`" is not evidence of a provider root, and adopting one would let MANIAC replace and later remove a symlink the user owns.
+  ADR-0046 refused: "not under `output_dir`" is not evidence of a provider root, and adopting one would let MANIAC replace and later remove a symlink the user owns.
   The cost is that a fully lost manifest loses tier-1 ownership entirely. Real evidence would be a target resolving beneath a live provider install root, which `sources.candidates` can already establish.
 - Correct `modified_kept`'s message for dangling and retargeted entries.
   It says "its bytes have changed since"; nothing was edited in either case.
@@ -100,14 +100,14 @@ These are findings the work surfaced and deliberately did not take; they are fir
 
 ## Refactors and architecture
 - Roll back earlier pages when a grouped reinstall fails partway.
-  `BUG:` at `maniac/orchestration/install.py:211`, found by Codex review of ADR-0044's work and reproduced.
-  ADR-0044's one-transaction boundary means no page is *recorded* when a later one fails, and ADR-0044's orphan adoption recovers a first-time install's stray symlink and backup -- that half is by design, not a defect.
+  `BUG:` at `maniac/orchestration/install.py:211`, found by Codex review of ADR-0046's work and reproduced.
+  ADR-0046's one-transaction boundary means no page is *recorded* when a later one fails, and ADR-0046's orphan adoption recovers a first-time install's stray symlink and backup -- that half is by design, not a defect.
   A reinstall is the gap: the entry already exists carrying the old checksum while the durable target now holds the new bytes, so uninstall reports MODIFIED.
   Adoption only builds entries that are missing; it never corrects one that is present and wrong.
   Needs a cross-page filesystem undo log, which is a new mechanism and an ADR-level decision -- weigh it against simply re-verifying checksums against disk on the next transaction, which the link scan already has the shape for.
 - Install every page of a multi-page install-root release, not just the primary.
   `_try_install_root` uses `candidate.final_target` alone and ignores `candidate.pages`, so a tier-1 release ships its primary with no `group` recorded.
-  Tier 2 installs the whole bundle as one unit (ADR-0042, ADR-0044); tier 1 does not, and nothing says why.
+  Tier 2 installs the whole bundle as one unit (ADR-0042, ADR-0046); tier 1 does not, and nothing says why.
   A gap rather than a regression -- it predates the grouping work.
 
 ### List performance

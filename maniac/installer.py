@@ -43,7 +43,7 @@ def install_manpage(
     `transaction` joins a manifest transaction the caller already opened,
     which is what makes such a release atomic: every page records into the
     one working set and the whole group lands in a single write, or none of
-    it does (ADR-0044).  It carries the config for the install, so a caller
+    it does (ADR-0046).  It carries the config for the install, so a caller
     passing it passes no `config`.
     """
     src = Path(source_file)
