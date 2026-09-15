@@ -41,8 +41,8 @@ An eligible upstream probe will start as soon as its local row is ready rather t
 Probe work remains bounded and deduplicated by its versioned source identity; every sibling row receives the completed result atomically.
 
 Positive versioned probe results persist.
-Definitive empty results and missing tags expire after five minutes because a tag or release asset may be published after the binary appears.
-Mutable GitHub release metadata is revalidated on the same interval, while downloaded immutable asset bodies remain persistent.
+Definitive empty results and missing tags expire after an hour because a tag or release asset may be published after the binary appears.
+Mutable GitHub release metadata is revalidated on its own, longer interval, while downloaded immutable asset bodies remain persistent.
 Transient Git, DNS, timeout, server and malformed-response failures are never cached as absence.
 
 Live rendering will update its row model for every result but rebuild the Rich renderable only when a refresh is due, on a coordinator idle tick, and once at completion.
@@ -59,3 +59,10 @@ That is an intentional cost reduction and a narrower meaning for the column: it 
 
 The complete first table still waits for provider enumeration because a persistent inventory would need reliable invalidation for login `PATH` order, symlink targets, install roots and provider metadata.
 A future system-package provider must use native package ownership and actual manpage reachability, not path prefixes or a cross-distribution assumption.
+
+## Corrections
+
+2026-09-15: the two expiry sentences above read "expire after five minutes" and "revalidated on the same interval".
+One constant served both windows, and it was measured to demand roughly 312 requests an hour against GitHub's unauthenticated ceiling of 60.
+They are now separate constants -- definitive absence at one hour, release-metadata revalidation at twenty-four -- so the "same interval" clause had become false as well as the figure.
+The reason given for expiring at all is unchanged, and no decision in this record was reopened.

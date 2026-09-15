@@ -162,7 +162,7 @@ The State width is derived from every state label plus `checking…`; Tool and U
 Cargo metadata parsing and pipx home discovery are cached for the life of the process rather than repeated for every executable candidate.
 Candidate paths are routed only to providers whose install layout can claim them, with the ordered full registry retained for ambiguous paths.
 Local manpage checks run in a bounded pool from one manifest snapshot, and eligible upstream probes begin as individual missing rows become ready.
-Install-root inventories are cached per root, cold Mise registry loading is single-flight, and definitive versioned upstream misses use the same five-minute negative-cache policy as missing tags.
+Install-root inventories are cached per root, cold Mise registry loading is single-flight, and definitive versioned upstream misses use the same one-hour definitive-absence policy as missing tags.
 
 A live profile before upstream-result caching measured 35.185 seconds for 77 rows and 35 probes; the final probes each took 2.2–8.6 seconds and caused the visible 97–99% stall.
 After `1ceab84`, an empty-cache real `maniac list` completes in 22.40 seconds and a warm run in 5.60 seconds on the development system.
