@@ -104,8 +104,10 @@ def reconcile(
     observes the manifest exactly as persisted.
 
     `removed` collects every path migration deletes, for a caller that reports
-    its own removals.  Omitting it deletes the same files silently -- what a
-    listing command wants, since it has no removal report to write into.
+    its own removals.  Omitting it deletes the same files silently, which is
+    what a caller with no removal report to write into gets; `install` is the
+    only such caller, since ADR-0034 routed `list` through `manifest.load`
+    and nothing read-only reconciles at all.
     """
     cfg = config or Config()
     seeding = not cfg.manifest_path.exists()
@@ -119,11 +121,34 @@ def reconcile(
     return entries
 
 
-def materialize_target(src: Path, config: Config, *, durable_source: bool) -> Path:
-    """Return an upgrade-safe link target, materializing it before link replacement."""
+def materialize_target(
+    src: Path,
+    config: Config,
+    *,
+    durable_source: bool,
+    entries: dict[str, Entry],
+    tool: str,
+) -> Path:
+    """Return an upgrade-safe link target, materializing it before link replacement.
+
+    The durable target is named after the source page, so two tools whose
+    pages share a basename resolve to one path.  Writing it would replace a
+    second entry's recorded bytes, and that entry's checksum would then
+    mismatch forever -- leaving it un-uninstallable.  A collision is refused
+    by name rather than renamed around: the durable name is derived, nothing
+    reads a disambiguated one back, and a page arriving under two manifest
+    keys is a mistake worth surfacing.
+    """
     if durable_source:
         return src.absolute()
     target = config.output_dir / src.name
+    owner = _recorded_target_owner(target, entries, tool)
+    if owner is not None:
+        raise FileExistsError(
+            f"The durable target '{target}' is already recorded by '{owner}'. "
+            f"Uninstall '{owner}' or rename the source page before installing "
+            f"'{tool}'."
+        )
     if src.absolute() == target.absolute():
         return target
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -131,6 +156,19 @@ def materialize_target(src: Path, config: Config, *, durable_source: bool) -> Pa
     shutil.copy2(src, temporary_target)
     temporary_target.replace(target)
     return target
+
+
+def _recorded_target_owner(
+    target: Path, entries: dict[str, Entry], tool: str
+) -> str | None:
+    """Name of another tool whose entry already records `target`, or None."""
+    absolute = target.absolute()
+    for other, entry in entries.items():
+        if other == tool or entry.target is None:
+            continue
+        if manifest.expected_target_path(entry).absolute() == absolute:
+            return other
+    return None
 
 
 def link_manpath_entry(path: Path, target: Path) -> None:
@@ -232,7 +270,9 @@ def _migrate_links(entries: dict[str, Entry], config: Config) -> bool:
                     "Retained changed legacy manpage entry", tool=tool, path=str(path)
                 )
                 continue
-            target = materialize_target(path, config, durable_source=False)
+            target = materialize_target(
+                path, config, durable_source=False, entries=entries, tool=tool
+            )
             link_manpath_entry(path, target)
         except OSError as error:
             logger.warning(

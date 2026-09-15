@@ -1014,3 +1014,70 @@ def test_uninstall_force_removes_an_unmigratable_legacy_entry(tmp_path: Path) ->
     assert installed in result.removed
     assert not installed.exists()
     assert manifest_module.lookup("tool", config=cfg) is None
+
+
+def test_install_refuses_to_clobber_another_entrys_durable_target(
+    tmp_path: Path,
+) -> None:
+    """Two tools whose pages share a basename resolve to one durable target.
+
+    Writing the second over the first replaces bytes the first entry's
+    checksum still records, which leaves that entry permanently
+    un-uninstallable. The install fails instead, naming the owner.
+    """
+    cfg = Config(
+        man_dir=tmp_path / "man1",
+        output_dir=tmp_path / "durable",
+        manifest_path=tmp_path / "state" / "installed.json",
+    )
+    first_source = tmp_path / "first" / "page.1"
+    first_source.parent.mkdir()
+    first_source.write_text(".TH PAGE 1 first", encoding="utf-8")
+    second_source = tmp_path / "second" / "page.1"
+    second_source.parent.mkdir()
+    second_source.write_text(".TH PAGE 1 second", encoding="utf-8")
+
+    install_manpage(
+        first_source,
+        "first",
+        Tier.SYNTHESIS,
+        "model",
+        target_dir=tmp_path / "man1",
+        config=cfg,
+    )
+    first_entry = manifest_module.lookup("first", config=cfg)
+    assert first_entry is not None and first_entry.target is not None
+
+    with pytest.raises(FileExistsError, match="already recorded by 'first'"):
+        install_manpage(
+            second_source,
+            "second",
+            Tier.SYNTHESIS,
+            "model",
+            target_dir=tmp_path / "man2",
+            config=cfg,
+        )
+
+    assert first_entry.target.read_text(encoding="utf-8") == ".TH PAGE 1 first"
+    assert manifest_module.lookup("second", config=cfg) is None
+    assert manifest_module.lookup("first", config=cfg) == first_entry
+
+
+def test_reinstalling_a_tool_reuses_its_own_durable_target(tmp_path: Path) -> None:
+    """The collision guard must not fire on an entry's own recorded target."""
+    cfg = Config(
+        man_dir=tmp_path / "man1",
+        output_dir=tmp_path / "durable",
+        manifest_path=tmp_path / "state" / "installed.json",
+    )
+    source = tmp_path / "source" / "tool.1"
+    source.parent.mkdir()
+    source.write_text(".TH TOOL 1 first", encoding="utf-8")
+    install_manpage(source, "tool", Tier.SYNTHESIS, "model", config=cfg)
+
+    source.write_text(".TH TOOL 1 second", encoding="utf-8")
+    install_manpage(source, "tool", Tier.SYNTHESIS, "model", config=cfg)
+
+    entry = manifest_module.lookup("tool", config=cfg)
+    assert entry is not None and entry.target is not None
+    assert entry.target.read_text(encoding="utf-8") == ".TH TOOL 1 second"

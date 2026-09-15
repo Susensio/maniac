@@ -88,7 +88,9 @@ def install_manpage(
             )
 
     try:
-        target = lifecycle.materialize_target(src, cfg, durable_source=durable_source)
+        target = lifecycle.materialize_target(
+            src, cfg, durable_source=durable_source, entries=entries, tool=tool
+        )
         lifecycle.link_manpath_entry(dest_file, target)
     except Exception:
         if previous_entry is not None:
