@@ -96,6 +96,38 @@ def test_compute_rows_no_args_walks_providers_not_the_manpath(
     ]
 
 
+def test_compute_rows_logs_phase_timing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(
+        "maniac.listing.inventory.resolution.find_installation",
+        lambda name, bin_dir=None: None,
+    )
+    clock = iter(float(value) for value in range(1, 9))
+    monkeypatch.setattr("maniac.listing.inventory.monotonic", lambda: next(clock))
+    logged: list[tuple[str, dict[str, object]]] = []
+    monkeypatch.setattr(
+        "maniac.listing.inventory.logger.debug",
+        lambda event, **fields: logged.append((event, fields)),
+    )
+
+    compute_rows(["tool"], config=_config(tmp_path))
+
+    assert logged == [
+        (
+            "List inventory timing",
+            {
+                "candidates": 1,
+                "manifest_seconds": 1.0,
+                "inventory_seconds": 1.0,
+                "local_seconds": 1.0,
+                "upstream_seconds": 0.0,
+                "total_seconds": 7.0,
+            },
+        )
+    ]
+
+
 class _CountingProvider(_FakeProvider):
     """Counts every request for its upstream repository identity."""
 

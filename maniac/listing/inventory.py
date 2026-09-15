@@ -14,11 +14,13 @@ is ready, deduplicated by probe identity so siblings finalize atomically
 from collections.abc import Mapping
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass, field, replace
+from time import monotonic
 from types import MappingProxyType
 from typing import Any
 
 from .. import manifest
 from ..config import Config
+from ..logging import logger
 from ..models import Installation, RepoSource
 from ..sources import resolution
 from .classification import classify
@@ -302,9 +304,14 @@ def compute_rows(
     watcher = observer or InventoryObserver()
     # Entries are frozen dataclasses; the proxy prevents a worker from
     # accidentally changing the single read snapshot while it classifies.
+    started_at = monotonic()
+    manifest_started_at = monotonic()
     entries = MappingProxyType(manifest.load(cfg))
+    manifest_finished_at = monotonic()
 
+    inventory_started_at = monotonic()
     candidates, discovered = _build_inventory(tools, watcher)
+    inventory_finished_at = monotonic()
     rows = [_skeleton_row(candidate) for candidate in candidates]
     if discovered:
         watcher.inventory_ready(tuple(rows))
@@ -320,6 +327,9 @@ def compute_rows(
     )
     probe_pending: dict[Future[ProbePage | None], ProbeKey] = {}
     local_published = False
+    local_started_at = monotonic()
+    local_finished_at = local_started_at
+    first_probe_started_at: float | None = None
 
     with (
         ThreadPoolExecutor(max_workers=LOCAL_CLASSIFY_WORKERS) as local_executor,
@@ -341,6 +351,8 @@ def compute_rows(
             # The local callback must get one `checking` frame before a fast
             # cache-backed probe can publish its terminal result.
             for key, upstream, inst in launches:
+                if first_probe_started_at is None:
+                    first_probe_started_at = monotonic()
                 probe_pending[
                     probe_executor.submit(probe_upstream, upstream, inst, cfg)
                 ] = key
@@ -348,6 +360,21 @@ def compute_rows(
             if not local_pending and not local_published:
                 coordinator.publish_local_facts()
                 local_published = True
+                local_finished_at = monotonic()
             _complete_probe_futures(done, probe_pending, coordinator)
 
+    finished_at = monotonic()
+    logger.debug(
+        "List inventory timing",
+        candidates=len(candidates),
+        manifest_seconds=manifest_finished_at - manifest_started_at,
+        inventory_seconds=inventory_finished_at - inventory_started_at,
+        local_seconds=local_finished_at - local_started_at,
+        upstream_seconds=(
+            finished_at - first_probe_started_at
+            if first_probe_started_at is not None
+            else 0.0
+        ),
+        total_seconds=finished_at - started_at,
+    )
     return rows

@@ -78,6 +78,13 @@ These are findings the work surfaced and deliberately did not take; they are fir
 
 ## Refactors and architecture
 
+### List performance
+
+- Design a persistent `maniac list` local-fact cache.
+  Cache validated PATH inventory, provider detection, upstream identity, and manpage reachability separately rather than persisting raw rows.
+  Guard each record with its explicit filesystem and configuration fingerprints, retain the existing immutable versioned-upstream cache, and benchmark cold and warm listings plus corruption recovery and concurrent readers.
+  DiskCache is selected by ADR-0041; do not add `--no-cache` until the fact-cache contract is settled.
+
 ### Maintainability
 
 - Decide whether `Config` binds XDG paths per instance or intentionally at import time, then make discovery consistent.
