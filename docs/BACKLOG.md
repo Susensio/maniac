@@ -39,9 +39,9 @@ These are findings the work surfaced and deliberately did not take; they are fir
 - Thread probe definitiveness back as a return value instead of `docs.cache`'s module-level `_lookup_state` thread-local.
   ADR-0033's split made that cross-module channel visible without removing it: `cache` writes it and `repository` reads it.
   Removing it touches every probe signature, so it was left out of the split deliberately.
-- Replace `installer.install_manpage`'s and `manifest.record`'s eleven-parameter signatures with one entry record.
+- Replace `installer.install_manpage`'s and `manifest.record`'s twelve-parameter signatures with one entry record.
   Both describe the same installed page and drifted into parallel positional lists; ADR-0034 moved their coordination but not their shape.
-  Both still trip the raised `max-args = 10`, which is the point of that threshold: eleven parameters is coordination, seven is a command surface.
+  Both still trip the raised `max-args = 10`, which is the point of that threshold: twelve parameters is coordination, seven is a command surface.
 - Split `sources/docs/release._fetch_and_materialize_release_asset`'s direct-asset and archive-asset flows.
   They are two flows sharing one function, which is why it still carries seven returns after ADR-0033.
 
@@ -73,22 +73,28 @@ These are findings the work surfaced and deliberately did not take; they are fir
   `save()` writes to `.tmp` and `replace()`s, so a process crash cannot tear the file, but it never `fsync`s before the rename -- a power loss can land the rename ahead of the data.
   `load()` collapses three cases into `{}`: file absent (legitimately empty), file present but unparseable, and `version != SCHEMA_VERSION`.
   The last two must not read as "MANIAC owns nothing", because the next install then treats every managed page as foreign and backs up MANIAC's own work under `--force`.
-  There is no backup generation and no reachable repair; `lifecycle._seed_from_headers` is the existing rebuild path, hiding as a migration.
-  Repair can recover `path`, `checksum`, `target` and `provider_target` -- ADR-0028 made every entry a symlink, so `readlink` answers the last two -- plus `source` for tier-3 pages from their provenance header.
-  It cannot recover `backup`, `version` or `source_uri`, and cannot tell a MANIAC-installed tier-1/2 copy from the vendor's own byte-identical page; ADR-0017 accepted that.
-  A symlink into `data_dir` is ownership evidence regardless of header and would cover tiers 1 and 2 post-ADR-0028; check whether a link-target scan replaces `_seed_from_headers`.
+  `SCHEMA_VERSION` cannot be incremented without destroying ownership, for the same reason -- a bump makes every existing manifest read as empty, and the next `install --force` backs up MANIAC's own pages as foreign.
+  ADR-0042 declined a bump on exactly that ground and shipped its field additively instead; a version field that can never be raised is not a migration mechanism.
+  The recovery path exists and cannot fire when it is needed.
+  `lifecycle._seed_from_headers` is called from one place, `reconcile()`, gated on `not cfg.manifest_path.exists()`, and only from write paths (`installer.py:52`, `:253`).
+  A deleted manifest therefore reseeds, but a *corrupt* one does not: the file exists, so seeding is skipped, `load` returns `{}`, and the next `record()` writes a manifest holding only the tool just installed.
+  The salvageable manifest is replaced with a one-entry one while the rebuild code sits unreachable behind the existence check.
+  Widen the gate from "file absent" to "no usable entries recovered".
+  Repair is also far more capable than `_seed_from_headers`' docstring claims -- that text predates ADR-0028 and is stale.
+  It says tiers 1 and 2 are unrecoverable because they copy their page verbatim and carry no header, but ADR-0028 made every manpath entry a symlink, so the *target's location* is the evidence and the header is not needed.
+  A target under `output_dir` proves MANIAC materialized it (tiers 2 and 3); a target under a provider root is tier 1 with `provider_target`.
+  Replace the header scan with a link-target scan and fix the docstring.
+  That leaves `version`, `source_uri` and `backup` as the only non-derivable fields, and each has a candidate home on disk: version in the durable target's filename (`readlink` then answers it, at the cost of collecting superseded targets on upgrade), `source_uri` in the roff header of tiers 2 and 3, which are pages MANIAC writes, and `backup` in a filename naming the manpath entry it displaced.
+  If all three land, the manifest becomes a rebuildable cache of filesystem-derived facts rather than the sole source of truth, which downgrades corruption, locking and the storage-engine question all at once.
+  `Entry.group` (ADR-0042) is the known exception and must stay stored: two pages in `output_dir` carry no evidence they arrived from the same release.
   On concurrency, a lock must not span generation.
   LLM synthesis, pandoc and crawling touch nothing the manifest owns; only backup/link/record do, and those are filesystem-fast.
   Split install into generate (unlocked, slow, parallel-safe across processes) and commit (locked, milliseconds), so external parallelism survives.
   The residual cost is two processes generating the same tool and one losing at commit -- wasted LLM spend, not corruption, and the loser can re-read and skip.
   SQLite is not the answer to corruption: atomic rename plus `fsync` already covers torn writes, it still needs an app-level lock across the side-effect window, and it costs inspectability plus a `-wal`/`-shm` pair that breaks naive backups.
-- Treat a multi-page upstream release as one uninstallable installation.
-  Uninstalling the primary page must checksum-protect, remove, and restore every companion page and displaced vendor page.
-  Blocked on the manifest schema above, and a second customer for it.
-  `orchestration/install.py` installs a release's pages as one `install_manpage` call each, keyed by `_manpage_owner`, recording no relation between them.
-  `source_uri` is the only field companions share -- `release._manpages_from_release_archive` stamps the same asset URL on every extracted page, and the tree probe returns at most one page, so multi-page bundles only ever come from a release archive.
-  It still cannot carry the group: it records which upstream file, not that they arrived together, and cannot express which entry is primary, so uninstalling `eza_colors` would look structurally identical to uninstalling `eza`.
-  Needs group membership plus primary recorded on `Entry`.
+- Prune a release group when its upstream drops a page.
+  `Entry.group` (ADR-0042) records membership at install time and install has no pruning pass, so a member that a later release no longer ships stays recorded.
+  Uninstall then looks for a page that upstream stopped shipping.
 
 ## Refactors and architecture
 
