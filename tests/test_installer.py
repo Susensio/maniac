@@ -959,3 +959,58 @@ def test_uninstalling_an_ungrouped_entry_touches_only_itself(tmp_path: Path) -> 
     assert cfg.man_dir / "alpha.1" in result.removed
     assert (cfg.man_dir / "beta.1").exists()
     assert manifest_module.lookup("beta", config=cfg) is not None
+
+
+def _legacy_unmigratable_entry(tmp_path: Path) -> tuple[Config, Path]:
+    """Record a pre-ADR-0028 entry whose migration cannot succeed.
+
+    `output_dir` is a regular file, so `materialize_target`'s `mkdir` raises
+    and `_migrate_links` retains the entry with `target=None` -- the state a
+    real migration failure leaves behind, permanently.
+    """
+    man_dir = tmp_path / "man1"
+    man_dir.mkdir(parents=True)
+    installed = man_dir / "tool.1"
+    installed.write_text(".TH TOOL 1 legacy", encoding="utf-8")
+    output_dir = tmp_path / "durable"
+    output_dir.write_text("not a directory", encoding="utf-8")
+    cfg = Config(
+        man_dir=man_dir,
+        output_dir=output_dir,
+        manifest_path=tmp_path / "state" / "installed.json",
+    )
+    manifest_module.record(
+        "tool",
+        installed,
+        Tier.SYNTHESIS,
+        "model",
+        manifest_module.checksum_of(installed),
+        config=cfg,
+    )
+    return cfg, installed
+
+
+def test_uninstall_keeps_an_unmigratable_legacy_entry(tmp_path: Path) -> None:
+    """Without --force a targetless entry stays, reported as legacy, not modified."""
+    cfg, installed = _legacy_unmigratable_entry(tmp_path)
+
+    result = uninstall_manpage("tool", config=cfg)
+
+    assert result.legacy_kept == [installed]
+    assert result.modified_kept == []
+    assert result.foreign_kept is None
+    assert installed.exists()
+    assert manifest_module.lookup("tool", config=cfg) is not None
+
+
+def test_uninstall_force_removes_an_unmigratable_legacy_entry(tmp_path: Path) -> None:
+    """--force reaches a targetless entry; checking `target` first made it unremovable."""
+    cfg, installed = _legacy_unmigratable_entry(tmp_path)
+
+    result = uninstall_manpage("tool", force=True, config=cfg)
+
+    assert result.legacy_kept == []
+    assert result.modified_kept == []
+    assert installed in result.removed
+    assert not installed.exists()
+    assert manifest_module.lookup("tool", config=cfg) is None

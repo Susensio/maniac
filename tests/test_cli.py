@@ -639,3 +639,30 @@ def test_render_install_does_not_swallow_bracketed_detail() -> None:
     _render_install(test_console, outcome)
 
     assert "[no synthesis]" in buf.getvalue()
+
+
+def test_cli_uninstall_legacy_kept(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A pre-ADR-0028 entry left in place must not read as an edited page.
+
+    `modified_kept`'s wording claims the bytes changed since install, which
+    is not what happened here -- there is no recorded target to compare them
+    against.
+    """
+    from maniac.cli.uninstall import compute_uninstall
+
+    legacy_path = tmp_path / "man1" / "mytool.1"
+    monkeypatch.setattr(
+        "maniac.installer.uninstall_manpage",
+        lambda tool, purge, force, config: UninstallResult(legacy_kept=[legacy_path]),
+    )
+    outcome = compute_uninstall("mytool")
+    assert outcome.result.modified_kept == []
+    assert outcome.result.legacy_kept == [legacy_path]
+
+    res = runner.invoke(app, ["uninstall", "mytool"])
+    assert res.exit_code == 0
+    assert "--force" in res.output
+    assert "bytes have changed since" not in res.output
+    assert "non-MANIAC" not in res.output

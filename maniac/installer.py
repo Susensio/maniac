@@ -6,6 +6,7 @@ under an older storage policy is migrated before ownership is judged.
 
 import shutil
 from dataclasses import dataclass, field
+from enum import Enum
 from pathlib import Path
 
 from . import lifecycle, manifest
@@ -137,6 +138,17 @@ def _path_exists(path: Path) -> bool:
     return path.exists() or path.is_symlink()
 
 
+class KeptReason(Enum):
+    """Why a recorded page survived an uninstall."""
+
+    # Pre-ADR-0028 entry carrying no recorded target, so nothing to verify
+    # its bytes against. Not a modification: the page may be untouched.
+    LEGACY = "legacy"
+    # Recorded target present but the page no longer matches what was
+    # installed -- edited, replaced, retargeted or left dangling.
+    MODIFIED = "modified"
+
+
 @dataclass
 class UninstallResult:
     """Outcome of an `uninstall_manpage()` call."""
@@ -153,6 +165,10 @@ class UninstallResult:
     # uninstall covers a whole upstream release and each member is checked
     # on its own.
     modified_kept: list[Path] = field(default_factory=list)
+    # Every group member predating ADR-0028's symlink tracking whose migration
+    # never succeeded. Nothing was edited; there is simply no recorded target
+    # to check, and only `--force` authorizes removing it.
+    legacy_kept: list[Path] = field(default_factory=list)
 
 
 def _foreign_manpage(tool_name: str, cfg: Config) -> Path | None:
@@ -161,14 +177,47 @@ def _foreign_manpage(tool_name: str, cfg: Config) -> Path | None:
     return installed_file if installed_file.exists() else None
 
 
-def _entry_must_be_kept(entry: Entry, *, force: bool) -> bool:
-    """Whether a manifest entry is no longer safe to remove."""
-    if entry.target is None or not manifest.is_expected_link(entry):
-        return True
-    if force or entry.provider_target:
+def _matches_recorded_bytes(entry: Entry) -> bool:
+    """Whether a targetless entry's page still holds the bytes recorded at install.
+
+    A symlink or non-regular file counts as a mismatch: the recorded bytes
+    were a copy, so anything else occupying the path is not them.
+    """
+    if entry.path.is_symlink() or not entry.path.is_file():
         return False
+    try:
+        return manifest.checksum_of(entry.path) == entry.checksum
+    except OSError:
+        return False
+
+
+def _kept_reason(entry: Entry, *, force: bool) -> KeptReason | None:
+    """Why a manifest entry is no longer safe to remove, or None when it is.
+
+    `force` is consulted before the missing-target check, not after: a
+    pre-ADR-0028 entry whose migration failed keeps `target=None` forever
+    (`lifecycle._migrate_links` retains it on OSError), so checking first
+    made such an entry permanently un-uninstallable with no override.
+    A replaced, retargeted or dangling entry still outranks `force`,
+    because the page occupying the manpath is then not the one recorded.
+
+    A targetless entry whose page's bytes no longer match what was recorded
+    is still MODIFIED -- the bytes are the only evidence such an entry has.
+    """
+    if entry.target is None:
+        if force:
+            return None
+        return (
+            KeptReason.LEGACY if _matches_recorded_bytes(entry) else KeptReason.MODIFIED
+        )
+    if not manifest.is_expected_link(entry):
+        return KeptReason.MODIFIED
+    if force or entry.provider_target:
+        return None
     target = manifest.expected_target_path(entry)
-    return manifest.checksum_of(target) != entry.checksum
+    if manifest.checksum_of(target) != entry.checksum:
+        return KeptReason.MODIFIED
+    return None
 
 
 def _remove_recorded_manpage(
@@ -178,15 +227,16 @@ def _remove_recorded_manpage(
     entry: Entry | None,
     force: bool,
     removed_paths: list[Path],
-) -> tuple[Entry | None, Path | None, Path | None]:
-    """Remove a recorded link, returning its entry and any kept-page status."""
+) -> tuple[Entry | None, Path | None, KeptReason | None]:
+    """Remove a recorded link, returning its entry and why any page was kept."""
     if entry is None:
         return None, _foreign_manpage(tool_name, cfg), None
     if not _path_exists(entry.path):
         manifest.forget(tool_name, config=cfg)
         return entry, None, None
-    if _entry_must_be_kept(entry, force=force):
-        return entry, None, entry.path
+    kept = _kept_reason(entry, force=force)
+    if kept is not None:
+        return entry, None, kept
 
     installed_file = entry.path
     installed_file.unlink()
@@ -267,10 +317,12 @@ def uninstall_manpage(
     at install is left in place unless `force` overrides the check,
     mirroring `install_manpage`'s own `--force` -- but reported via
     `modified_kept`, not `foreign_kept`: the manifest entry proves MANIAC
-    installed it (ADR-0017), so it is ours, only changed since. A page
-    missing entirely is not a mismatch: it is the crash window the
-    entry-before-copy ordering deliberately creates, so its entry is
-    forgotten, not flagged.
+    installed it (ADR-0017), so it is ours, only changed since. An entry
+    predating ADR-0028's symlink tracking has no recorded target to check
+    at all, so it is reported via `legacy_kept` instead, and `force`
+    removes it. A page missing entirely is not a mismatch: `install_manpage`
+    records after materializing and linking, so a crash between the two
+    leaves an entry whose page never arrived -- forgotten, not flagged.
     """
     cfg = config or Config()
     removed_paths: list[Path] = []
@@ -281,12 +333,13 @@ def uninstall_manpage(
 
     foreign_kept: Path | None = None
     modified_kept: list[Path] = []
+    legacy_kept: list[Path] = []
     for member in _group_members(tool_name, entries):
         # 1. Active installed manpage, wherever the manifest says MANIAC put
         # it -- the manifest's recorded path, not a `<tool>.1` guess, is what
         # closes the compressed-page hole (a tier-1 `pandoc.1.gz` was
         # previously unreachable here) (ADR-0017).
-        entry, member_foreign, member_modified = _remove_recorded_manpage(
+        entry, member_foreign, member_kept = _remove_recorded_manpage(
             member,
             cfg,
             entry=entries.get(member),
@@ -295,8 +348,12 @@ def uninstall_manpage(
         )
         if member_foreign is not None:
             foreign_kept = member_foreign
-        if member_modified is not None:
-            modified_kept.append(member_modified)
+        if member_kept is not None:
+            assert entry is not None
+            kept_pages = (
+                legacy_kept if member_kept is KeptReason.LEGACY else modified_kept
+            )
+            kept_pages.append(entry.path)
 
         # 2. XDG data storage (output_dir / <tool>.1)
         _remove_orphaned_roff(member, cfg, entry, removed_paths)
@@ -305,5 +362,8 @@ def uninstall_manpage(
             _purge_artifacts(member, cfg, removed_paths)
 
     return UninstallResult(
-        removed=removed_paths, foreign_kept=foreign_kept, modified_kept=modified_kept
+        removed=removed_paths,
+        foreign_kept=foreign_kept,
+        modified_kept=modified_kept,
+        legacy_kept=legacy_kept,
     )
