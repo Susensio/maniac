@@ -99,6 +99,16 @@ These are findings the work surfaced and deliberately did not take; they are fir
   The abandoned fact-cache branch neutralized both with an evidence-driven `clear_source_cache()` call, so dropping that branch leaves this unaddressed; a fix here needs its own invalidation boundary rather than that machinery.
 
 ## Refactors and architecture
+- Roll back earlier pages when a grouped reinstall fails partway.
+  `BUG:` at `maniac/orchestration/install.py:211`, found by Codex review of ADR-0044's work and reproduced.
+  ADR-0044's one-transaction boundary means no page is *recorded* when a later one fails, and ADR-0044's orphan adoption recovers a first-time install's stray symlink and backup -- that half is by design, not a defect.
+  A reinstall is the gap: the entry already exists carrying the old checksum while the durable target now holds the new bytes, so uninstall reports MODIFIED.
+  Adoption only builds entries that are missing; it never corrects one that is present and wrong.
+  Needs a cross-page filesystem undo log, which is a new mechanism and an ADR-level decision -- weigh it against simply re-verifying checksums against disk on the next transaction, which the link scan already has the shape for.
+- Install every page of a multi-page install-root release, not just the primary.
+  `_try_install_root` uses `candidate.final_target` alone and ignores `candidate.pages`, so a tier-1 release ships its primary with no `group` recorded.
+  Tier 2 installs the whole bundle as one unit (ADR-0042, ADR-0044); tier 1 does not, and nothing says why.
+  A gap rather than a regression -- it predates the grouping work.
 
 ### List performance
 

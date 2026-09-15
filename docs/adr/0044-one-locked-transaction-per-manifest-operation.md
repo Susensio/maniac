@@ -103,7 +103,30 @@ Marked `BUG:` at `lifecycle.py:276` and recorded in `docs/BACKLOG.md`.
 
 ## Postscript, 2026-09-15
 
+The atomicity claim above was not true when this ADR was written.
+The transaction was implemented inside `install_manpage`, but `orchestration.install._try_repository`
+calls that once per page, so a three-page release committed three times -- leaving exactly the
+partial-group window ADR-0042 and this ADR both claim to close.
+An independent Codex review caught it; `62c37b7` moved the boundary around the whole page loop
+via a `transaction=` parameter and `manifest.joined`, and the claim now holds.
+Nesting was rejected: `flock` on a second descriptor plus the non-reentrant process-local lock
+would deadlock a transaction against itself, so a joining caller must pass its transaction
+explicitly. Tier 1 and tier 3 make a single `install_manpage` call each and are unaffected.
+
 `lifecycle.reconcile` and both historical migrations are deleted (`07b7f56`).
 The ADR-0032 defect recorded above went with the code that carried it, so the `BUG:` marker at
 `lifecycle.py:276` no longer exists.
 `lifecycle.py` fell from 327 lines to 120, losing the module's only file-deleting code paths.
+
+A grouped install that fails partway still leaves earlier pages' filesystem effects behind.
+Codex flagged this; half of it is by design and half is a real defect.
+An unrecorded symlink under `output_dir` and a backup named after the page it displaced are
+precisely the self-describing artifacts this ADR chose over a journal, and `_adopt_orphans`
+recovers both on the next transaction.
+What adoption cannot repair is a *reinstall*: the entry already exists with the old checksum
+while the durable target now holds the new bytes, so uninstall reports MODIFIED.
+Adoption only constructs entries that are missing; it never corrects one that is present and
+wrong.
+Repairing that needs a cross-page filesystem undo log -- a new mechanism and its own decision,
+not a correction to this one. `BUG:` at `orchestration/install.py:211`, recorded in
+`docs/BACKLOG.md`.
