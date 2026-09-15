@@ -96,6 +96,33 @@ def test_compute_rows_no_args_walks_providers_not_the_manpath(
     ]
 
 
+def test_compute_rows_reflects_a_manifest_write_between_invocations(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Nothing survives across invocations to hold a run to a stale manifest."""
+    cfg = _config(tmp_path)
+    cfg.man_dir.mkdir(parents=True)
+    installed = cfg.man_dir / "tool.1"
+    installed.write_text(".TH TOOL 1\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "maniac.listing.classification.find_installed_manpage_path",
+        lambda man_bin, tool_name: installed,
+    )
+    provider = _FakeProvider()
+    inst = _installation()
+    monkeypatch.setattr(
+        "maniac.listing.inventory.resolution.enumerate_installations",
+        lambda on_start=None, on_scan=None: [(provider, inst)],
+    )
+
+    before = compute_rows(config=cfg)
+    manifest.record("tool", installed, Tier.INSTALL_ROOT, "src", "abc123", config=cfg)
+    after = compute_rows(config=cfg)
+
+    assert before[0].source == PageSource.SYSTEM
+    assert after[0].source == PageSource.VENDOR
+
+
 def test_compute_rows_logs_phase_timing(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

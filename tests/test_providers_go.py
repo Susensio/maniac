@@ -199,6 +199,29 @@ def test_resolve_source_returns_none_for_a_non_github_module(
     )
 
 
+def test_resolve_source_reflects_a_replaced_executable(tmp_path, monkeypatch) -> None:
+    """`resolve_source` reads the binary's embedded module info fresh every
+    call; nothing memoizes the earlier build's identity for it to go stale
+    against once a different binary occupies the same path.
+    """
+    monkeypatch.setenv("GOBIN", str(tmp_path / "go-bin"))
+    bin_path = _make_go_bin(tmp_path / "go-bin", "tool")
+    first = ("github.com/first-owner/tool", "github.com/first-owner/tool", "v1.0.0")
+    second = ("github.com/second-owner/tool", "github.com/second-owner/tool", "v2.0.0")
+    monkeypatch.setattr(go, "_read_module_info", lambda path: first)
+    provider = go.GoProvider()
+    inst = provider.detect(bin_path)
+    assert inst is not None
+
+    before = provider.resolve_source(inst, config=Config(), sources=registry)
+    monkeypatch.setattr(go, "_read_module_info", lambda path: second)
+    bin_path.write_bytes(b"replacement executable")
+    after = provider.resolve_source(inst, config=Config(), sources=registry)
+
+    assert before == RepoSource(name="tool", target="first-owner/tool", is_local=False)
+    assert after == RepoSource(name="tool", target="second-owner/tool", is_local=False)
+
+
 def test_local_docs_finds_manpage_under_install_root(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("GOBIN", str(tmp_path / "go-bin"))
     bin_path = _make_go_bin(tmp_path / "go-bin", "tool")
