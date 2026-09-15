@@ -27,10 +27,6 @@ These are findings the work surfaced and deliberately did not take; they are fir
   other three are dropped; `--names` already exists for the bare-name pipeline case, so this
   looks like a rendering accident rather than the intended pipe output.
   Candidates are a plain-text width, a `--plain` mode, or `--json`.
-- Report the superseded durable copy that an `INSTALL_ROOT` uninstall deletes.
-  Uninstall's own `reconcile()` runs ADR-0032's migration first, which relinks the entry to its provider page, sets `provider_target`, and unlinks the MANIAC copy itself.
-  That deletion never reaches `result.removed`, so uninstall removes a file it does not report.
-  Found while pinning `discard_durable_target`; the removal is correct, the silence is not.
 - Assert `lifecycle.link_manpath_entry`'s atomic replacement, not just its end state.
   Current tests pin that the manpath entry ends as the right symlink; nothing pins that a pre-existing entry is replaced atomically rather than unlinked and recreated.
   Needs an interleaving harness the project does not yet have.
@@ -40,9 +36,6 @@ These are findings the work surfaced and deliberately did not take; they are fir
 - Remove `_grouped_for_display`'s dead `pending` parameter.
   No caller passes it, so the `row.tool in pending` element of the group key is constantly
   `False` and the parameter silently widens the key for nobody.
-- Delete `maniac/sources/__init__.py`'s remaining re-exports if they are as dead as the three already removed.
-  `extract_subcommands`, `find_subcommands`, `format_help_block`, `get_help` and `discover_repo` are re-exported from `crawler` and `resolution`, but every importer reaches for the submodule instead (`from ..sources import resolution`).
-  Three sibling re-exports were confirmed unreferenced and deleted with the facade cleanup; check these the same way rather than assuming.
 - Thread probe definitiveness back as a return value instead of `docs.cache`'s module-level `_lookup_state` thread-local.
   ADR-0033's split made that cross-module channel visible without removing it: `cache` writes it and `repository` reads it.
   Removing it touches every probe signature, so it was left out of the split deliberately.
@@ -68,13 +61,34 @@ These are findings the work surfaced and deliberately did not take; they are fir
   This also decides whether `install --generate` remains necessary: ADR-0016's authoritative-first order makes forcing tier 3 normally worse, but it may be the deliberate replacement escape hatch.
 - Distinguish a wrong documentation repository from one that legitimately has no manpage.
   Flag-inventory overlap and whether the repository contains implementation source are possible evidence, but absence is a normal synthesis fallback and must not be treated as proof of misresolution.
-- Harden global Mise discovery when the login-path probe fails, rather than returning the caller's inherited, possibly project-activated PATH.
-  A disposable probe confirmed activation is cwd-sensitive; the successful login-shell path run from `$HOME` correctly selects global `latest` installs.
-  Exercise real shim resolution before choosing a safe fallback; `mise which -C $HOME` remains cwd-sensitive and needs ADR-0029-style root validation.
-- Serialize manifest load-modify-save with a sidecar lock and transactional update API.
-  Atomic replacement prevents torn files but not concurrent installs losing ownership entries; choose a short blocking timeout or a fail-fast lock policy.
+- Drop Mise-activated `$PATH` entries on a degraded login-path fallback, as venv and conda entries already are.
+  The generic half is done: every `login_path()` fallback now returns a sanitized `LoginPath(path, degraded)` rather than the caller's raw `$PATH`, and `MISE_`/`__MISE_` joined the scrubbed prefixes.
+  Removal needs evidence, and only `VIRTUAL_ENV` and `CONDA_PREFIX` name a root a `$PATH` entry can be tested against.
+  No Mise variable names a per-tool root; `~/.local/share/mise/installs/...` would have to be reconstructed by convention, which is the guessing this rule exists to forbid.
+  `__MISE_ORIG_PATH` records the entire pre-activation `$PATH` and is the plausible evidence source -- a live `mise activate bash` on this machine exports it alongside `MISE_SHELL`, `__MISE_EXE` and `__MISE_DIFF`.
+  Using it is Mise-specific, so decide whether the fallback gets per-provider evidence adapters or stays generic.
+  Shim resolution remains unexercised: this machine has no populated shim directory, and `mise which -C $HOME` is cwd-sensitive and needs ADR-0029-style root validation.
+- Settle the manifest's durability, recovery and concurrency contract as one decision.
+  Supersedes "serialize manifest load-modify-save with a sidecar lock": locking is one of four findings, not the whole problem.
+  `save()` writes to `.tmp` and `replace()`s, so a process crash cannot tear the file, but it never `fsync`s before the rename -- a power loss can land the rename ahead of the data.
+  `load()` collapses three cases into `{}`: file absent (legitimately empty), file present but unparseable, and `version != SCHEMA_VERSION`.
+  The last two must not read as "MANIAC owns nothing", because the next install then treats every managed page as foreign and backs up MANIAC's own work under `--force`.
+  There is no backup generation and no reachable repair; `lifecycle._seed_from_headers` is the existing rebuild path, hiding as a migration.
+  Repair can recover `path`, `checksum`, `target` and `provider_target` -- ADR-0028 made every entry a symlink, so `readlink` answers the last two -- plus `source` for tier-3 pages from their provenance header.
+  It cannot recover `backup`, `version` or `source_uri`, and cannot tell a MANIAC-installed tier-1/2 copy from the vendor's own byte-identical page; ADR-0017 accepted that.
+  A symlink into `data_dir` is ownership evidence regardless of header and would cover tiers 1 and 2 post-ADR-0028; check whether a link-target scan replaces `_seed_from_headers`.
+  On concurrency, a lock must not span generation.
+  LLM synthesis, pandoc and crawling touch nothing the manifest owns; only backup/link/record do, and those are filesystem-fast.
+  Split install into generate (unlocked, slow, parallel-safe across processes) and commit (locked, milliseconds), so external parallelism survives.
+  The residual cost is two processes generating the same tool and one losing at commit -- wasted LLM spend, not corruption, and the loser can re-read and skip.
+  SQLite is not the answer to corruption: atomic rename plus `fsync` already covers torn writes, it still needs an app-level lock across the side-effect window, and it costs inspectability plus a `-wal`/`-shm` pair that breaks naive backups.
 - Treat a multi-page upstream release as one uninstallable installation.
   Uninstalling the primary page must checksum-protect, remove, and restore every companion page and displaced vendor page.
+  Blocked on the manifest schema above, and a second customer for it.
+  `orchestration/install.py` installs a release's pages as one `install_manpage` call each, keyed by `_manpage_owner`, recording no relation between them.
+  `source_uri` is the only field companions share -- `release._manpages_from_release_archive` stamps the same asset URL on every extracted page, and the tree probe returns at most one page, so multi-page bundles only ever come from a release archive.
+  It still cannot carry the group: it records which upstream file, not that they arrived together, and cannot express which entry is primary, so uninstalling `eza_colors` would look structurally identical to uninstalling `eza`.
+  Needs group membership plus primary recorded on `Entry`.
 
 ## Refactors and architecture
 
@@ -89,7 +103,11 @@ These are findings the work surfaced and deliberately did not take; they are fir
 
 - Decide whether `Config` binds XDG paths per instance or intentionally at import time, then make discovery consistent.
   Current frozen module globals make ordinary environment monkeypatches ineffective after import; this is a configuration-lifecycle decision deserving an ADR.
-- Extend installation-derived package metadata fallback beyond npm for Python, Cargo, Go, and Homebrew.
+- Resolve non-GitHub upstreams, or say plainly that they are unsupported.
+  `npm`, `pipx`, `uv`, `go`, `homebrew` and `cargo` all discard a repository URL that `discovery._clean_git_url` leaves unchanged, so a GitLab or Codeberg project resolves to nothing even when its metadata declares the URL outright.
+  This is one cross-provider policy, not six provider bugs; it pairs with the existing Source-link item, which already refuses to guess a browser-file URL for an unsupported host.
+  Supersedes "extend installation-derived package metadata fallback beyond npm": that gap is closed.
+  `uv` resolves via `Project-URL` and `direct_url.json`, `pipx` via `find_distribution_metadata`, `go` via module path, `homebrew` via `brew info`, and `cargo` now via the unpacked registry source's declared `repository`.
   Never infer a repository from a bare executable name: prior collisions include `fmt` -> `nushell/nufmt`, `od` -> `todotxt/todo.txt-cli`, and GNU `envsubst` -> `a8m/envsubst`.
 - Record losing provider claims for a binary after first-PATH-entry selection.
   The visible winner is correct, but discarded competing claims prevent diagnostics when PATH hides a better-documented installation.
