@@ -225,3 +225,50 @@ Repository identity now resolves independently of local page provenance, so vend
 UV tools now reuse their installed distribution metadata for published packages as well as `direct_url.json` for editable installs; Serena's `Project-URL: Homepage, https://github.com/oraios/serena` therefore resolves its Upstream cell.
 Process-local caching reduces repeated UV metadata scans for sibling binaries sharing one tool root from five scans to two on the development system; the isolated editable-source pass measured 0.413 seconds before and 0.132 seconds after.
 Full warm TTY runs remained noisy at 6.58-7.75 seconds because transient upstream retries dominated this sandboxed measurement, so no larger end-to-end speedup is claimed.
+
+## Parallel backlog wave -- 2026-09-15
+
+Four changes landed on master while the persistent list cache ran on its own worktree, chosen to be disjoint from `maniac/listing/`, `maniac/cli/listing.py`, `maniac/sources/docs/` and cache-related config.
+Verified as one tree at 632 tests, `just check` exit 0.
+
+`87a5cbe` resolves cargo upstreams from the installed crate's own registry source.
+`CargoProvider.resolve_source` previously returned `None` on the reasoning that `.crates2.json` records no repository and crates.io would have to be queried.
+True of `.crates2.json`, false of the disk: `cargo install` leaves the crate source under `$CARGO_HOME/registry/src/<index>/<crate>-<version>/Cargo.toml`, whose `[package] repository` is explicit and offline.
+The index directory is a per-machine hash and is globbed, never hardcoded.
+Live: `hexyl 0.17.0` declares `https://github.com/sharkdp/hexyl`, and `maniac list hexyl` now renders `sharkdp/hexyl`.
+
+`b27e494` stops `login_path()` handing back the caller's activation-polluted `$PATH`.
+`_login_shell_env` always scrubbed the child's environment, but all six fallbacks -- `$SHELL` unset, spawn `OSError`, timeout, non-zero exit, empty output, degenerate probe-only -- returned `os.environ["PATH"]` raw, reintroducing exactly the caller-dependence ADR-0020 excludes.
+They now return a sanitized `LoginPath(path, degraded)`, so a caller can tell a degraded answer from a good one; `login_path_dirs()` was deleted rather than left dropping the verdict.
+Only `VIRTUAL_ENV` and `CONDA_PREFIX` drive entry removal, because only they name a root an entry can be tested against; an entry with no marker behind it stays.
+A live `mise activate bash` on this machine exports `MISE_SHELL`, `__MISE_EXE`, `__MISE_DIFF` and `__MISE_ORIG_PATH`, so `MISE_` and `__MISE_` joined the scrubbed prefixes.
+Mise-activated entries still survive sanitization -- no Mise variable names a per-tool root -- and that remainder is in the backlog.
+
+`289ae08` makes uninstall report the durable copy its own migration deletes.
+`reconcile()` runs ADR-0032's migration first, which relinks the entry and unlinks the superseded MANIAC copy, so `discard_durable_target` found `provider_target` already set and returned `None`.
+`reconcile` now takes an optional `removed` sink that uninstall passes and read paths omit, so a listing command performs the same migration silently.
+
+`db6a4c0` makes a multi-page upstream release one uninstallable installation (ADR-0042).
+`Entry.group` carries the primary's manifest key on every member; uninstalling any member takes the unit, checksum-protecting and restoring each displaced vendor page.
+`UninstallResult.modified_kept` became a list because protection is decided per member.
+`source_uri` was rejected as the grouping key: it records which upstream file, not that pages arrived together, and cannot name a primary.
+
+`96eb8ec` deleted `maniac/sources/__init__.py`'s re-exports, confirmed unreferenced -- the docs-facade cleanup ADR-0033 left blocked on its callers still being edited. No entries remain from that wave.
+
+### The manifest decision
+
+ADR-0043 settles what the manifest is, after SQLite and a filesystem-implicit form were both weighed and declined.
+It stays an explicit human-readable JSON record and the source of truth, protected and checkpointed rather than made cheap to lose, with filesystem reconstruction demoted to a best-effort last resort.
+
+The findings that forced the question are recorded in `docs/BACKLOG.md` and none are fixed yet.
+`save()` never `fsync`s before its atomic rename.
+There is no retained previous generation.
+`load()` collapses absent, unparseable and unrecognized-version into `{}`.
+`lifecycle._seed_from_headers` is gated on the manifest *not existing*, so a corrupt manifest skips recovery entirely and is then overwritten by the next `record()` with a one-entry file -- the rebuild code is unreachable in the case that needs it.
+`_seed_from_headers`' own docstring is stale: it predates ADR-0028, and the symlink target is now stronger evidence than the provenance header it reads.
+
+`SCHEMA_VERSION` is a tripwire with no handler.
+An equality check that degrades to `{}` cannot be incremented without making every existing manifest read as empty, which is why ADR-0042 shipped `group` additively rather than bumping it.
+Whether it becomes a floor, gains real migrations, or is removed is open.
+
+Whether uninstalling a companion should remove its whole group is also open, with ADR-0042's symmetric removal as the shipped default.
