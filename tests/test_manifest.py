@@ -906,3 +906,84 @@ def test_a_recovered_key_keeps_every_dot_but_the_section(tmp_path: Path) -> None
         pass
 
     assert set(manifest.load(config=cfg)) == {"foo.bar"}
+
+
+def test_a_plain_read_reports_a_broken_link_without_touching_the_tree(
+    tmp_path: Path,
+) -> None:
+    """The read path learns about drift when it reads, not at the next install.
+
+    `maniac list` goes through `load`/`read`; before this the scan ran only
+    on transaction open, so a read command never noticed a vanished page.
+    """
+    cfg = _linked_config(tmp_path)
+    link, _ = _managed_link(cfg, "tool")
+    record_entry(
+        "tool",
+        link,
+        Tier.SYNTHESIS,
+        "model",
+        "abc123",
+        target=cfg.output_dir / "tool.1",
+        config=cfg,
+    )
+    link.unlink()
+    before = _tree_state(tmp_path)
+
+    result = manifest.read(config=cfg)
+
+    assert result.health is manifest.Health.INTACT
+    assert result.links == {"tool": manifest.Link.BROKEN}
+    assert _tree_state(tmp_path) == before
+
+
+def test_a_read_of_a_sound_installation_reports_it_sound(tmp_path: Path) -> None:
+    cfg = _linked_config(tmp_path)
+    link, target = _managed_link(cfg, "tool")
+    record_entry(
+        "tool",
+        link,
+        Tier.SYNTHESIS,
+        "model",
+        manifest.checksum_of(target),
+        target=target,
+        config=cfg,
+    )
+
+    assert manifest.read(config=cfg).links == {"tool": manifest.Link.SOUND}
+
+
+def test_the_scan_costs_one_check_per_manifest_entry_whatever_path_holds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Scan cost tracks what MANIAC owns, never `$PATH`'s dozens of binaries."""
+    cfg = _linked_config(tmp_path)
+    for tool in ("one", "two"):
+        link, target = _managed_link(cfg, tool)
+        record_entry(
+            tool,
+            link,
+            Tier.SYNTHESIS,
+            "model",
+            manifest.checksum_of(target),
+            target=target,
+            config=cfg,
+        )
+    path_dir = tmp_path / "bin"
+    path_dir.mkdir()
+    for index in range(68):
+        (path_dir / f"binary{index}").write_text("#!/bin/sh\n", encoding="utf-8")
+    monkeypatch.setenv("PATH", str(path_dir))
+
+    checked: list[Path] = []
+    real_link_state = manifest.link_state
+
+    def counting_link_state(entry: manifest.Entry) -> manifest.Link:
+        checked.append(entry.path)
+        return real_link_state(entry)
+
+    monkeypatch.setattr(manifest, "link_state", counting_link_state)
+    result = manifest.read(config=cfg)
+
+    assert sorted(checked) == sorted(entry.path for entry in result.entries.values())
+    assert len(checked) == 2

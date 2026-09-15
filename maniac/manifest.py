@@ -13,7 +13,7 @@ import re
 import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -190,6 +190,36 @@ def _row_to_entry(row: Any) -> Entry:
     )
 
 
+class Link(Enum):
+    """What the filesystem says about one entry's manpath link."""
+
+    # Manpath entry is a symlink to the recorded target, and it exists.
+    SOUND = "sound"
+    # Pre-ADR-0028 entry: no recorded target to check, page present.
+    UNVERIFIABLE = "unverifiable"
+    # Nothing there, not a symlink, pointed elsewhere, or dangling.
+    BROKEN = "broken"
+
+
+def link_state(entry: Entry) -> Link:
+    """Return what the disk says about one entry, by `lstat` and `readlink` only."""
+    if entry.target is None:
+        return Link.UNVERIFIABLE if entry.path.is_file() else Link.BROKEN
+    return Link.SOUND if is_expected_link(entry) else Link.BROKEN
+
+
+def scan(entries: dict[str, Entry]) -> dict[str, Link]:
+    """Return every entry's link state, keyed by tool.
+
+    Pure `lstat`/`readlink` over what MANIAC owns, never over `$PATH` --
+    the manifest holds a handful of entries where `$PATH` holds dozens of
+    binaries, so the cost is proportional to what was installed and stays
+    microseconds per entry.  Cheap enough to run on every read rather than
+    behind a flag.
+    """
+    return {tool: link_state(entry) for tool, entry in entries.items()}
+
+
 class Health(Enum):
     """How much of the manifest a read recovered."""
 
@@ -211,12 +241,16 @@ class Read:
     `lost` maps the tool key of each skipped row to why it was skipped.  A
     single lost key is enough to make the read DAMAGED: ownership that
     silently evaporates is written out permanently by the next save.
+    `links` maps each recovered entry to what the disk says about its
+    manpath link.  Health is about the document; this is about the pages it
+    names, and a row can parse perfectly while its page is gone.
     """
 
     entries: dict[str, Entry]
     health: Health
     reason: str | None = None
     lost: dict[str, str] = field(default_factory=dict)
+    links: dict[str, Link] = field(default_factory=dict)
 
 
 def _damaged(reason: str) -> Read:
@@ -224,13 +258,16 @@ def _damaged(reason: str) -> Read:
 
 
 def read(config: Config | None = None) -> Read:
-    """Return the manifest's entries and the verdict on how complete they are.
+    """Return the manifest's entries, the verdict on how complete they are, and their link states.
 
-    Pure deserialization, like `load`: nothing here touches the filesystem
-    beyond reading the manifest file.  Checkpoint promotion is `promote`,
-    which write paths call explicitly (ADR-0034).
+    Read-only, which is what ADR-0034 asks of it: the structural scan
+    `lstat`s and `readlink`s what the entries name and mutates nothing, so
+    `maniac list` learns about drift at the moment it reads rather than
+    whenever the next install happens to open a transaction.  Promotion does
+    mutate and stays out, in `promote`, which write paths call explicitly.
     """
-    return _read_document(_manifest_path(config))
+    document = _read_document(_manifest_path(config))
+    return replace(document, links=scan(document.entries))
 
 
 def _read_document(path: Path) -> Read:
@@ -340,34 +377,6 @@ def promote(read_result: Read, config: Config | None = None) -> bool:
 def lookup(tool: str, config: Config | None = None) -> Entry | None:
     """Return `tool`'s recorded entry, or None if MANIAC never installed it."""
     return load(config).get(tool)
-
-
-class Link(Enum):
-    """What the filesystem says about one entry's manpath link."""
-
-    # Manpath entry is a symlink to the recorded target, and it exists.
-    SOUND = "sound"
-    # Pre-ADR-0028 entry: no recorded target to check, page present.
-    UNVERIFIABLE = "unverifiable"
-    # Nothing there, not a symlink, pointed elsewhere, or dangling.
-    BROKEN = "broken"
-
-
-def link_state(entry: Entry) -> Link:
-    """Return what the disk says about one entry, by `lstat` and `readlink` only."""
-    if entry.target is None:
-        return Link.UNVERIFIABLE if entry.path.is_file() else Link.BROKEN
-    return Link.SOUND if is_expected_link(entry) else Link.BROKEN
-
-
-def scan(entries: dict[str, Entry]) -> dict[str, Link]:
-    """Return every entry's link state, keyed by tool.
-
-    Pure `lstat`/`readlink` over what MANIAC owns, never over `$PATH` --
-    microseconds per entry against an install's filesystem and network work,
-    so it runs on every transaction rather than behind a flag.
-    """
-    return {tool: link_state(entry) for tool, entry in entries.items()}
 
 
 @dataclass(frozen=True, slots=True)
@@ -611,12 +620,11 @@ def transaction(config: Config | None = None) -> Iterator[Transaction]:
     cfg = config or Config()
     with _exclusive(cfg):
         current = read(cfg)
-        states = scan(current.entries)
         recovery: Recovery | None = None
         if current.health is Health.INTACT:
             # A sound scan is the second half of the promotion test: rows
             # that parse but name pages that are gone are not a good copy.
-            if Link.BROKEN not in states.values():
+            if Link.BROKEN not in current.links.values():
                 promote(current, cfg)
             entries = dict(current.entries)
         else:
