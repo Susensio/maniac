@@ -16,6 +16,7 @@ all three, so tier 3 never re-resolves what tiers 1-2 already found.
 from dataclasses import dataclass
 from pathlib import Path
 
+from .. import manifest
 from ..config import Config
 from ..exceptions import ManiacError
 from ..installer import install_manpage
@@ -202,21 +203,30 @@ def _try_repository(tool: ResolvedTool, *, force: bool) -> InstallOutcome | None
     # group: they arrived together and uninstall together, which `source_uri`
     # cannot say -- it names the asset, not the unit, and cannot mark a primary.
     group = manpage_owner(candidate.primary.path)
-    for page in candidate.pages:
-        installed = install_manpage(
-            page.path,
-            manpage_owner(page.path),
-            Tier.REPOSITORY,
-            source.identity,
-            target_dir=_manpage_directory(page.path, cfg),
-            force=force,
-            version=inst.version,
-            source_uri=page.uri,
-            group=group,
-            config=cfg,
-        )
-        if page == candidate.primary:
-            installed_path = installed
+    # One transaction around the whole loop, not one per page: the release's
+    # entries land in a single write or none of them do, so a failure partway
+    # cannot record a group naming a primary that was never written
+    # (ADR-0044, ADR-0042).  The pages are already materialized by here, so
+    # no generation happens under the lock (ADR-0043).
+    # BUG: reinstalling a recorded release that fails partway leaves the
+    # earlier pages' new bytes on disk under their old entries' checksums,
+    # which uninstall then reads as MODIFIED.
+    with manifest.transaction(cfg) as txn:
+        for page in candidate.pages:
+            installed = install_manpage(
+                page.path,
+                manpage_owner(page.path),
+                Tier.REPOSITORY,
+                source.identity,
+                target_dir=_manpage_directory(page.path, cfg),
+                force=force,
+                version=inst.version,
+                source_uri=page.uri,
+                group=group,
+                transaction=txn,
+            )
+            if page == candidate.primary:
+                installed_path = installed
     assert installed_path is not None
     detail = f"upstream manpage from repository ({inst.version})   [no synthesis]"
     return InstallOutcome(

@@ -703,3 +703,21 @@ def transaction(config: Config | None = None) -> Iterator[Transaction]:
         yield txn
         if txn.dirty:
             save(txn.entries, cfg)
+
+
+@contextmanager
+def joined(
+    existing: Transaction | None, config: Config | None = None
+) -> Iterator[Transaction]:
+    """Yield the caller's open transaction, or open one for the block.
+
+    An operation spanning several recorded pages opens one transaction and
+    passes it down, so the pages land in a single write (ADR-0044).  Opening
+    a nested one instead would deadlock: `flock` and the process-local lock
+    both block the second acquisition against the first.
+    """
+    if existing is not None:
+        yield existing
+        return
+    with transaction(config) as txn:
+        yield txn

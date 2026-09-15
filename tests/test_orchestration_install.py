@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from maniac import manifest
+from maniac import lifecycle, manifest
 from maniac.config import Config
 from maniac.models import DocFile, Installation, RepoSource
 from maniac.orchestration.context import ResolvedTool
@@ -358,6 +358,92 @@ def test_run_install_installs_all_anchored_release_manpages(
     # One release, one uninstallable unit: both pages carry the primary's key.
     assert primary_entry.group == "eza"
     assert companion_entry.group == "eza"
+
+
+def _release_config(tmp_path: Path) -> Config:
+    return Config(
+        cache_dir=tmp_path / "cache",
+        man_dir=tmp_path / "man" / "man1",
+        output_dir=tmp_path / "output",
+        manifest_path=tmp_path / "state" / "installed.json",
+        backup_dir=tmp_path / "state" / "backups",
+    )
+
+
+def _eza_release(tmp_path: Path) -> list[Path]:
+    pages = []
+    for name, text in (
+        ("eza.1", ".TH EZA 1\n"),
+        ("eza_colors.5", ".TH EZA_COLORS 5\n"),
+        ("eza_colors-explanation.5", ".TH EZA_COLORS_EXPLANATION 5\n"),
+    ):
+        page = tmp_path / name
+        page.write_text(text, encoding="utf-8")
+        pages.append(page)
+    return pages
+
+
+def _resolve_eza_release(monkeypatch: pytest.MonkeyPatch, pages: list[Path]) -> None:
+    source = RepoSource(name="eza", target="eza-community/eza", is_local=False)
+    provider = _FakeProvider(local_docs=[], source=source)
+    inst = _installation(version="0.23.5", binary="eza")
+    monkeypatch.setattr(
+        "maniac.orchestration.context.resolution.find_installation",
+        lambda name, bin_dir=None: (provider, inst),
+    )
+    monkeypatch.setattr(
+        "maniac.orchestration.install.discover_repo_manpages",
+        lambda *args, **kwargs: list(pages),
+    )
+
+
+def test_run_install_records_a_release_in_one_manifest_write(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Three pages, one transaction, one write -- the atomicity ADR-0044 claims."""
+    cfg = _release_config(tmp_path)
+    _resolve_eza_release(monkeypatch, _eza_release(tmp_path))
+    writes = []
+    real_save = manifest.save
+    monkeypatch.setattr(
+        "maniac.manifest.save",
+        lambda entries, config=None: (
+            writes.append(sorted(entries)),
+            real_save(entries, config),
+        )[1],
+    )
+
+    run_install("eza", no_generate=True, config=cfg)
+
+    assert writes == [["eza", "eza_colors", "eza_colors-explanation"]]
+
+
+def test_run_install_records_no_page_when_a_release_fails_partway(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A group naming a primary that was never written is worse than nothing.
+
+    The failure lands on the second of three pages, so the run either
+    records the whole release or none of it -- never the prefix that
+    reached the manpath before the failure.
+    """
+    cfg = _release_config(tmp_path)
+    _resolve_eza_release(monkeypatch, _eza_release(tmp_path))
+    real_link = lifecycle.link_manpath_entry
+    linked = Counter()
+
+    def link_once(path: Path, target: Path) -> None:
+        linked["calls"] += 1
+        if linked["calls"] > 1:
+            raise OSError("read-only manpath")
+        real_link(path, target)
+
+    monkeypatch.setattr("maniac.lifecycle.link_manpath_entry", link_once)
+
+    with pytest.raises(OSError):
+        run_install("eza", no_generate=True, config=cfg)
+
+    assert manifest.load(config=cfg) == {}
 
 
 def test_generate_flag_skips_tiers_1_and_2(

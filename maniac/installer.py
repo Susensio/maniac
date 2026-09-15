@@ -24,6 +24,7 @@ def install_manpage(
     durable_source: bool = False,
     provider_target: bool = False,
     group: str | None = None,
+    transaction: manifest.Transaction | None = None,
     config: Config | None = None,
 ) -> Path:
     """Link a manpath entry to a durable page with conflict guard and backup.
@@ -38,6 +39,12 @@ def install_manpage(
     `group` is the manifest key of the primary page of the upstream release
     this page came in; every page of one multi-page release is installed
     with the same value, which is what makes them uninstall together.
+
+    `transaction` joins a manifest transaction the caller already opened,
+    which is what makes such a release atomic: every page records into the
+    one working set and the whole group lands in a single write, or none of
+    it does (ADR-0044).  It carries the config for the install, so a caller
+    passing it passes no `config`.
     """
     src = Path(source_file)
     if durable_source and tier is not Tier.INSTALL_ROOT:
@@ -45,7 +52,7 @@ def install_manpage(
     if provider_target and not durable_source:
         raise ValueError("A provider target must link directly to its source")
     checksum = manifest.checksum_of(src)
-    cfg = config or Config()
+    cfg = transaction.config if transaction is not None else config or Config()
     dest_dir = Path(target_dir).expanduser() if target_dir else cfg.man_dir
     dest_dir.mkdir(parents=True, exist_ok=True)
 
@@ -54,7 +61,7 @@ def install_manpage(
     # The generate phase is over by here -- `src` exists. Everything below is
     # backup, link and record, which is milliseconds, so it is the whole of
     # what the lock spans (ADR-0043).
-    with manifest.transaction(cfg) as txn:
+    with manifest.joined(transaction, cfg) as txn:
         entries = txn.entries
         # Ownership read before the duplicates go, or the backup the owning
         # record carries is dropped with it.
