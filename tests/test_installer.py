@@ -1081,3 +1081,47 @@ def test_reinstalling_a_tool_reuses_its_own_durable_target(tmp_path: Path) -> No
     entry = manifest_module.lookup("tool", config=cfg)
     assert entry is not None and entry.target is not None
     assert entry.target.read_text(encoding="utf-8") == ".TH TOOL 1 second"
+
+
+def test_uninstall_keeps_a_durable_target_a_second_entry_still_records(
+    tmp_path: Path,
+) -> None:
+    """A manifest written before the collision guard can share one durable target.
+
+    Uninstalling one user must leave the other's link resolvable: deleting
+    the target dangles it and makes that entry un-uninstallable in turn.
+    """
+    cfg = Config(
+        man_dir=tmp_path / "man1",
+        output_dir=tmp_path / "durable",
+        manifest_path=tmp_path / "state" / "installed.json",
+    )
+    target = cfg.output_dir / "page.1"
+    target.parent.mkdir(parents=True)
+    target.write_text(".TH PAGE 1 shared", encoding="utf-8")
+    checksum = manifest_module.checksum_of(target)
+    links = {}
+    for tool, man_dir in (("first", tmp_path / "man1"), ("second", tmp_path / "man2")):
+        man_dir.mkdir(parents=True)
+        link = man_dir / "page.1"
+        link.symlink_to(target)
+        links[tool] = link
+        manifest_module.record(
+            tool, link, Tier.SYNTHESIS, "model", checksum, target=target, config=cfg
+        )
+
+    first = uninstall_manpage("first", config=cfg)
+
+    assert links["first"] in first.removed
+    assert not links["first"].exists()
+    assert target not in first.removed
+    assert target.exists()
+    assert links["second"].resolve() == target
+    assert manifest_module.lookup("second", config=cfg) is not None
+
+    second = uninstall_manpage("second", config=cfg)
+
+    assert links["second"] in second.removed
+    assert target in second.removed
+    assert not target.exists()
+    assert manifest_module.lookup("second", config=cfg) is None

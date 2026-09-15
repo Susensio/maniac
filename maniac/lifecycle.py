@@ -142,7 +142,7 @@ def materialize_target(
     if durable_source:
         return src.absolute()
     target = config.output_dir / src.name
-    owner = _recorded_target_owner(target, entries, tool)
+    owner = _recorded_target_owner(target, entries, config, tool)
     if owner is not None:
         raise FileExistsError(
             f"The durable target '{target}' is already recorded by '{owner}'. "
@@ -158,17 +158,28 @@ def materialize_target(
     return target
 
 
+def _target_users(entries: dict[str, Entry], config: Config) -> dict[Path, list[str]]:
+    """Which tools record each MANIAC-owned durable target, keyed by absolute path.
+
+    One durable target can carry more than one entry, so every decision to
+    write or delete one asks this first.
+    """
+    users: dict[Path, list[str]] = {}
+    for tool, entry in entries.items():
+        if entry.target is None:
+            continue
+        target = manifest.expected_target_path(entry).absolute()
+        if manifest.is_maniac_owned_target(target, config):
+            users.setdefault(target, []).append(tool)
+    return users
+
+
 def _recorded_target_owner(
-    target: Path, entries: dict[str, Entry], tool: str
+    target: Path, entries: dict[str, Entry], config: Config, tool: str
 ) -> str | None:
     """Name of another tool whose entry already records `target`, or None."""
-    absolute = target.absolute()
-    for other, entry in entries.items():
-        if other == tool or entry.target is None:
-            continue
-        if manifest.expected_target_path(entry).absolute() == absolute:
-            return other
-    return None
+    users = _target_users(entries, config).get(target.absolute(), [])
+    return next((other for other in users if other != tool), None)
 
 
 def link_manpath_entry(path: Path, target: Path) -> None:
@@ -178,16 +189,30 @@ def link_manpath_entry(path: Path, target: Path) -> None:
     temporary_link.replace(path)
 
 
-def discard_durable_target(entry: Entry, config: Config) -> Path | None:
+def discard_durable_target(
+    entry: Entry, config: Config, entries: dict[str, Entry]
+) -> Path | None:
     """Remove the MANIAC-owned target an uninstalled entry leaves behind, if any.
 
     Returns the removed path, or None when nothing was MANIAC's to remove --
-    a provider-owned target is never deleted (ADR-0031).
+    a provider-owned target is never deleted (ADR-0031), and neither is one
+    another entry in `entries` still records.  `entries` holds what remains
+    after `entry`'s own record is forgotten; unlinking a shared target would
+    dangle the other entry's link and leave its checksum unverifiable, so it
+    could never be uninstalled either.
     """
     if entry.target is None or entry.provider_target:
         return None
     target = manifest.expected_target_path(entry)
     if not manifest.is_maniac_owned_target(target, config) or not target.exists():
+        return None
+    sharers = _target_users(entries, config).get(target.absolute(), [])
+    if sharers:
+        logger.info(
+            "Retained durable target still recorded elsewhere",
+            path=str(target),
+            tools=sharers,
+        )
         return None
     target.unlink()
     return target
@@ -291,14 +316,7 @@ def _migrate_install_root_links(
     entries: dict[str, Entry], config: Config, removed: list[Path] | None
 ) -> bool:
     """Replace safely identified durable vendor copies with direct provider links."""
-    target_users: dict[Path, int] = {}
-    for entry in entries.values():
-        if entry.target is None:
-            continue
-        target = manifest.expected_target_path(entry).absolute()
-        if manifest.is_maniac_owned_target(target, config):
-            target_users[target] = target_users.get(target, 0) + 1
-
+    target_users = _target_users(entries, config)
     migrated = False
     for tool, entry in entries.items():
         migrated_entry = _migrate_install_root_entry(
@@ -315,7 +333,7 @@ def _migrate_install_root_entry(
     tool: str,
     entry: Entry,
     config: Config,
-    target_users: dict[Path, int],
+    target_users: dict[Path, list[str]],
     removed: list[Path] | None,
 ) -> Entry | None:
     """Return a direct-provider entry after safely relinking one durable vendor copy."""
@@ -355,7 +373,7 @@ def _migrate_install_root_entry(
         )
         return None
 
-    if target_users[old_target.absolute()] == 1:
+    if target_users[old_target.absolute()] == [tool]:
         try:
             old_target.unlink()
             if removed is not None:

@@ -226,15 +226,22 @@ def _remove_recorded_manpage(
     tool_name: str,
     cfg: Config,
     *,
-    entry: Entry | None,
+    entries: dict[str, Entry],
     force: bool,
     removed_paths: list[Path],
 ) -> tuple[Entry | None, Path | None, KeptReason | None]:
-    """Remove a recorded link, returning its entry and why any page was kept."""
+    """Remove a recorded link, returning its entry and why any page was kept.
+
+    `entries` is the reconciled manifest and is mutated as records are
+    forgotten, so a later member of the same group sees what the earlier
+    ones already removed -- which is what decides whether a shared durable
+    target still has a user.
+    """
+    entry = entries.get(tool_name)
     if entry is None:
         return None, _foreign_manpage(tool_name, cfg), None
     if not _path_exists(entry.path):
-        manifest.forget(tool_name, config=cfg)
+        _forget(tool_name, entries, cfg)
         return entry, None, None
     kept = _kept_reason(entry, force=force)
     if kept is not None:
@@ -251,12 +258,18 @@ def _remove_recorded_manpage(
         logger.info("Restored vendor backup manpage", path=str(installed_file))
     else:
         removed_paths.append(installed_file)
-    manifest.forget(tool_name, config=cfg)
+    _forget(tool_name, entries, cfg)
 
-    discarded = lifecycle.discard_durable_target(entry, cfg)
+    discarded = lifecycle.discard_durable_target(entry, cfg, entries)
     if discarded is not None:
         removed_paths.append(discarded)
     return entry, None, None
+
+
+def _forget(tool_name: str, entries: dict[str, Entry], cfg: Config) -> None:
+    """Drop a tool's record from the manifest and from the reconciled snapshot."""
+    entries.pop(tool_name, None)
+    manifest.forget(tool_name, config=cfg)
 
 
 def _group_members(tool_name: str, entries: dict[str, Entry]) -> list[str]:
@@ -344,7 +357,7 @@ def uninstall_manpage(
         entry, member_foreign, member_kept = _remove_recorded_manpage(
             member,
             cfg,
-            entry=entries.get(member),
+            entries=entries,
             force=force,
             removed_paths=removed_paths,
         )
