@@ -22,11 +22,6 @@ These are findings the work surfaced and deliberately did not take; they are fir
   under `node (3 binaries)`, `pandoc-lua.1.gz` under `pandoc (3 binaries)`.
   Pre-existing and previously reachable only through a filtered view; grouping the default
   table made it the common case.
-- Decide what `maniac list` should print when stdout is not a terminal.
-  It currently renders the Tool column alone, because Rich falls back to 80 columns and the
-  other three are dropped; `--names` already exists for the bare-name pipeline case, so this
-  looks like a rendering accident rather than the intended pipe output.
-  Candidates are a plain-text width, a `--plain` mode, or `--json`.
 - Assert `lifecycle.link_manpath_entry`'s atomic replacement, not just its end state.
   Current tests pin that the manpath entry ends as the right symlink; nothing pins that a pre-existing entry is replaced atomically rather than unlinked and recreated.
   Needs an interleaving harness the project does not yet have.
@@ -171,6 +166,10 @@ These are findings the work surfaced and deliberately did not take; they are fir
   Debian provenance and local documentation are viable, but broad candidate enumeration and cross-package-manager support need batching and measured scope.
 
 ## Settled exclusions
+- Do not change what `maniac list` prints when stdout is not a terminal.
+  It renders the Tool column alone, because Rich falls back to 80 columns and drops the other three.
+  Decided 2026-09-15: bare names are the wanted pipe output, so the accident and the intent coincide.
+  A plain-text width, a `--plain` mode and `--json` were all considered and are not wanted now; revisit only if a real consumer needs the other columns.
 
 - Do not use linuxcommandlibrary.com: its generated, lossy, weakly attributed corpus is not a trustworthy documentation source.
 - Do not fetch man7.org, Debian/Ubuntu manpage mirrors, or GNU online manuals where local pages and Info already supply the same content.
