@@ -112,7 +112,7 @@ def test_uninstall_removes_a_concrete_provider_target_but_keeps_its_source(
 
     result = uninstall_manpage("tool", config=cfg)
 
-    assert result.modified_kept is None
+    assert result.modified_kept == []
     assert installed in result.removed
     assert not installed.exists()
     assert source.exists()
@@ -534,7 +534,7 @@ def test_uninstall_manpage_foreign_kept(tmp_path: Path) -> None:
     result = uninstall_manpage("tool", purge=False, config=cfg)
 
     assert result.foreign_kept == foreign_file
-    assert result.modified_kept is None
+    assert result.modified_kept == []
     assert foreign_file.exists()  # untouched
     assert stored_roff in result.removed
     assert not stored_roff.exists()
@@ -572,7 +572,7 @@ def test_uninstall_manpage_checksum_mismatch_is_kept_modified(tmp_path: Path) ->
 
     result = uninstall_manpage("tool", purge=False, config=cfg)
 
-    assert result.modified_kept == installed_file
+    assert result.modified_kept == [installed_file]
     assert result.foreign_kept is None
     assert result.removed == []
     assert (
@@ -601,7 +601,7 @@ def test_uninstall_manpage_force_overrides_checksum_mismatch(tmp_path: Path) -> 
     result = uninstall_manpage("tool", purge=False, force=True, config=cfg)
 
     assert result.foreign_kept is None
-    assert result.modified_kept is None
+    assert result.modified_kept == []
     assert installed_file in result.removed
     assert not installed_file.exists()
     assert manifest_module.lookup("tool", config=cfg) is None
@@ -640,7 +640,7 @@ def test_uninstall_preserves_retargeted_link_and_backup(tmp_path: Path) -> None:
 
     result = uninstall_manpage("tool", config=cfg)
 
-    assert result.modified_kept == installed
+    assert result.modified_kept == [installed]
     assert installed.resolve() == replacement
     assert backup.exists()
     assert manifest_module.lookup("tool", config=cfg) is not None
@@ -665,7 +665,7 @@ def test_uninstall_preserves_link_retargeted_through_an_alias(tmp_path: Path) ->
 
     result = uninstall_manpage("tool", config=cfg)
 
-    assert result.modified_kept == installed
+    assert result.modified_kept == [installed]
     assert installed.readlink() == alias
     assert manifest_module.lookup("tool", config=cfg) is not None
 
@@ -715,7 +715,7 @@ def test_uninstall_preserves_replaced_link(tmp_path: Path) -> None:
 
     result = uninstall_manpage("tool", config=cfg)
 
-    assert result.modified_kept == installed
+    assert result.modified_kept == [installed]
     assert installed.read_text(encoding="utf-8") == ".TH TOOL 1 user replacement"
     assert manifest_module.lookup("tool", config=cfg) is not None
 
@@ -736,7 +736,7 @@ def test_uninstall_preserves_dangling_owned_link(tmp_path: Path) -> None:
 
     result = uninstall_manpage("tool", config=cfg)
 
-    assert result.modified_kept == installed
+    assert result.modified_kept == [installed]
     assert installed.is_symlink()
     assert not installed.exists()
     assert manifest_module.lookup("tool", config=cfg) is not None
@@ -819,3 +819,143 @@ def test_round_trip_synthesis(tmp_path: Path) -> None:
     assert installed in result.removed
     assert not installed.exists()
     assert manifest_module.lookup("tool") is None
+
+
+_EZA_RELEASE = ("eza.1", "eza_colors.5", "eza_colors-explanation.5")
+
+
+def _eza_config(tmp_path: Path) -> Config:
+    return Config(
+        man_dir=tmp_path / "man" / "man1",
+        output_dir=tmp_path / "durable",
+        backup_dir=tmp_path / "backups",
+        intermediate_dir=tmp_path / "intermediate",
+        manifest_path=tmp_path / "state" / "installed.json",
+    )
+
+
+def _section_dir(cfg: Config, name: str) -> Path:
+    section = Path(name).suffix.removeprefix(".")
+    return cfg.man_dir if section == "1" else cfg.man_dir.parent / f"man{section}"
+
+
+def _install_eza_release(
+    tmp_path: Path, cfg: Config, *, vendor_pages: bool = False
+) -> dict[str, Path]:
+    """Install eza's three-page release archive as one group, keyed by manpage owner."""
+    source_dir = tmp_path / "release"
+    source_dir.mkdir()
+    installed: dict[str, Path] = {}
+    for name in _EZA_RELEASE:
+        source = source_dir / name
+        source.write_text(f".TH {name} maniac\n", encoding="utf-8")
+        dest_dir = _section_dir(cfg, name)
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        if vendor_pages:
+            (dest_dir / name).write_text(f"vendor {name}\n", encoding="utf-8")
+        owner = Path(name).with_suffix("").name
+        installed[owner] = install_manpage(
+            source,
+            owner,
+            Tier.REPOSITORY,
+            "eza-community/eza",
+            target_dir=dest_dir,
+            force=vendor_pages,
+            group="eza",
+            config=cfg,
+        )
+    return installed
+
+
+def test_install_records_every_release_page_under_one_group(tmp_path: Path) -> None:
+    """The three pages of one eza release share a group naming the primary."""
+    cfg = _eza_config(tmp_path)
+    _install_eza_release(tmp_path, cfg)
+
+    entries = manifest_module.load(cfg)
+    assert set(entries) == {"eza", "eza_colors", "eza_colors-explanation"}
+    assert {entry.group for entry in entries.values()} == {"eza"}
+
+
+def test_uninstalling_the_primary_removes_every_group_member(tmp_path: Path) -> None:
+    cfg = _eza_config(tmp_path)
+    installed = _install_eza_release(tmp_path, cfg)
+
+    result = uninstall_manpage("eza", config=cfg)
+
+    for path in installed.values():
+        assert path in result.removed
+        assert not path.exists()
+    assert manifest_module.load(cfg) == {}
+
+
+def test_uninstalling_a_companion_removes_every_group_member(tmp_path: Path) -> None:
+    """A companion reaches the whole unit, primary included -- the ambiguity
+    `source_uri` could not resolve."""
+    cfg = _eza_config(tmp_path)
+    installed = _install_eza_release(tmp_path, cfg)
+
+    result = uninstall_manpage("eza_colors", config=cfg)
+
+    for path in installed.values():
+        assert path in result.removed
+        assert not path.exists()
+    assert manifest_module.load(cfg) == {}
+
+
+def test_uninstalling_a_group_restores_every_displaced_vendor_page(
+    tmp_path: Path,
+) -> None:
+    cfg = _eza_config(tmp_path)
+    installed = _install_eza_release(tmp_path, cfg, vendor_pages=True)
+
+    result = uninstall_manpage("eza_colors-explanation", config=cfg)
+
+    for name, path in installed.items():
+        assert path not in result.removed
+        assert path.read_text(encoding="utf-8") == f"vendor {path.name}\n"
+        assert not (cfg.backup_dir / path.name).exists(), name
+    assert manifest_module.load(cfg) == {}
+
+
+def test_uninstalling_a_group_keeps_a_member_whose_bytes_changed(
+    tmp_path: Path,
+) -> None:
+    """Checksum protection is per member: one edited page stays, the rest go."""
+    cfg = _eza_config(tmp_path)
+    installed = _install_eza_release(tmp_path, cfg)
+    edited = manifest_module.lookup("eza_colors", config=cfg)
+    assert edited is not None and edited.target is not None
+    edited.target.write_text(".TH EZA_COLORS 5 edited elsewhere\n", encoding="utf-8")
+
+    result = uninstall_manpage("eza", config=cfg)
+
+    assert result.modified_kept == [installed["eza_colors"]]
+    assert installed["eza_colors"].exists()
+    assert manifest_module.lookup("eza_colors", config=cfg) is not None
+    assert not installed["eza"].exists()
+    assert not installed["eza_colors-explanation"].exists()
+    assert manifest_module.lookup("eza", config=cfg) is None
+
+
+def test_uninstalling_an_ungrouped_entry_touches_only_itself(tmp_path: Path) -> None:
+    """A page recorded with no group uninstalls alone, unchanged."""
+    cfg = _eza_config(tmp_path)
+    source_dir = tmp_path / "src"
+    source_dir.mkdir()
+    for name in ("alpha.1", "beta.1"):
+        source = source_dir / name
+        source.write_text(f".TH {name}\n", encoding="utf-8")
+        install_manpage(
+            source,
+            Path(name).stem,
+            Tier.REPOSITORY,
+            "owner/repo",
+            config=cfg,
+        )
+
+    result = uninstall_manpage("alpha", config=cfg)
+
+    assert cfg.man_dir / "alpha.1" in result.removed
+    assert (cfg.man_dir / "beta.1").exists()
+    assert manifest_module.lookup("beta", config=cfg) is not None

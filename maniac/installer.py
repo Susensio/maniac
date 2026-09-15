@@ -26,6 +26,7 @@ def install_manpage(
     source_uri: str | None = None,
     durable_source: bool = False,
     provider_target: bool = False,
+    group: str | None = None,
     config: Config | None = None,
 ) -> Path:
     """Link a manpath entry to a durable page with conflict guard and backup.
@@ -36,6 +37,10 @@ def install_manpage(
     without `--force`; anything else is foreign and still needs `--force`,
     which backs it up into `Config.backup_dir` rather than `man_dir` -- a
     non-manpage file has no business in a directory `man`/`mandb` scan.
+
+    `group` is the manifest key of the primary page of the upstream release
+    this page came in; every page of one multi-page release is installed
+    with the same value, which is what makes them uninstall together.
     """
     src = Path(source_file)
     if durable_source and tier is not Tier.INSTALL_ROOT:
@@ -103,6 +108,7 @@ def install_manpage(
                 source_uri=previous_entry.source_uri,
                 target=previous_entry.target,
                 provider_target=previous_entry.provider_target,
+                group=previous_entry.group,
                 config=cfg,
             )
         else:
@@ -119,6 +125,7 @@ def install_manpage(
         source_uri=source_uri,
         target=target,
         provider_target=provider_target,
+        group=group,
         config=cfg,
     )
     logger.info("Installed manpage", path=str(dest_file))
@@ -140,10 +147,12 @@ class UninstallResult:
     # below -- conflating the two told the caller a page MANIAC did install
     # was foreign, which it was not.
     foreign_kept: Path | None = None
-    # Set when the manifest entry exists but the page's bytes no longer match
-    # the checksum taken at install: ours, but changed since, so left in
-    # place unless `--force` overrides the check.
-    modified_kept: Path | None = None
+    # Every group member whose manifest entry exists but whose page's bytes no
+    # longer match the checksum taken at install: ours, but changed since, so
+    # left in place unless `--force` overrides the check. A list because one
+    # uninstall covers a whole upstream release and each member is checked
+    # on its own.
+    modified_kept: list[Path] = field(default_factory=list)
 
 
 def _foreign_manpage(tool_name: str, cfg: Config) -> Path | None:
@@ -198,6 +207,27 @@ def _remove_recorded_manpage(
     return entry, None, None
 
 
+def _group_members(tool_name: str, entries: dict[str, Entry]) -> list[str]:
+    """Return every manifest key uninstalling `tool_name` must reach, primary first.
+
+    Pages installed from one upstream release carry that release's primary
+    key in `group`, so any member reaches the whole unit -- uninstalling a
+    companion and uninstalling the primary name the same set.  A tool with
+    no entry, or an entry recorded before groups existed, is its own sole
+    member.
+    """
+    entry = entries.get(tool_name)
+    if entry is None or entry.group is None:
+        return [tool_name]
+    companions = sorted(
+        member
+        for member, other in entries.items()
+        if other.group == entry.group and member != entry.group
+    )
+    primary = [entry.group] if entry.group in entries else []
+    return primary + companions
+
+
 def _remove_orphaned_roff(
     tool_name: str, cfg: Config, entry: Entry | None, removed_paths: list[Path]
 ) -> None:
@@ -229,6 +259,10 @@ def uninstall_manpage(
 ) -> UninstallResult:
     """Uninstall a MANIAC-generated manpage and restore backups if present.
 
+    Uninstall operates on the whole upstream release, not one page: every
+    entry sharing `tool_name`'s group goes, each checksum-protected before
+    removal and each restoring its own displaced vendor backup.
+
     A recorded page whose current bytes no longer match the checksum taken
     at install is left in place unless `force` overrides the check,
     mirroring `install_manpage`'s own `--force` -- but reported via
@@ -240,26 +274,35 @@ def uninstall_manpage(
     """
     cfg = config or Config()
     removed_paths: list[Path] = []
-    # 1. Active installed manpage, wherever the manifest says MANIAC put it --
-    # the manifest's recorded path, not a `<tool>.1` guess, is what closes
-    # the compressed-page hole (a tier-1 `pandoc.1.gz` was previously
-    # unreachable here) (ADR-0017).
-    entry, foreign_kept, modified_kept = _remove_recorded_manpage(
-        tool_name,
-        cfg,
-        # removed_paths, not a bare reconcile: ADR-0032's migration can delete
-        # the superseded durable copy itself, and uninstall reports every path
-        # it removed.
-        entry=lifecycle.reconcile(cfg, removed=removed_paths).get(tool_name),
-        force=force,
-        removed_paths=removed_paths,
-    )
+    # removed_paths, not a bare reconcile: ADR-0032's migration can delete
+    # the superseded durable copy itself, and uninstall reports every path
+    # it removed.
+    entries = lifecycle.reconcile(cfg, removed=removed_paths)
 
-    # 2. XDG data storage (output_dir / <tool>.1)
-    _remove_orphaned_roff(tool_name, cfg, entry, removed_paths)
+    foreign_kept: Path | None = None
+    modified_kept: list[Path] = []
+    for member in _group_members(tool_name, entries):
+        # 1. Active installed manpage, wherever the manifest says MANIAC put
+        # it -- the manifest's recorded path, not a `<tool>.1` guess, is what
+        # closes the compressed-page hole (a tier-1 `pandoc.1.gz` was
+        # previously unreachable here) (ADR-0017).
+        entry, member_foreign, member_modified = _remove_recorded_manpage(
+            member,
+            cfg,
+            entry=entries.get(member),
+            force=force,
+            removed_paths=removed_paths,
+        )
+        if member_foreign is not None:
+            foreign_kept = member_foreign
+        if member_modified is not None:
+            modified_kept.append(member_modified)
 
-    if purge:
-        _purge_artifacts(tool_name, cfg, removed_paths)
+        # 2. XDG data storage (output_dir / <tool>.1)
+        _remove_orphaned_roff(member, cfg, entry, removed_paths)
+
+        if purge:
+            _purge_artifacts(member, cfg, removed_paths)
 
     return UninstallResult(
         removed=removed_paths, foreign_kept=foreign_kept, modified_kept=modified_kept

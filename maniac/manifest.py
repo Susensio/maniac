@@ -14,9 +14,11 @@ from typing import Any
 
 from .config import Config
 
-# Unbumped for the `version` field (ADR-0018): a mismatch here empties the
-# whole manifest on load, and an absent `version` already reads None on its
-# own -- no migration is needed to make a missing key readable.
+# Unbumped for the `version` and `group` fields (ADR-0018): a mismatch here
+# empties the whole manifest on load, and an absent key already reads as its
+# default on its own -- no migration is needed to make it readable.  Bumping
+# for an additive field would cost every existing installation its ownership
+# record and make MANIAC's own pages look foreign to the next install.
 SCHEMA_VERSION = 1
 _CHUNK_SIZE = 65_536
 
@@ -49,6 +51,12 @@ class Entry:
     safely convert.
     `provider_target` marks a validated provider-managed target whose bytes
     may advance independently of MANIAC.
+    `group` names the manifest key of the primary page of the upstream
+    release these pages arrived in, carried by every member including the
+    primary itself -- so membership and primacy are one field, and
+    uninstalling a companion reaches the same unit as uninstalling the
+    primary.  None on a page that arrived alone and on every entry written
+    before this field existed (ADR-0018).
     """
 
     path: Path
@@ -60,6 +68,7 @@ class Entry:
     source_uri: str | None = None
     target: Path | None = None
     provider_target: bool = False
+    group: str | None = None
 
 
 def checksum_of(path: str | Path) -> str:
@@ -117,6 +126,7 @@ def _entry_to_row(entry: Entry) -> dict[str, Any]:
         "source_uri": entry.source_uri,
         "target": str(entry.target) if entry.target is not None else None,
         "provider_target": entry.provider_target,
+        "group": entry.group,
     }
 
 
@@ -132,6 +142,7 @@ def _row_to_entry(row: Any) -> Entry | None:
         backup = row["backup"]
         raw_source_uri = row.get("source_uri")
         raw_target = row.get("target")
+        raw_group = row.get("group")
         source_uri = (
             raw_source_uri
             if isinstance(raw_source_uri, str)
@@ -150,6 +161,9 @@ def _row_to_entry(row: Any) -> Entry | None:
             source_uri=source_uri,
             target=Path(raw_target) if isinstance(raw_target, str) else None,
             provider_target=row.get("provider_target") is True,
+            # .get again (ADR-0018): a row written before groups existed must
+            # read as ungrouped, not fail to parse.
+            group=raw_group if isinstance(raw_group, str) else None,
         )
     except (KeyError, TypeError, ValueError):
         return None
@@ -215,6 +229,7 @@ def record(
     source_uri: str | None = None,
     target: Path | None = None,
     provider_target: bool = False,
+    group: str | None = None,
 ) -> None:
     """Record `tool`'s installed page and its expected manpath-link target."""
     entries = load(config)
@@ -228,6 +243,7 @@ def record(
         source_uri=source_uri,
         target=target,
         provider_target=provider_target,
+        group=group,
     )
     save(entries, config)
 

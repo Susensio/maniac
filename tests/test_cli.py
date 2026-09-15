@@ -543,11 +543,13 @@ def test_cli_uninstall_modified_kept(
     modified_path = tmp_path / "man1" / "mytool.1"
     monkeypatch.setattr(
         "maniac.installer.uninstall_manpage",
-        lambda tool, purge, force, config: UninstallResult(modified_kept=modified_path),
+        lambda tool, purge, force, config: UninstallResult(
+            modified_kept=[modified_path]
+        ),
     )
     outcome = compute_uninstall("mytool")
     assert outcome.result.foreign_kept is None
-    assert outcome.result.modified_kept == modified_path
+    assert outcome.result.modified_kept == [modified_path]
 
     res = runner.invoke(app, ["uninstall", "mytool"])
     assert res.exit_code == 0

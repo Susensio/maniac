@@ -261,3 +261,52 @@ def _tree_state(root: Path) -> dict[str, tuple[float, int]]:
         )
         for path in sorted(root.rglob("*"))
     }
+
+
+def test_record_lookup_round_trip_preserves_group(tmp_path: Path) -> None:
+    cfg = _config(tmp_path)
+
+    manifest.record(
+        "eza_colors",
+        tmp_path / "man5" / "eza_colors.5",
+        Tier.REPOSITORY,
+        "eza-community/eza",
+        "abc123",
+        config=cfg,
+        group="eza",
+    )
+
+    entry = manifest.lookup("eza_colors", config=cfg)
+    assert entry is not None
+    assert entry.group == "eza"
+
+
+def test_row_missing_group_key_loads_as_ungrouped(tmp_path: Path) -> None:
+    """A single-page row written before groups existed reads group=None (ADR-0018)."""
+    cfg = _config(tmp_path)
+    cfg.manifest_path.parent.mkdir(parents=True)
+    cfg.manifest_path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "entries": {
+                    "tool": {
+                        "path": "/x/tool.1",
+                        "tier": "repository",
+                        "source": "owner/tool",
+                        "checksum": "abc123",
+                        "backup": None,
+                        "version": "1.2.3",
+                        "target": "/durable/tool.1",
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    entry = manifest.lookup("tool", config=cfg)
+    assert entry is not None
+    assert entry.group is None
+    assert entry.version == "1.2.3"
+    assert entry.target == Path("/durable/tool.1")

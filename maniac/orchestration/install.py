@@ -198,6 +198,10 @@ def _try_repository(tool: ResolvedTool, *, force: bool) -> InstallOutcome | None
         return None
 
     installed_path: Path | None = None
+    # Every page of one release archive records the primary's owner as its
+    # group: they arrived together and uninstall together, which `source_uri`
+    # cannot say -- it names the asset, not the unit, and cannot mark a primary.
+    group = _manpage_owner(candidate.primary.path)
     for page in candidate.pages:
         installed = install_manpage(
             page.path,
@@ -208,6 +212,7 @@ def _try_repository(tool: ResolvedTool, *, force: bool) -> InstallOutcome | None
             force=force,
             version=inst.version,
             source_uri=page.uri,
+            group=group,
             config=cfg,
         )
         if page == candidate.primary:

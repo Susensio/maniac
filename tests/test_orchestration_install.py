@@ -355,6 +355,9 @@ def test_run_install_installs_all_anchored_release_manpages(
     assert companion_entry.path == companion_path
     assert companion_entry.backup == cfg.backup_dir / companion.name
     assert companion_entry.backup.read_text(encoding="utf-8") == "vendor page\n"
+    # One release, one uninstallable unit: both pages carry the primary's key.
+    assert primary_entry.group == "eza"
+    assert companion_entry.group == "eza"
 
 
 def test_generate_flag_skips_tiers_1_and_2(
