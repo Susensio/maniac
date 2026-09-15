@@ -63,18 +63,12 @@ These are findings the work surfaced and deliberately did not take; they are fir
   `__MISE_ORIG_PATH` records the entire pre-activation `$PATH` and is the plausible evidence source -- a live `mise activate bash` on this machine exports it alongside `MISE_SHELL`, `__MISE_EXE` and `__MISE_DIFF`.
   Using it is Mise-specific, so decide whether the fallback gets per-provider evidence adapters or stays generic.
   Shim resolution remains unexercised: this machine has no populated shim directory, and `mise which -C $HOME` is cwd-sensitive and needs ADR-0029-style root validation.
-- Run the structural link scan on every manifest load, not only on transaction open.
-  ADR-0046 built it on transaction open, which is write paths only -- so `maniac list` still never notices drift, and the scan runs when you install rather than when you look.
-  The reason given was ADR-0034's load purity, but that conflates two things: promotion mutates and cannot live in `load`, while the scan is `lstat`/`readlink` only and mutates nothing.
-  Measured at ~0.046 ms/entry against an 11.8 s `maniac list`, and it walks what MANIAC owns (2 entries here), not what is on `$PATH` (68 rows).
-  Divergence is the common failure, corruption the rare one: a page deleted by hand, `output_dir` or `backup_dir` cleaned, another user-level installer writing into `~/.local/share/man/man1`.
-  Unblocked: this waited on the list fact cache, which was abandoned (ADR-0045).
-- Repair an ADR-0032 migration interrupted between relinking and its manifest write.
-  `BUG:` marked at `maniac/lifecycle.py:276`.
-  The eligibility guard skips the entry forever and uninstall reports it MODIFIED; found by a Codex review of ADR-0046's work, whose four other findings were fixed.
-- Give a reconstructed entry an honest tier.
-  ADR-0046's recovery stamps `Tier.SYNTHESIS` with `source="reconstructed"`; the source is true and the tier is a guess, because `output_dir` holds tier-2 and tier-3 pages alike with nothing on disk separating them.
-  Either find evidence that separates them or admit an unknown tier.
+- Show manifest drift in the `list` table.
+  The structural link scan runs on every manifest read and `Read` carries a `links` map (ADR-0046), but nothing renders it, so `maniac list` still cannot say the manifest disagrees with the disk.
+  Divergence is the common failure and corruption the rare one: a page deleted by hand, `output_dir` or `backup_dir` cleaned, another user-level installer writing into `~/.local/share/man/man1`.
+  The scan costs ~0.046 ms/entry against an 11.8 s `list` and walks what MANIAC owns, not what is on `$PATH`.
+  Unblocked: this waited on the list fact cache, abandoned in ADR-0045.
+  Needs a column or a marker that does not widen the table -- `docs/BACKLOG.md` already carries two unresolved label and width items for it.
 - Reconstruct tier-1 direct provider links, or accept losing them.
   ADR-0046 refused: "not under `output_dir`" is not evidence of a provider root, and adopting one would let MANIAC replace and later remove a symlink the user owns.
   The cost is that a fully lost manifest loses tier-1 ownership entirely. Real evidence would be a target resolving beneath a live provider install root, which `sources.candidates` can already establish.
