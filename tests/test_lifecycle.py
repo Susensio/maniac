@@ -1,11 +1,12 @@
 """Filesystem transitions at the reconciliation seam (ADR-0017, ADR-0028, ADR-0032)."""
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
-from maniac import lifecycle, manifest
+from maniac import installer, lifecycle, manifest
 from maniac.config import Config
 from maniac.generation.compiler import build_provenance_header
 from maniac.lifecycle import list_installed_manpages, read_provenance_header
@@ -390,3 +391,81 @@ def test_list_installed_manpages(tmp_path: Path) -> None:
     assert len(items) == 1
     assert items[0]["tool"] == "tool1"
     assert items[0]["model"] == "Flash"
+
+
+def _durable_vendor_copy_fixture(tmp_path: Path) -> tuple[Config, Path, Path, Path]:
+    """Config, manpath entry, superseded durable copy and provider page of a recorded
+    INSTALL_ROOT entry whose vendor copy ADR-0032's migration can relink."""
+    root = tmp_path / "provider" / "tool" / "1.0.0"
+    provider_page = root / "share" / "man" / "man1" / "tool.1"
+    provider_page.parent.mkdir(parents=True)
+    provider_page.write_text(".TH TOOL 1\n", encoding="utf-8")
+    man_dir = tmp_path / "man1"
+    man_dir.mkdir()
+    installed = man_dir / "tool.1"
+    durable_target = tmp_path / "data" / "tool.1"
+    durable_target.parent.mkdir()
+    durable_target.write_text(
+        provider_page.read_text(encoding="utf-8"), encoding="utf-8"
+    )
+    installed.symlink_to(durable_target)
+    cfg = Config(
+        manifest_path=tmp_path / "state" / "installed.json",
+        man_dir=man_dir,
+        output_dir=durable_target.parent,
+    )
+    manifest.record(
+        "tool",
+        installed,
+        Tier.INSTALL_ROOT,
+        str(root),
+        manifest.checksum_of(durable_target),
+        target=durable_target,
+        config=cfg,
+    )
+    return cfg, installed, durable_target, provider_page
+
+
+def test_uninstall_reports_the_durable_copy_migration_deleted(tmp_path: Path) -> None:
+    """Uninstall's own reconcile relinks to the provider page and unlinks the
+    superseded copy before ownership is judged; that removal must be reported."""
+    cfg, _installed, durable_target, _provider_page = _durable_vendor_copy_fixture(
+        tmp_path
+    )
+
+    result = installer.uninstall_manpage("tool", config=cfg)
+
+    assert not durable_target.exists()
+    assert durable_target in result.removed
+
+
+def test_read_only_reconcile_reports_no_removals(tmp_path: Path) -> None:
+    """A caller with no removal report to write into passes no sink; the same
+    migration runs and nothing is reported anywhere."""
+    cfg, installed, durable_target, provider_page = _durable_vendor_copy_fixture(
+        tmp_path
+    )
+
+    entry = lifecycle.reconcile(config=cfg)["tool"]
+
+    assert installed.readlink() == provider_page.absolute()
+    assert entry.provider_target is True
+    assert not durable_target.exists()
+
+
+def test_reconcile_reports_no_removal_for_a_retained_shared_target(
+    tmp_path: Path,
+) -> None:
+    """A durable copy still serving a second entry is kept, so nothing is reported."""
+    cfg, _installed, durable_target, _provider_page = _durable_vendor_copy_fixture(
+        tmp_path
+    )
+    entries = manifest.load(cfg)
+    entries["other"] = replace(entries["tool"], path=cfg.man_dir / "other.1")
+    manifest.save(entries, cfg)
+
+    removed: list[Path] = []
+    lifecycle.reconcile(config=cfg, removed=removed)
+
+    assert durable_target.exists()
+    assert removed == []

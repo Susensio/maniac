@@ -247,7 +247,10 @@ def uninstall_manpage(
     entry, foreign_kept, modified_kept = _remove_recorded_manpage(
         tool_name,
         cfg,
-        entry=lifecycle.reconcile(cfg).get(tool_name),
+        # removed_paths, not a bare reconcile: ADR-0032's migration can delete
+        # the superseded durable copy itself, and uninstall reports every path
+        # it removed.
+        entry=lifecycle.reconcile(cfg, removed=removed_paths).get(tool_name),
         force=force,
         removed_paths=removed_paths,
     )

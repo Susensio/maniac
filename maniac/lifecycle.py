@@ -90,7 +90,9 @@ def list_installed_manpages(
     return sorted(results, key=lambda x: x["tool"])
 
 
-def reconcile(config: Config | None = None) -> dict[str, Entry]:
+def reconcile(
+    config: Config | None = None, *, removed: list[Path] | None = None
+) -> dict[str, Entry]:
     """Return every entry after bringing the manifest back in step with the disk.
 
     Seeds from provenance headers when no manifest file exists yet, and
@@ -100,13 +102,17 @@ def reconcile(config: Config | None = None) -> dict[str, Entry]:
 
     Write paths call this; `manifest.load` never does, so a read-only command
     observes the manifest exactly as persisted.
+
+    `removed` collects every path migration deletes, for a caller that reports
+    its own removals.  Omitting it deletes the same files silently -- what a
+    listing command wants, since it has no removal report to write into.
     """
     cfg = config or Config()
     seeding = not cfg.manifest_path.exists()
     entries = _seed_from_headers(cfg) if seeding else manifest.load(cfg)
 
     migrated = _migrate_links(entries, cfg)
-    if _migrate_install_root_links(entries, cfg):
+    if _migrate_install_root_links(entries, cfg, removed):
         migrated = True
     if seeding or migrated:
         manifest.save(entries, cfg)
@@ -241,7 +247,9 @@ def _migrate_links(entries: dict[str, Entry], config: Config) -> bool:
     return migrated
 
 
-def _migrate_install_root_links(entries: dict[str, Entry], config: Config) -> bool:
+def _migrate_install_root_links(
+    entries: dict[str, Entry], config: Config, removed: list[Path] | None
+) -> bool:
     """Replace safely identified durable vendor copies with direct provider links."""
     target_users: dict[Path, int] = {}
     for entry in entries.values():
@@ -253,7 +261,9 @@ def _migrate_install_root_links(entries: dict[str, Entry], config: Config) -> bo
 
     migrated = False
     for tool, entry in entries.items():
-        migrated_entry = _migrate_install_root_entry(tool, entry, config, target_users)
+        migrated_entry = _migrate_install_root_entry(
+            tool, entry, config, target_users, removed
+        )
         if migrated_entry is None:
             continue
         entries[tool] = migrated_entry
@@ -262,7 +272,11 @@ def _migrate_install_root_links(entries: dict[str, Entry], config: Config) -> bo
 
 
 def _migrate_install_root_entry(
-    tool: str, entry: Entry, config: Config, target_users: dict[Path, int]
+    tool: str,
+    entry: Entry,
+    config: Config,
+    target_users: dict[Path, int],
+    removed: list[Path] | None,
 ) -> Entry | None:
     """Return a direct-provider entry after safely relinking one durable vendor copy."""
     if (
@@ -304,6 +318,8 @@ def _migrate_install_root_entry(
     if target_users[old_target.absolute()] == 1:
         try:
             old_target.unlink()
+            if removed is not None:
+                removed.append(old_target)
         except OSError as error:
             logger.warning(
                 "Retained superseded durable vendor target",
