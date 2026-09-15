@@ -445,49 +445,46 @@ def test_expired_definitive_probe_miss_refreshes(
     source = RepoSource(name="tool", target="owner/tool", is_local=False)
 
     assert discover_repo_manpages(source, "tool", tmp_path, version="1.2.3") == []
-    now += cache._NEGATIVE_CACHE_TTL + 1
+    now += cache._DEFINITIVE_ABSENCE_TTL + 1
     assert discover_repo_manpages(source, "tool", tmp_path, version="1.2.3") == []
     assert calls == 2
 
 
-def test_release_metadata_revalidates_after_a_definitive_probe_miss_expires(
+def test_release_metadata_revalidates_after_positive_window_expires(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    """The positive revalidation window (release.py's caller) is independent
+    of, and longer than, the definitive-absence window: pin it directly
+    against `_download_cached_result` rather than through the full probe
+    stack, whose own (shorter) definitive-absence cache would otherwise
+    force a re-probe -- but not a metadata re-fetch -- partway through.
+    """
     now = 1000.0
-    metadata_calls = 0
+    calls = 0
 
     def download(url: str, cfg: object) -> bytes:
-        nonlocal metadata_calls
-        if url.startswith("https://api.github.com/"):
-            metadata_calls += 1
-            if metadata_calls == 1:
-                return b'{"assets": []}'
-            return (
-                b'{"assets": [{"name": "tool.1", '
-                b'"browser_download_url": "https://example.test/tool.1"}]}'
-            )
-        return b".TH TOOL 1\n"
+        nonlocal calls
+        calls += 1
+        return b"first" if calls == 1 else b"second"
 
     monkeypatch.setattr(cache.time, "time", lambda: now)
-    monkeypatch.setattr(repository, "_find_matching_tag", lambda *args: "v1.2.3")
-    monkeypatch.setattr(
-        repository,
-        "_discover_remote_manpage_result",
-        lambda *args: pages._ProbeResult([], True),
-    )
     monkeypatch.setattr(cache, "_download", download)
-    source = RepoSource(name="tool", target="owner/tool", is_local=False)
+    cfg = Config(cache_dir=tmp_path)
+    url = "https://api.github.com/repos/owner/tool/releases/tags/v1.2.3"
 
-    assert discover_repo_manpages(source, "tool", tmp_path, version="1.2.3") == []
-    now += cache._NEGATIVE_CACHE_TTL - 1
-    assert discover_repo_manpages(source, "tool", tmp_path, version="1.2.3") == []
-    assert metadata_calls == 1
+    def fetch() -> bytes | None:
+        return cache._download_cached_result(
+            url, tmp_path, cfg, max_age=cache._RELEASE_METADATA_REVALIDATION_TTL
+        )[0]
+
+    assert fetch() == b"first"
+    now += cache._RELEASE_METADATA_REVALIDATION_TTL - 1
+    assert fetch() == b"first"
+    assert calls == 1
 
     now += 2
-    found = discover_repo_manpages(source, "tool", tmp_path, version="1.2.3")
-
-    assert [page.name for page in found] == ["tool.1"]
-    assert metadata_calls == 2
+    assert fetch() == b"second"
+    assert calls == 2
 
 
 def test_transient_probe_failure_is_not_cached(
@@ -695,7 +692,7 @@ def test_expired_negative_tag_cache_refreshes(
     monkeypatch.setattr(repository, "_find_matching_tag", find_tag)
     cfg = Config(cache_dir=tmp_path)
     assert repository._find_matching_tag_cached(tmp_path, "url", "1.2.3", cfg) is None
-    now += cache._NEGATIVE_CACHE_TTL + 1
+    now += cache._DEFINITIVE_ABSENCE_TTL + 1
     assert repository._find_matching_tag_cached(tmp_path, "url", "1.2.3", cfg) is None
     assert lookups == 2
 
@@ -759,6 +756,35 @@ def test_definitively_missing_download_is_cached(
         is None
     )
     assert calls == 1
+
+
+def test_expired_definitively_missing_download_refreshes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from email.message import Message
+    from urllib.error import HTTPError
+
+    now = 1000.0
+    calls = 0
+
+    def missing(*args: object, **kwargs: object) -> object:
+        nonlocal calls
+        calls += 1
+        raise HTTPError("https://example.test/page", 404, "missing", Message(), None)
+
+    monkeypatch.setattr(cache.time, "time", lambda: now)
+    monkeypatch.setattr(cache, "_open", missing)
+    cfg = Config(cache_dir=tmp_path)
+    assert (
+        cache._download_cached_result("https://example.test/page", tmp_path, cfg)[0]
+        is None
+    )
+    now += cache._DEFINITIVE_ABSENCE_TTL + 1
+    assert (
+        cache._download_cached_result("https://example.test/page", tmp_path, cfg)[0]
+        is None
+    )
+    assert calls == 2
 
 
 @pytest.mark.parametrize("failure", ["url", "server"])

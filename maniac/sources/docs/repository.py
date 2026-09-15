@@ -13,7 +13,7 @@ from ...config import Config
 from ...logging import logger
 from ...models import DocFile, LocalRepoSource, RepoSource
 from . import cache, extraction, pages
-from .cache import _NEGATIVE_CACHE_TTL, _lookup_state
+from .cache import _DEFINITIVE_ABSENCE_TTL, _lookup_state
 from .extraction import DOC_DIRS
 from .pages import _Probe, _ProbeResult
 
@@ -120,7 +120,7 @@ def _find_matching_tag_cached_result(
             if (
                 tag is None
                 and isinstance(created, (int, float))
-                and time.time() - created < _NEGATIVE_CACHE_TTL
+                and time.time() - created < _DEFINITIVE_ABSENCE_TTL
             ):
                 return None, True
         _lookup_state.definitive = False

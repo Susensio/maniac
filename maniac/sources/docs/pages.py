@@ -21,7 +21,7 @@ from ...config import Config
 from ...models import RepoSource
 from ..manpages import REPO_MANPAGE_DIRS, is_help2man_content, manpage_documents
 from . import cache
-from .cache import _NEGATIVE_CACHE_TTL
+from .cache import _DEFINITIVE_ABSENCE_TTL
 
 _RELEASE_MEMBER_LIMIT = 2 * 1024 * 1024
 
@@ -216,7 +216,7 @@ def _read_probe_cache(
     if (
         pages == []
         and isinstance(created, (int, float))
-        and time.time() - created < _NEGATIVE_CACHE_TTL
+        and time.time() - created < _DEFINITIVE_ABSENCE_TTL
     ):
         return []
     path.unlink(missing_ok=True)

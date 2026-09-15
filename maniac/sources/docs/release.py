@@ -7,7 +7,7 @@ from io import BytesIO
 from pathlib import Path
 
 from . import cache, pages, repository
-from .cache import _NEGATIVE_CACHE_TTL
+from .cache import _RELEASE_METADATA_REVALIDATION_TTL
 from .pages import _RELEASE_MEMBER_LIMIT, _Probe, _ProbeResult
 
 _RELEASE_ARCHIVE_CANDIDATE_LIMIT = 256 * 1024
@@ -54,7 +54,7 @@ def _release_assets(probe: _Probe, tag: str) -> list[object] | _ProbeResult:
         f"https://api.github.com/repos/{probe.source.identity}/releases/tags/{tag}",
         probe.cache_dir,
         probe.cfg,
-        max_age=_NEGATIVE_CACHE_TTL,
+        max_age=_RELEASE_METADATA_REVALIDATION_TTL,
     )
     if metadata is None:
         return _ProbeResult([], definitive)

@@ -21,7 +21,11 @@ from ...github_token import resolve_github_token
 from ...logging import logger
 
 _RELEASE_ARCHIVE_LIMIT = 10 * 1024 * 1024
-_NEGATIVE_CACHE_TTL = 5 * 60
+# Definitive 404/410: absence of a release, tag or manpage set rarely changes.
+_DEFINITIVE_ABSENCE_TTL = 60 * 60
+# Release metadata already downloaded: only an asset added to a published
+# release invalidates it, which is rare enough to tolerate a long window.
+_RELEASE_METADATA_REVALIDATION_TTL = 24 * 60 * 60
 _CACHE_MAX_BYTES = 8 * 1024
 _cache_locks: dict[Path, threading.Lock] = {}
 _cache_locks_guard = threading.Lock()
@@ -128,7 +132,7 @@ def _download_cached_result(
 
     Release assets are immutable once named by a versioned URL.  GitHub's
     release metadata can gain assets after publication, so callers may give
-    that response a short revalidation window.
+    that response a revalidation window.
     """
     destination = cache_dir / "releases" / sha256(url.encode()).hexdigest()
     negative_path = _upstream_cache_path(cache_dir, "downloads", url)
@@ -151,7 +155,7 @@ def _download_cached_result(
         created = negative.get("created") if negative is not None else None
         if (
             isinstance(created, (int, float))
-            and time.time() - created < _NEGATIVE_CACHE_TTL
+            and time.time() - created < _DEFINITIVE_ABSENCE_TTL
         ):
             return None, True
         _lookup_state.definitive = False
