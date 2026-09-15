@@ -117,7 +117,7 @@ def test_compute_rows_reflects_a_manifest_write_between_invocations(
     )
 
     before = compute_rows(config=cfg)
-    manifest.record("tool", installed, Tier.INSTALL_ROOT, "src", "abc123", config=cfg)
+    record_entry("tool", installed, Tier.INSTALL_ROOT, "src", "abc123", config=cfg)
     after = compute_rows(config=cfg)
 
     assert before[0].source == PageSource.SYSTEM
