@@ -1,6 +1,6 @@
 # ADR-0034: Reconcile the manifest outside deserialization
 
-Status: Accepted
+Status: Accepted (reconciliation deleted 2026-09-15; the load-purity invariant stands)
 Date: 2026-09-14
 
 ## Context
@@ -35,3 +35,17 @@ Filesystem transitions are now tested at the lifecycle seam against real tempora
 
 `test_load_does_not_migrate_a_legacy_entry` pins the invariant by snapshotting every file's mtime and size beneath the temporary root and asserting `lookup()` leaves the tree untouched.
 That test is the decision; without it the migrations would drift back into load the next time a caller finds it convenient.
+
+## Postscript, 2026-09-15
+
+`lifecycle.reconcile` no longer exists.
+Its entire body was the two historical migrations, and ADR-0028's and ADR-0032's one-time
+conversions were deleted once the only manifest in existence was shown to have nothing for
+either to convert.
+
+What this ADR decided survives intact and is now structural rather than conventional:
+deserialization performs no filesystem mutation, so a read-only command observes the manifest
+exactly as persisted.
+`maniac list` could once rewrite the user's manpath as a side effect of reading JSON; with
+reconciliation gone there is no longer any code that could.
+The `_tree_state` test this ADR called "the decision" still pins it.

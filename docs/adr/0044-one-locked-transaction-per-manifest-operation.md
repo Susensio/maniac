@@ -11,8 +11,8 @@ A full map of the machinery then found the problem was worse than the four findi
 was written against.
 
 `record` and `forget` were each a complete load-modify-save.
-Installing a multi-page release performed one such cycle per page plus `reconcile`'s own, and
-nothing serialized them: two concurrent installs silently dropped one another's entries while
+Installing a multi-page release performed one such cycle per page plus the reconciliation
+pass's own, and nothing serialized them: two concurrent installs silently dropped one another's entries while
 both symlinks remained on disk.
 
 Worse, the manifest was written *last*.
@@ -34,8 +34,9 @@ None of these were pinned by any test, and nothing anywhere ran two writers.
 `manifest.transaction(config)` is a context manager that acquires an exclusive lock, reads
 once, promotes the checkpoint, yields a working set, and writes once on exit.
 An exception discards every mutation.
-`record` and `forget` are deleted rather than kept as wrappers; `lifecycle.reconcile` takes
-the transaction and mutates its live entries instead of loading and saving its own.
+`record` and `forget` are deleted rather than kept as wrappers.
+`lifecycle.reconcile` was changed to take the transaction and mutate its live entries; it has
+since been deleted outright, its body having been nothing but the historical migrations.
 
 This is what makes a multi-page release atomic — its entries land in one write or none — and
 it is what closes the concurrent lost-update window.
@@ -99,3 +100,10 @@ Link targets remain the ownership evidence.
 An ADR-0032 install-root migration interrupted between relinking and its manifest write stays
 stuck: the eligibility guard skips it forever and uninstall reports it MODIFIED.
 Marked `BUG:` at `lifecycle.py:276` and recorded in `docs/BACKLOG.md`.
+
+## Postscript, 2026-09-15
+
+`lifecycle.reconcile` and both historical migrations are deleted (`07b7f56`).
+The ADR-0032 defect recorded above went with the code that carried it, so the `BUG:` marker at
+`lifecycle.py:276` no longer exists.
+`lifecycle.py` fell from 327 lines to 120, losing the module's only file-deleting code paths.

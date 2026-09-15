@@ -646,9 +646,9 @@ class Transaction:
     in one write at exit, so a multi-page release is recorded whole or not
     at all, and a crash mid-operation cannot leave half its pages recorded.
 
-    An exception leaving the block discards every mutation, including
-    migrations `lifecycle.reconcile` made -- the manifest then still
-    describes the state the operation started from.
+    An exception leaving the block discards every mutation, including any
+    orphan adoption or recovery the open performed -- the manifest then
+    still describes the state the operation started from.
     """
 
     config: Config
