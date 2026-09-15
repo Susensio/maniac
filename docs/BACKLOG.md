@@ -68,29 +68,24 @@ These are findings the work surfaced and deliberately did not take; they are fir
   `__MISE_ORIG_PATH` records the entire pre-activation `$PATH` and is the plausible evidence source -- a live `mise activate bash` on this machine exports it alongside `MISE_SHELL`, `__MISE_EXE` and `__MISE_DIFF`.
   Using it is Mise-specific, so decide whether the fallback gets per-provider evidence adapters or stays generic.
   Shim resolution remains unexercised: this machine has no populated shim directory, and `mise which -C $HOME` is cwd-sensitive and needs ADR-0029-style root validation.
-- Rework the manifest pipeline to match ADR-0043: protected, checkpointed, explicitly read.
-  ADR-0043 settled what the manifest is -- an explicit human-readable record, the source of truth, neither an obscure SQLite table nor a convention encoded into filenames.
-  It did not build the protection that decision implies, and the whole load-modify-save pipeline wants rethinking rather than patching, because the pieces below interlock.
-  Durability: `save()` writes to `.tmp` and `replace()`s, which prevents a torn file on process crash, but never `fsync`s before the rename, so a power loss can land the rename ahead of the data.
-  Checkpointing: there is no retained previous generation, so no bad state can be stepped back from.
-  Reading: `load()` collapses file-absent, file-unparseable and unrecognized-version into `{}`, and reading zero entries must never be confused with knowing there are zero entries -- only the second authorizes treating an existing managed page as foreign.
-  Concurrency: split install into generate (unlocked, slow, parallel-safe across processes) and commit (locked, milliseconds), per ADR-0043; a page is materialized before the lock is wanted, so a failed commit costs a retried rename, never a repeated model call.
-  Recovery: `lifecycle._seed_from_headers` is reachable from `reconcile()` alone, gated on `not cfg.manifest_path.exists()`, on write paths only (`installer.py:52`, `:253`).
-  A deleted manifest reseeds; a corrupt one does not, because the file exists -- seeding is skipped, `load` returns `{}`, and the next `record()` writes a manifest holding only the tool just installed, replacing a salvageable file with a one-entry one while the rebuild code sits unreachable behind the existence check.
-  Widen that gate from "file absent" to "no usable entries recovered".
-  Recovery should also use the strongest evidence available, which is no longer the provenance header.
-  `_seed_from_headers`' docstring predates ADR-0028 and is stale: it says tiers 1 and 2 are unrecoverable because they copy their page verbatim and carry no header, but ADR-0028 made every manpath entry a symlink, so the target's location is the evidence -- under `output_dir` means MANIAC materialized it, under a provider root means tier 1 with `provider_target`.
-  Replace the header scan with a link-target scan and fix the docstring.
-  Reconstruction stays a best-effort last resort for a case that should never arrive, not a design the normal path leans on (ADR-0043).
-- Decide what `SCHEMA_VERSION` is for, or remove it.
-  Today it does exactly one thing: `load()` returns `{}` when the stored version is not equal to it.
-  That is a tripwire with no handler -- there is no migration function anywhere, so the field cannot be incremented without making every existing manifest read as empty and the next `install --force` back up MANIAC's own pages as foreign.
-  ADR-0042 declined to bump it on exactly that ground and shipped `group` additively instead, which is the second time additive-with-defaults was the answer (ADR-0018 was the first).
-  Three candidates.
-  Remove it, since two precedents now say the schema only grows additively and fields absent from older rows read as defaults.
-  Or keep it as a floor rather than an equality check -- `stored <= SCHEMA_VERSION` means "I can read this", which makes a *newer* manifest the only refusal case, and that refusal must be loud rather than an empty read.
-  Or keep it and write real migrations, a version-to-upgrade-function map, which only earns its cost when a genuinely breaking change arrives -- a renamed field or a changed type, not a new optional one.
-  Whichever wins, an unreadable manifest must never silently read as an empty one.
+- Run the structural link scan on every manifest load, not only on transaction open.
+  ADR-0044 built it on transaction open, which is write paths only -- so `maniac list` still never notices drift, and the scan runs when you install rather than when you look.
+  The reason given was ADR-0034's load purity, but that conflates two things: promotion mutates and cannot live in `load`, while the scan is `lstat`/`readlink` only and mutates nothing.
+  Measured at ~0.046 ms/entry against an 11.8 s `maniac list`, and it walks what MANIAC owns (2 entries here), not what is on `$PATH` (68 rows).
+  Divergence is the common failure, corruption the rare one: a page deleted by hand, `output_dir` or `backup_dir` cleaned, another user-level installer writing into `~/.local/share/man/man1`.
+  Note the seam with the list fact cache, whose reachability records take the manifest as an input.
+- Repair an ADR-0032 migration interrupted between relinking and its manifest write.
+  `BUG:` marked at `maniac/lifecycle.py:276`.
+  The eligibility guard skips the entry forever and uninstall reports it MODIFIED; found by a Codex review of ADR-0044's work, whose four other findings were fixed.
+- Give a reconstructed entry an honest tier.
+  ADR-0044's recovery stamps `Tier.SYNTHESIS` with `source="reconstructed"`; the source is true and the tier is a guess, because `output_dir` holds tier-2 and tier-3 pages alike with nothing on disk separating them.
+  Either find evidence that separates them or admit an unknown tier.
+- Reconstruct tier-1 direct provider links, or accept losing them.
+  ADR-0044 refused: "not under `output_dir`" is not evidence of a provider root, and adopting one would let MANIAC replace and later remove a symlink the user owns.
+  The cost is that a fully lost manifest loses tier-1 ownership entirely. Real evidence would be a target resolving beneath a live provider install root, which `sources.candidates` can already establish.
+- Correct `modified_kept`'s message for dangling and retargeted entries.
+  It says "its bytes have changed since"; nothing was edited in either case.
+  Same defect class as the `legacy_kept` split already made, one level down.
 - Decide whether uninstalling a companion page removes its whole group.
   ADR-0042 shipped symmetric removal: uninstalling any member takes the unit, so `maniac uninstall eza_colors` removes `eza.1` too.
   That is defensible -- they are one installation, and leaving the primary without its companions is the half-installed state grouping exists to prevent -- but it deletes a page the user did not name, which is the surprising half.

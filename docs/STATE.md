@@ -277,3 +277,51 @@ An equality check that degrades to `{}` cannot be incremented without making eve
 Whether it becomes a floor, gains real migrations, or is removed is open.
 
 Whether uninstalling a companion should remove its whole group is also open, with ADR-0042's symmetric removal as the shipped default.
+
+## Manifest machinery rework -- 2026-09-15
+
+Landed on `feature/manifest-rework`, branched from master so master stays a stable rebase target for the list fact cache.
+Verified at 668 tests, `just check` exit 0, pytest 24.05s -- faster than the 649-test baseline, so the new per-transaction scan costs nothing measurable.
+
+ADR-0043 settled what the manifest is; ADR-0044 settled how it is written.
+A full map of the machinery found considerably more than the four findings ADR-0043 was written against, which is why this was a rework rather than a set of patches.
+
+### What was wrong
+
+`record` and `forget` were each a full load-modify-save, one per page, unserialized: two concurrent installs silently dropped one another's entries while both symlinks stayed on disk.
+The manifest was written last, so every crash window left the filesystem ahead of it -- a crash between linking and recording made MANIAC's own page read as foreign, and the next install would back it up as the user's.
+`load` collapsed absent, unparseable and unknown-version into `{}`, and silently skipped malformed rows, so one bad row evaporated a tool's ownership and the next save made the loss permanent.
+Recovery could not fire in the case that needed it: `_seed_from_headers` was gated on the manifest *not existing*, so a corrupt one skipped it entirely.
+Three destructive decisions were independently wrong: `--force` could not uninstall a `target=None` entry, `materialize_target` clobbered another entry's durable target with no collision check, and `discard_durable_target` did not reference-count while its sibling migration did.
+
+### What landed
+
+`manifest.read()` returns `Read(entries, health, reason, lost)` over `Health.ABSENT/INTACT/DAMAGED`; salvaged rows come back whatever the health, and one lost key forces DAMAGED.
+`SCHEMA_VERSION` is a floor rather than an equality check, so it can finally be raised -- ADR-0018 and ADR-0042 both had to ship additively because raising it would have emptied every existing manifest.
+`save` and checkpoint promotion both `fsync` the temp file and the containing directory around the rename.
+`installed.json.good` is promoted on load before mutation, only when INTACT, so a damaged read leaves the last good copy untouched.
+
+`manifest.transaction()` replaces `record`/`forget` under `fcntl.flock` plus a process-local lock, following `sources/docs/cache.py`'s pattern with no new dependency.
+Two writes per operation replace N+1, a multi-page release lands in one write or none, and the lock spans the commit phase only so generation stays parallel-safe across processes.
+
+Recovery is layered: salvage the damaged file's parsed rows, then the checkpoint for tools it lost, then link-target reconstruction, with every adopted candidate validated against the disk.
+That validation resolves the one real ambiguity -- a checkpoint entry whose symlink is gone is a legitimate uninstall, not a rotted row, and must not be resurrected.
+`_seed_from_headers`, `list_installed_manpages` and `read_provenance_header` are deleted; ADR-0028 made the link target stronger evidence than the provenance header.
+
+`--force` now uninstalls a pre-ADR-0028 entry, and `legacy_kept` says "cannot be verified" rather than the false "its bytes have changed".
+`materialize_target` refuses a collision naming the owning tool; a rename was rejected because it would need a second identity scheme that four other call sites would have to honour.
+`_target_users` is now one implementation shared by both call sites.
+
+### Coverage
+
+The map found no crash window pinned by any test and nothing anywhere running two writers.
+Both gaps are closed: `test_two_concurrent_writers_neither_loses_the_other_entry`, plus five install/uninstall interruption tests, several verified to fail with their mechanism disabled.
+
+A Codex review of the recovery work returned five findings; four were confirmed defects and fixed -- unverified provider-root adoption, a lost backup on reconstruction, a `man1`-only scan, and `partition(".")` mis-keying dotted names.
+
+### Known gaps
+
+The scan runs on transaction open, not on every load, so `maniac list` still does not report drift.
+That is narrower than the decision taken and is in the backlog; the scan is read-only and does not conflict with ADR-0034's load purity.
+Tier-1 direct provider links are not reconstructible, reconstructed entries claim a tier they cannot know, and an ADR-0032 migration interrupted mid-relink stays stuck (`BUG:` at `lifecycle.py:276`).
+All four are in `docs/BACKLOG.md`.
