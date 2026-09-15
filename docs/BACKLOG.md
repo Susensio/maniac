@@ -68,7 +68,7 @@ These are findings the work surfaced and deliberately did not take; they are fir
   The reason given was ADR-0034's load purity, but that conflates two things: promotion mutates and cannot live in `load`, while the scan is `lstat`/`readlink` only and mutates nothing.
   Measured at ~0.046 ms/entry against an 11.8 s `maniac list`, and it walks what MANIAC owns (2 entries here), not what is on `$PATH` (68 rows).
   Divergence is the common failure, corruption the rare one: a page deleted by hand, `output_dir` or `backup_dir` cleaned, another user-level installer writing into `~/.local/share/man/man1`.
-  Note the seam with the list fact cache, whose reachability records take the manifest as an input.
+  Unblocked: this waited on the list fact cache, which was abandoned (ADR-0045).
 - Repair an ADR-0032 migration interrupted between relinking and its manifest write.
   `BUG:` marked at `maniac/lifecycle.py:276`.
   The eligibility guard skips the entry forever and uninstall reports it MODIFIED; found by a Codex review of ADR-0046's work, whose four other findings were fixed.
@@ -112,10 +112,11 @@ These are findings the work surfaced and deliberately did not take; they are fir
 
 ### List performance
 
-- Design a persistent `maniac list` local-fact cache.
-  Cache validated PATH inventory, provider detection, upstream identity, and manpage reachability separately rather than persisting raw rows.
-  Guard each record with its explicit filesystem and configuration fingerprints, retain the existing immutable versioned-upstream cache, and benchmark cold and warm listings plus corruption recovery and concurrent readers.
-  DiskCache is selected by ADR-0041; do not add `--no-cache` until the fact-cache contract is settled.
+- Do not reattempt a `maniac list` fact cache without reading ADR-0045 first.
+  Measured slower than no cache and abandoned; the implementation is archived unmerged at `feature/list-fact-cache` (`604581d`, measurements at `328c93c`).
+  Three of its findings are reasons a whole class of fact cannot be cached at all, not incidental details of that attempt.
+  ADR-0041 selected DiskCache for a store that no longer exists; ADR-0045 supersedes it.
+  `--no-cache` was deferred behind a contract that was never settled and is now moot.
 
 ### Maintainability
 
