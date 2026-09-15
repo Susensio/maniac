@@ -9,6 +9,7 @@ import fcntl
 import hashlib
 import json
 import os
+import re
 import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -18,6 +19,7 @@ from pathlib import Path
 from typing import Any
 
 from .config import Config
+from .logging import logger
 
 # A floor, not an equality: a manifest stamped at or below this version is
 # readable, so the field can be bumped whenever a change needs a reader to
@@ -29,6 +31,9 @@ SCHEMA_VERSION = 1
 _CHUNK_SIZE = 65_536
 _CHECKPOINT_SUFFIX = ".good"
 _LOCK_SUFFIX = ".lock"
+_RECONSTRUCTED_SOURCE = "reconstructed"
+_COMPRESSION_SUFFIXES = {".gz", ".bz2", ".xz", ".zst"}
+_SECTION_DIRECTORY = re.compile(r"man\d+")
 
 
 class Tier(Enum):
@@ -77,6 +82,17 @@ class Entry:
     target: Path | None = None
     provider_target: bool = False
     group: str | None = None
+
+
+def manpage_owner(page: Path) -> str:
+    """Return the manifest key a manpage filename belongs to.
+
+    The name without its section or compression suffix, so `foo.bar.1.gz`
+    is `foo.bar`.  Install derives a key this way and recovery has to agree,
+    or a recovered entry answers to a name nothing looks it up under.
+    """
+    path = page.with_suffix("") if page.suffix in _COMPRESSION_SUFFIXES else page
+    return path.with_suffix("").name
 
 
 def checksum_of(path: str | Path) -> str:
@@ -214,7 +230,11 @@ def read(config: Config | None = None) -> Read:
     beyond reading the manifest file.  Checkpoint promotion is `promote`,
     which write paths call explicitly (ADR-0034).
     """
-    path = _manifest_path(config)
+    return _read_document(_manifest_path(config))
+
+
+def _read_document(path: Path) -> Read:
+    """Return what one manifest-shaped document at `path` yields."""
     try:
         text = path.read_text(encoding="utf-8")
     except FileNotFoundError:
@@ -307,10 +327,9 @@ def promote(read_result: Read, config: Config | None = None) -> bool:
     checkpoint untouched -- that refusal is the whole mechanism, and it is
     what stops rot from overwriting the last known-good copy.
 
-    Callers hold the promotion decision, so a caller that has more evidence
-    than the read carries -- Phase 3's structural filesystem scan, which
-    lives in `lifecycle` -- gates the call rather than being threaded
-    through here.
+    Callers hold the promotion decision, so the structural scan that carries
+    more evidence than the read does -- an entry whose page vanished parses
+    perfectly -- gates the call rather than being threaded through here.
     """
     if read_result.health is not Health.INTACT:
         return False
@@ -321,6 +340,205 @@ def promote(read_result: Read, config: Config | None = None) -> bool:
 def lookup(tool: str, config: Config | None = None) -> Entry | None:
     """Return `tool`'s recorded entry, or None if MANIAC never installed it."""
     return load(config).get(tool)
+
+
+class Link(Enum):
+    """What the filesystem says about one entry's manpath link."""
+
+    # Manpath entry is a symlink to the recorded target, and it exists.
+    SOUND = "sound"
+    # Pre-ADR-0028 entry: no recorded target to check, page present.
+    UNVERIFIABLE = "unverifiable"
+    # Nothing there, not a symlink, pointed elsewhere, or dangling.
+    BROKEN = "broken"
+
+
+def link_state(entry: Entry) -> Link:
+    """Return what the disk says about one entry, by `lstat` and `readlink` only."""
+    if entry.target is None:
+        return Link.UNVERIFIABLE if entry.path.is_file() else Link.BROKEN
+    return Link.SOUND if is_expected_link(entry) else Link.BROKEN
+
+
+def scan(entries: dict[str, Entry]) -> dict[str, Link]:
+    """Return every entry's link state, keyed by tool.
+
+    Pure `lstat`/`readlink` over what MANIAC owns, never over `$PATH` --
+    microseconds per entry against an install's filesystem and network work,
+    so it runs on every transaction rather than behind a flag.
+    """
+    return {tool: link_state(entry) for tool, entry in entries.items()}
+
+
+@dataclass(frozen=True, slots=True)
+class Recovery:
+    """What rebuilding an untrustworthy manifest adopted, and from where.
+
+    `reconstructed` names the tools no record survived for.  `backup`,
+    `source_uri` and `version` have no filesystem evidence, so those entries
+    carry none: uninstalling one cannot restore a vendor page it displaced.
+    That loss is why the checkpoint is kept at all.
+    `dropped` names checkpoint records the disk refused -- the page is gone,
+    which is what a legitimate uninstall since the checkpoint looks like.
+    """
+
+    reason: str
+    salvaged: tuple[str, ...] = ()
+    from_checkpoint: tuple[str, ...] = ()
+    reconstructed: tuple[str, ...] = ()
+    dropped: tuple[str, ...] = ()
+
+
+def _entry_from_link(path: Path, config: Config) -> Entry | None:
+    """Return the entry one manpath symlink proves, or None if it proves nothing.
+
+    Only a target under `output_dir` proves anything: nothing else writes
+    there, so the page was materialized by an install whose record never
+    landed (ADR-0028).  A link to anywhere else is indistinguishable from
+    one the user made by hand, and adopting it would authorize MANIAC to
+    replace and remove a file it never installed -- so a tier-1 direct
+    provider link is not reconstructible, and its page reads as foreign
+    until a `--force` install records it again.
+    """
+    try:
+        target = path.readlink()
+        resolved = target if target.is_absolute() else path.parent / target
+        if not resolved.is_file() or not is_maniac_owned_target(resolved, config):
+            return None
+        checksum = checksum_of(resolved)
+    except OSError:
+        return None
+    # Backups are named after the entry they displaced, which is what makes
+    # one traceable without a journal (ADR-0043).
+    backup = config.backup_dir / path.name
+    return Entry(
+        path=path,
+        # `output_dir` holds tier-2 and tier-3 pages alike and the link
+        # cannot tell them apart. SYNTHESIS understates a repository page's
+        # provenance rather than overstating a synthesized one's.
+        tier=Tier.SYNTHESIS,
+        source=_RECONSTRUCTED_SOURCE,
+        checksum=checksum,
+        backup=backup if backup.is_file() else None,
+        target=target,
+    )
+
+
+def _section_directories(config: Config) -> list[Path]:
+    """Return every `manN` directory MANIAC installs into, `man_dir` included.
+
+    A multi-page release puts its section-5 and section-8 companions in
+    `man_dir`'s siblings, and a scan of `man1` alone would leave them
+    unrecoverable.
+    """
+    root = config.man_dir.parent
+    if not root.is_dir():
+        return []
+    return sorted(
+        directory
+        for directory in root.iterdir()
+        if directory.is_dir() and _SECTION_DIRECTORY.fullmatch(directory.name)
+    )
+
+
+def _linked_entries(config: Config) -> dict[str, Entry]:
+    """Return an entry for every manpath symlink whose target proves MANIAC linked it."""
+    entries: dict[str, Entry] = {}
+    for directory in _section_directories(config):
+        for path in sorted(directory.iterdir()):
+            if not path.is_symlink():
+                continue
+            entry = _entry_from_link(path, config)
+            if entry is not None:
+                entries[manpage_owner(path)] = entry
+    return entries
+
+
+def _adopt_orphans(entries: dict[str, Entry], config: Config) -> tuple[str, ...]:
+    """Adopt every unrecorded manpath symlink into `output_dir`, naming what was adopted.
+
+    An install that crashed between linking and recording leaves exactly
+    this, and leaving it unrecorded makes MANIAC's own page read as foreign
+    on the next install of that tool.
+    """
+    recorded = {entry.path.absolute() for entry in entries.values()}
+    adopted = {
+        tool: entry
+        for tool, entry in _linked_entries(config).items()
+        if tool not in entries and entry.path.absolute() not in recorded
+    }
+    entries.update(adopted)
+    return tuple(sorted(adopted))
+
+
+def _recover(current: Read, config: Config) -> tuple[dict[str, Entry], Recovery]:
+    """Rebuild a manifest from every source with evidence, strongest first.
+
+    Salvaged rows win: they are the most recent state, and `backup`,
+    `source_uri` and `version` exist nowhere else.  The checkpoint fills
+    tools the damaged file lost, but only where the disk still agrees with
+    it -- a checkpoint record whose page is gone is an uninstall that
+    happened after the checkpoint, and resurrecting it would authorize
+    MANIAC to delete a page it no longer owns.  The link scan fills whatever
+    neither supplies.
+    """
+    entries = dict(current.entries)
+    checkpoint = _read_document(checkpoint_path(config))
+    adopted: list[str] = []
+    dropped: list[str] = []
+    for tool, entry in sorted(checkpoint.entries.items()):
+        if tool in entries:
+            continue
+        if link_state(entry) is Link.BROKEN:
+            dropped.append(tool)
+            continue
+        entries[tool] = entry
+        adopted.append(tool)
+
+    reconstructed: list[str] = []
+    recorded = {entry.path.absolute() for entry in entries.values()}
+    for tool, entry in sorted(_linked_entries(config).items()):
+        # One manpath path has one owner: a link a surviving record already
+        # names is that record's, whatever key the filename suggests.
+        if tool in entries or entry.path.absolute() in recorded:
+            continue
+        entries[tool] = entry
+        reconstructed.append(tool)
+
+    return entries, Recovery(
+        reason=current.reason or _damage_reason(current),
+        salvaged=tuple(sorted(current.entries)),
+        from_checkpoint=tuple(adopted),
+        reconstructed=tuple(reconstructed),
+        dropped=tuple(dropped),
+    )
+
+
+def _damage_reason(current: Read) -> str:
+    """Name the damage when the document itself parsed."""
+    if current.health is Health.ABSENT:
+        return "no manifest file"
+    return f"unreadable rows: {', '.join(sorted(current.lost))}"
+
+
+def _report_recovery(recovery: Recovery, config: Config) -> None:
+    """Log what recovery adopted, and per tool what it could not recover."""
+    logger.warning(
+        "Rebuilt an untrustworthy manifest",
+        reason=recovery.reason,
+        manifest=str(_manifest_path(config)),
+        salvaged=list(recovery.salvaged),
+        from_checkpoint=list(recovery.from_checkpoint),
+        reconstructed=list(recovery.reconstructed),
+        dropped=list(recovery.dropped),
+    )
+    for tool in recovery.reconstructed:
+        logger.warning(
+            "Reconstructed a manifest entry from its link alone",
+            tool=tool,
+            unrecoverable=["backup", "source_uri", "version"],
+            consequence="uninstall cannot restore a vendor page this page displaced",
+        )
 
 
 _transaction_locks: dict[Path, threading.Lock] = {}
@@ -368,6 +586,7 @@ class Transaction:
     read: Read
     entries: dict[str, Entry]
     dirty: bool = False
+    recovery: Recovery | None = None
 
     def put(self, tool: str, entry: Entry) -> None:
         """Record `entry` as `tool`'s, replacing any entry it already had."""
@@ -392,8 +611,27 @@ def transaction(config: Config | None = None) -> Iterator[Transaction]:
     cfg = config or Config()
     with _exclusive(cfg):
         current = read(cfg)
-        promote(current, cfg)
-        txn = Transaction(config=cfg, read=current, entries=dict(current.entries))
+        states = scan(current.entries)
+        recovery: Recovery | None = None
+        if current.health is Health.INTACT:
+            # A sound scan is the second half of the promotion test: rows
+            # that parse but name pages that are gone are not a good copy.
+            if Link.BROKEN not in states.values():
+                promote(current, cfg)
+            entries = dict(current.entries)
+        else:
+            entries, recovery = _recover(current, cfg)
+            _report_recovery(recovery, cfg)
+        adopted = _adopt_orphans(entries, cfg)
+        if adopted:
+            logger.warning("Adopted unrecorded manpath links", tools=list(adopted))
+        txn = Transaction(
+            config=cfg,
+            read=current,
+            entries=entries,
+            dirty=recovery is not None or bool(adopted),
+            recovery=recovery,
+        )
         yield txn
         if txn.dirty:
             save(txn.entries, cfg)

@@ -4,6 +4,7 @@ import time
 from pathlib import Path
 
 import pytest
+from structlog.testing import capture_logs
 
 from maniac import manifest
 from maniac.config import Config
@@ -437,12 +438,14 @@ def test_damaged_read_leaves_an_existing_checkpoint_byte_identical(
     assert checkpoint.read_bytes() == before
 
 
-def test_record_promotes_the_manifest_it_read_before_mutating_it(
+def test_a_write_promotes_the_manifest_it_read_before_mutating_it(
     tmp_path: Path,
 ) -> None:
     """The checkpoint holds the generation before the write, not the one after."""
     cfg = _config(tmp_path)
-    record_entry("first", tmp_path / "first.1", Tier.SYNTHESIS, "m", "a", config=cfg)
+    first = tmp_path / "first.1"
+    first.write_text(".TH FIRST 1", encoding="utf-8")
+    record_entry("first", first, Tier.SYNTHESIS, "m", "a", config=cfg)
     record_entry("second", tmp_path / "sec.1", Tier.SYNTHESIS, "m", "b", config=cfg)
 
     checkpointed = manifest.read(
@@ -568,3 +571,338 @@ def test_a_failed_transaction_writes_nothing(tmp_path: Path) -> None:
         raise RuntimeError("install failed after linking")
 
     assert cfg.manifest_path.read_bytes() == before
+
+
+def _managed_link(
+    cfg: Config, tool: str, text: str = ".TH TOOL 1"
+) -> tuple[Path, Path]:
+    """Create a MANIAC-shaped installation on disk: durable target plus manpath link."""
+    cfg.output_dir.mkdir(parents=True, exist_ok=True)
+    cfg.man_dir.mkdir(parents=True, exist_ok=True)
+    target = cfg.output_dir / f"{tool}.1"
+    target.write_text(text, encoding="utf-8")
+    link = cfg.man_dir / f"{tool}.1"
+    link.symlink_to(target)
+    return link, target
+
+
+def _linked_config(tmp_path: Path) -> Config:
+    return Config(
+        man_dir=tmp_path / "man1",
+        output_dir=tmp_path / "durable",
+        backup_dir=tmp_path / "backup",
+        manifest_path=tmp_path / "state" / "installed.json",
+    )
+
+
+def test_a_broken_link_blocks_promotion_of_an_otherwise_intact_manifest(
+    tmp_path: Path,
+) -> None:
+    """Rows that parse but name a page that is gone are not a known-good copy."""
+    cfg = _linked_config(tmp_path)
+    link, target = _managed_link(cfg, "tool")
+    record_entry(
+        "tool",
+        link,
+        Tier.SYNTHESIS,
+        "model",
+        manifest.checksum_of(target),
+        target=target,
+        config=cfg,
+    )
+    checkpoint = manifest.checkpoint_path(cfg)
+    with manifest.transaction(config=cfg):
+        pass
+    good = checkpoint.read_bytes()
+
+    link.unlink()
+    with manifest.transaction(config=cfg) as txn:
+        assert txn.read.health is manifest.Health.INTACT
+
+    assert checkpoint.read_bytes() == good
+
+
+def test_a_damaged_manifest_is_recovered_rather_than_overwritten(
+    tmp_path: Path,
+) -> None:
+    """The bug this closes: one unreadable row used to become a one-entry manifest."""
+    cfg = _linked_config(tmp_path)
+    link, target = _managed_link(cfg, "kept")
+    _write_manifest(
+        cfg,
+        {
+            "version": 1,
+            "entries": {
+                "kept": {
+                    **_GOOD_ROW,
+                    "path": str(link),
+                    "target": str(target),
+                    "version": "1.2.3",
+                },
+                "rotted": {**_GOOD_ROW, "tier": "not-a-real-tier"},
+            },
+        },
+    )
+
+    with manifest.transaction(config=cfg) as txn:
+        assert txn.recovery is not None
+        assert txn.recovery.salvaged == ("kept",)
+
+    entries = manifest.load(config=cfg)
+    assert set(entries) == {"kept"}
+    assert entries["kept"].version == "1.2.3"
+
+
+def test_a_damaged_read_leaves_the_checkpoint_byte_identical(tmp_path: Path) -> None:
+    """Recovery must never promote what it rebuilt over the last good generation."""
+    cfg = _linked_config(tmp_path)
+    link, target = _managed_link(cfg, "tool")
+    record_entry(
+        "tool",
+        link,
+        Tier.SYNTHESIS,
+        "model",
+        manifest.checksum_of(target),
+        target=target,
+        config=cfg,
+    )
+    with manifest.transaction(config=cfg):
+        pass
+    checkpoint = manifest.checkpoint_path(cfg)
+    before = checkpoint.read_bytes()
+
+    cfg.manifest_path.write_text("{not json", encoding="utf-8")
+    with manifest.transaction(config=cfg) as txn:
+        assert txn.recovery is not None
+
+    assert checkpoint.read_bytes() == before
+
+
+def test_salvage_beats_the_checkpoint_for_the_same_tool(tmp_path: Path) -> None:
+    """A row that still parses is the most recent state, whatever the checkpoint holds."""
+    cfg = _linked_config(tmp_path)
+    link, target = _managed_link(cfg, "tool")
+    manifest.save(
+        {
+            "tool": manifest.Entry(
+                path=link,
+                tier=Tier.SYNTHESIS,
+                source="model",
+                checksum="abc123",
+                target=target,
+                version="1.0.0",
+            )
+        },
+        Config(manifest_path=manifest.checkpoint_path(cfg)),
+    )
+    _write_manifest(
+        cfg,
+        {
+            "version": 1,
+            "entries": {
+                "tool": {
+                    **_GOOD_ROW,
+                    "path": str(link),
+                    "target": str(target),
+                    "version": "2.0.0",
+                },
+                "rotted": {**_GOOD_ROW, "tier": "not-a-real-tier"},
+            },
+        },
+    )
+
+    with manifest.transaction(config=cfg) as txn:
+        assert txn.recovery is not None
+        assert txn.recovery.from_checkpoint == ()
+
+    assert manifest.load(config=cfg)["tool"].version == "2.0.0"
+
+
+def test_the_checkpoint_beats_reconstruction_for_a_tool_the_damage_lost(
+    tmp_path: Path,
+) -> None:
+    """Only the checkpoint holds `backup`, `source_uri` and `version` after a rot."""
+    cfg = _linked_config(tmp_path)
+    link, target = _managed_link(cfg, "tool")
+    backup = cfg.backup_dir / "tool.1"
+    backup.parent.mkdir(parents=True)
+    backup.write_text(".TH TOOL 1 vendor", encoding="utf-8")
+    manifest.save(
+        {
+            "tool": manifest.Entry(
+                path=link,
+                tier=Tier.REPOSITORY,
+                source="owner/tool",
+                checksum=manifest.checksum_of(target),
+                backup=backup,
+                version="1.2.3",
+                source_uri="https://example.invalid/tool.1",
+                target=target,
+            )
+        },
+        Config(manifest_path=manifest.checkpoint_path(cfg)),
+    )
+    cfg.manifest_path.write_text("{not json", encoding="utf-8")
+
+    with manifest.transaction(config=cfg) as txn:
+        assert txn.recovery is not None
+        assert txn.recovery.from_checkpoint == ("tool",)
+        assert txn.recovery.reconstructed == ()
+
+    recovered = manifest.load(config=cfg)["tool"]
+    assert recovered.backup == backup
+    assert recovered.version == "1.2.3"
+    assert recovered.source_uri == "https://example.invalid/tool.1"
+    assert recovered.tier is Tier.REPOSITORY
+
+
+def test_a_checkpoint_entry_whose_link_is_gone_is_not_resurrected(
+    tmp_path: Path,
+) -> None:
+    """An uninstall after the checkpoint looks exactly like a rotted row -- the disk decides."""
+    cfg = _linked_config(tmp_path)
+    link, target = _managed_link(cfg, "tool")
+    manifest.save(
+        {
+            "tool": manifest.Entry(
+                path=link,
+                tier=Tier.SYNTHESIS,
+                source="model",
+                checksum=manifest.checksum_of(target),
+                target=target,
+            )
+        },
+        Config(manifest_path=manifest.checkpoint_path(cfg)),
+    )
+    link.unlink()
+    target.unlink()
+    cfg.manifest_path.write_text("{not json", encoding="utf-8")
+
+    with manifest.transaction(config=cfg) as txn:
+        assert txn.recovery is not None
+        assert txn.recovery.dropped == ("tool",)
+
+    assert manifest.load(config=cfg) == {}
+
+
+def test_reconstruction_reports_per_tool_what_it_could_not_recover(
+    tmp_path: Path,
+) -> None:
+    """Reconstruction cannot restore a displaced vendor page, and must say so."""
+    cfg = _linked_config(tmp_path)
+    _, target = _managed_link(cfg, "tool")
+    cfg.manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.manifest_path.write_text("{not json", encoding="utf-8")
+
+    with capture_logs() as logs, manifest.transaction(config=cfg) as txn:
+        assert txn.recovery is not None
+        assert txn.recovery.reconstructed == ("tool",)
+
+    reported = [entry for entry in logs if entry.get("tool") == "tool"]
+    assert reported and reported[0]["unrecoverable"] == [
+        "backup",
+        "source_uri",
+        "version",
+    ]
+    recovered = manifest.load(config=cfg)["tool"]
+    assert recovered.target == target
+    assert recovered.backup is None
+    assert recovered.version is None
+    assert recovered.source_uri is None
+
+
+def test_an_unrecorded_link_into_output_dir_is_adopted(tmp_path: Path) -> None:
+    """A crash between linking and recording leaves a page MANIAC owns and forgot."""
+    cfg = _linked_config(tmp_path)
+    record_entry(
+        "other", cfg.man_dir / "other.1", Tier.SYNTHESIS, "model", "abc123", config=cfg
+    )
+    link, target = _managed_link(cfg, "tool")
+
+    with manifest.transaction(config=cfg) as txn:
+        assert txn.read.health is manifest.Health.INTACT
+
+    adopted = manifest.load(config=cfg)["tool"]
+    assert adopted.path == link
+    assert adopted.target == target
+    assert adopted.checksum == manifest.checksum_of(target)
+
+
+def test_a_link_outside_output_dir_is_never_adopted(tmp_path: Path) -> None:
+    """A symlink into a vendor directory is indistinguishable from the user's own.
+
+    Adopting one would let a first install replace a page MANIAC never
+    installed without `--force`, and later authorize removing it.  It stays
+    unadopted whether the manifest is healthy or being rebuilt.
+    """
+    cfg = _linked_config(tmp_path)
+    vendor = tmp_path / "vendor" / "tool.1"
+    vendor.parent.mkdir(parents=True)
+    vendor.write_text(".TH TOOL 1 vendor", encoding="utf-8")
+    cfg.man_dir.mkdir(parents=True)
+    (cfg.man_dir / "tool.1").symlink_to(vendor)
+
+    with manifest.transaction(config=cfg) as txn:
+        assert txn.recovery is not None
+
+    assert manifest.load(config=cfg) == {}
+
+    record_entry(
+        "other", cfg.man_dir / "other.1", Tier.SYNTHESIS, "model", "abc123", config=cfg
+    )
+    with manifest.transaction(config=cfg) as txn:
+        assert txn.read.health is manifest.Health.INTACT
+
+    assert set(manifest.load(config=cfg)) == {"other"}
+
+
+def test_reconstruction_reclaims_the_backup_named_after_the_page(
+    tmp_path: Path,
+) -> None:
+    """A backup names the entry it displaced, so a rebuilt entry can still find it."""
+    cfg = _linked_config(tmp_path)
+    link, _ = _managed_link(cfg, "tool")
+    cfg.backup_dir.mkdir(parents=True)
+    backup = cfg.backup_dir / "tool.1"
+    backup.write_text(".TH TOOL 1 vendor", encoding="utf-8")
+
+    with manifest.transaction(config=cfg) as txn:
+        assert txn.recovery is not None
+        assert txn.recovery.reconstructed == ("tool",)
+
+    recovered = manifest.load(config=cfg)["tool"]
+    assert recovered.path == link
+    assert recovered.backup == backup
+
+
+def test_recovery_reaches_companion_pages_in_other_section_directories(
+    tmp_path: Path,
+) -> None:
+    """A release's section-5 companion lives in `man_dir`'s sibling, not in it."""
+    cfg = _linked_config(tmp_path)
+    _managed_link(cfg, "eza")
+    companion_dir = cfg.man_dir.parent / "man5"
+    companion_dir.mkdir(parents=True)
+    companion_target = cfg.output_dir / "eza_colors.5"
+    companion_target.write_text(".TH EZA_COLORS 5", encoding="utf-8")
+    (companion_dir / "eza_colors.5").symlink_to(companion_target)
+
+    with manifest.transaction(config=cfg) as txn:
+        assert txn.recovery is not None
+
+    assert set(manifest.load(config=cfg)) == {"eza", "eza_colors"}
+
+
+def test_a_recovered_key_keeps_every_dot_but_the_section(tmp_path: Path) -> None:
+    """Install keys `foo.bar.1` as `foo.bar`; a key recovery invents answers to nothing."""
+    cfg = _linked_config(tmp_path)
+    cfg.output_dir.mkdir(parents=True)
+    cfg.man_dir.mkdir(parents=True)
+    target = cfg.output_dir / "foo.bar.1"
+    target.write_text(".TH FOO.BAR 1", encoding="utf-8")
+    (cfg.man_dir / "foo.bar.1").symlink_to(target)
+
+    with manifest.transaction(config=cfg):
+        pass
+
+    assert set(manifest.load(config=cfg)) == {"foo.bar"}

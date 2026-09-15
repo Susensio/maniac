@@ -9,7 +9,6 @@ import pytest
 from maniac import installer, lifecycle, manifest
 from maniac.config import Config
 from maniac.generation.compiler import build_provenance_header
-from maniac.lifecycle import list_installed_manpages, read_provenance_header
 from maniac.manifest import Entry, Tier
 
 from .manifest_support import reconcile, record_entry
@@ -62,30 +61,12 @@ def test_migration_ignores_a_header_carrying_page_only_in_output_dir(
     assert reconcile(config=cfg) == {}
 
 
-def test_migration_seeds_and_links_a_header_carrying_page(tmp_path: Path) -> None:
-    """First load migrates a header-seeded page to its durable target."""
-    man_dir = tmp_path / "man1"
-    man_dir.mkdir(parents=True)
-    header = build_provenance_header("tool", model="Gemini 3.7 Flash")
-    (man_dir / "tool.1").write_text(header + ".TH TOOL 1", encoding="utf-8")
-
-    cfg = Config(manifest_path=tmp_path / "state" / "installed.json", man_dir=man_dir)
-    entries = reconcile(config=cfg)
-
-    assert set(entries) == {"tool"}
-    assert entries["tool"].tier is Tier.SYNTHESIS
-    assert entries["tool"].source == "Gemini 3.7 Flash"
-    assert entries["tool"].path == man_dir / "tool.1"
-    assert entries["tool"].checksum == manifest.checksum_of(man_dir / "tool.1")
-    assert entries["tool"].target == cfg.output_dir / "tool.1"
-    assert (man_dir / "tool.1").is_symlink()
-    assert (man_dir / "tool.1").resolve() == entries["tool"].target
-    # Migration persists so it never reruns.
-    assert cfg.manifest_path.exists()
-
-
 def test_migration_does_not_recover_headerless_tier1_pages(tmp_path: Path) -> None:
-    """Tier-1/2 pages carry nothing recoverable -- accepted cost of the migration (ADR-0017)."""
+    """A plain page is not a managed one: only a symlink MANIAC linked is adopted.
+
+    ADR-0028 made every managed manpath entry a symlink, so a regular file
+    is evidence of nothing, whatever its bytes say.
+    """
     man_dir = tmp_path / "man1"
     man_dir.mkdir(parents=True)
     (man_dir / "vendor.1").write_text(".TH VENDOR 1 no header", encoding="utf-8")
@@ -230,12 +211,12 @@ def test_migration_retains_a_modified_vendor_copy(tmp_path: Path) -> None:
 
 
 def test_migration_relocates_a_stray_backup_out_of_man_dir(tmp_path: Path) -> None:
-    """A `.maniac_bak` sibling of a header-carrying page is moved into `backup_dir`
+    """A `.maniac_bak` sibling of a recorded page is moved into `backup_dir`
     and attributed to that page's manifest entry, instead of left in `man_dir`."""
     man_dir = tmp_path / "man1"
     man_dir.mkdir(parents=True)
-    header = build_provenance_header("tool", model="Flash")
-    (man_dir / "tool.1").write_text(header + ".TH TOOL 1", encoding="utf-8")
+    page = man_dir / "tool.1"
+    page.write_text(".TH TOOL 1", encoding="utf-8")
     stray_backup = man_dir / "tool.1.maniac_bak"
     stray_backup.write_text(".TH TOOL 1 vendor", encoding="utf-8")
 
@@ -244,6 +225,7 @@ def test_migration_relocates_a_stray_backup_out_of_man_dir(tmp_path: Path) -> No
         man_dir=man_dir,
         backup_dir=tmp_path / "state" / "backups",
     )
+    record_entry("tool", page, Tier.SYNTHESIS, "model", "abc123", config=cfg)
     entries = reconcile(config=cfg)
 
     assert not stray_backup.exists()
@@ -348,51 +330,6 @@ def test_discard_durable_target_returns_none_without_a_recorded_target(
     entry = _entry(path=tmp_path / "man1" / "tool.1", target=None)
 
     assert lifecycle.discard_durable_target(entry, cfg, {}) is None
-
-
-def test_read_provenance_header(tmp_path: Path) -> None:
-    f = tmp_path / "mytool.1"
-    header = build_provenance_header(tool_name="mytool", model="Gemini 3.7 Flash")
-    f.write_text(header + ".TH MYTOOL 1\n", encoding="utf-8")
-
-    meta = read_provenance_header(f)
-    assert meta is not None
-    assert meta["tool"] == "mytool"
-    assert meta["model"] == "Gemini 3.7 Flash"
-    assert "date" in meta
-
-    foreign_file = tmp_path / "vendor.1"
-    foreign_file.write_text(".TH VENDOR 1\nOfficial manual", encoding="utf-8")
-    assert read_provenance_header(foreign_file) is None
-
-
-def test_read_provenance_header_permission_denied(tmp_path: Path) -> None:
-    """Low: EACCES must not be silently treated as 'foreign page'."""
-    f = tmp_path / "tool.1"
-    f.write_text(".TH TOOL 1", encoding="utf-8")
-    f.chmod(0o000)
-    try:
-        with pytest.raises(PermissionError):
-            read_provenance_header(f)
-    finally:
-        f.chmod(0o644)
-
-
-def test_list_installed_manpages(tmp_path: Path) -> None:
-    man_dir = tmp_path / "man1"
-    man_dir.mkdir(parents=True)
-
-    header1 = build_provenance_header("tool1", model="Flash")
-    (man_dir / "tool1.1").write_text(header1 + ".TH TOOL1 1", encoding="utf-8")
-
-    (man_dir / "vendor.1").write_text(".TH VENDOR 1 vendor page", encoding="utf-8")
-
-    cfg = Config(man_dir=man_dir, output_dir=tmp_path / "data_empty")
-    items = list_installed_manpages(config=cfg)
-
-    assert len(items) == 1
-    assert items[0]["tool"] == "tool1"
-    assert items[0]["model"] == "Flash"
 
 
 def _durable_vendor_copy_fixture(tmp_path: Path) -> tuple[Config, Path, Path, Path]:
@@ -513,3 +450,60 @@ def test_discard_durable_target_removes_a_target_its_last_user_releases(
 
     assert lifecycle.discard_durable_target(last, cfg, {"tool": unrelated}) == target
     assert not target.exists()
+
+
+def test_migration_records_a_link_it_made_but_never_recorded(tmp_path: Path) -> None:
+    """A migration whose manifest write was lost must not leave the entry stuck.
+
+    The page is a symlink and the record still says `target=None`, which
+    used to read as "unsafe legacy entry" forever. The recorded checksum is
+    the migrated bytes' own, so a match proves the link is that migration's.
+    """
+    man_dir = tmp_path / "man1"
+    man_dir.mkdir(parents=True)
+    output_dir = tmp_path / "durable"
+    output_dir.mkdir()
+    target = output_dir / "tool.1"
+    target.write_text(".TH TOOL 1 legacy", encoding="utf-8")
+    page = man_dir / "tool.1"
+    page.symlink_to(target)
+    cfg = Config(
+        manifest_path=tmp_path / "state" / "installed.json",
+        man_dir=man_dir,
+        output_dir=output_dir,
+    )
+    record_entry(
+        "tool",
+        page,
+        Tier.SYNTHESIS,
+        "model",
+        manifest.checksum_of(target),
+        config=cfg,
+    )
+
+    entry = reconcile(config=cfg)["tool"]
+
+    assert entry.target == target
+    assert manifest.is_expected_link(entry)
+
+
+def test_migration_retains_a_link_whose_bytes_are_not_the_recorded_ones(
+    tmp_path: Path,
+) -> None:
+    """Without a checksum match the link is someone else's; guessing could destroy it."""
+    man_dir = tmp_path / "man1"
+    man_dir.mkdir(parents=True)
+    output_dir = tmp_path / "durable"
+    output_dir.mkdir()
+    target = output_dir / "tool.1"
+    target.write_text(".TH TOOL 1 substituted", encoding="utf-8")
+    page = man_dir / "tool.1"
+    page.symlink_to(target)
+    cfg = Config(
+        manifest_path=tmp_path / "state" / "installed.json",
+        man_dir=man_dir,
+        output_dir=output_dir,
+    )
+    record_entry("tool", page, Tier.SYNTHESIS, "model", "not-the-target", config=cfg)
+
+    assert reconcile(config=cfg)["tool"].target is None

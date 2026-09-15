@@ -19,7 +19,7 @@ from pathlib import Path
 from ..config import Config
 from ..exceptions import ManiacError
 from ..installer import install_manpage
-from ..manifest import Tier
+from ..manifest import Tier, manpage_owner
 from ..models import PipelineResult
 from ..sources.candidates import select_install_root, select_repository
 from ..sources.docs import discover_repo_manpages
@@ -201,11 +201,11 @@ def _try_repository(tool: ResolvedTool, *, force: bool) -> InstallOutcome | None
     # Every page of one release archive records the primary's owner as its
     # group: they arrived together and uninstall together, which `source_uri`
     # cannot say -- it names the asset, not the unit, and cannot mark a primary.
-    group = _manpage_owner(candidate.primary.path)
+    group = manpage_owner(candidate.primary.path)
     for page in candidate.pages:
         installed = install_manpage(
             page.path,
-            _manpage_owner(page.path),
+            manpage_owner(page.path),
             Tier.REPOSITORY,
             source.identity,
             target_dir=_manpage_directory(page.path, cfg),
@@ -226,14 +226,6 @@ def _try_repository(tool: ResolvedTool, *, force: bool) -> InstallOutcome | None
         source_path=candidate.primary.path,
         installed_path=installed_path,
     )
-
-
-def _manpage_owner(page: Path) -> str:
-    """Return the manpage name without its section or compression suffix."""
-    path = page
-    if path.suffix in {".gz", ".bz2", ".xz", ".zst"}:
-        path = path.with_suffix("")
-    return path.with_suffix("").name
 
 
 def _manpage_directory(page: Path, cfg: Config) -> Path:

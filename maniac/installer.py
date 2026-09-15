@@ -60,9 +60,11 @@ def install_manpage(
     # what the lock spans (ADR-0043).
     with manifest.transaction(cfg) as txn:
         entries = lifecycle.reconcile(txn)
-        backup_path, fresh_backup = _take_backup(
-            dest_file, entries.get(tool), cfg, force=force
-        )
+        # Ownership read before the duplicates go, or the backup the owning
+        # record carries is dropped with it.
+        owner = _owner_of(dest_file, entries)
+        _drop_other_records_of(dest_file, txn, tool=tool)
+        backup_path, fresh_backup = _take_backup(dest_file, owner, cfg, force=force)
         target = _materialize_and_link(
             src,
             dest_file,
@@ -91,6 +93,36 @@ def install_manpage(
     return dest_file
 
 
+def _owner_of(dest_file: Path, entries: dict[str, Entry]) -> Entry | None:
+    """Return the entry whose sound link occupies `dest_file`, whatever key holds it.
+
+    By path, not by tool key: an orphan adopted after a crash is keyed on
+    its filename, and the page is still MANIAC's (ADR-0017).
+    """
+    return next(
+        (
+            entry
+            for entry in entries.values()
+            if entry.path == dest_file and manifest.is_expected_link(entry)
+        ),
+        None,
+    )
+
+
+def _drop_other_records_of(
+    dest_file: Path, txn: manifest.Transaction, *, tool: str
+) -> None:
+    """Forget every other entry recording `dest_file`: one manpath path, one owner."""
+    for other, entry in list(txn.entries.items()):
+        if other != tool and entry.path == dest_file:
+            txn.forget(other)
+            logger.info(
+                "Dropped a duplicate record of a manpath entry",
+                tool=other,
+                path=str(dest_file),
+            )
+
+
 def _take_backup(
     dest_file: Path,
     existing: Entry | None,
@@ -100,21 +132,15 @@ def _take_backup(
 ) -> tuple[Path | None, bool]:
     """Return the backup to record and whether this call created it.
 
-    Reinstalling over our own page carries the prior backup forward rather
-    than dropping it, or a vendor page backed up on an earlier `--force`
-    install becomes unrestorable on uninstall.  A fresh backup is named after
-    the manpath entry it displaced, which is what makes an orphaned one
-    traceable to the page it must be restored over.
+    Reinstalling over a page MANIAC already owns carries the prior backup
+    forward rather than dropping it, or a vendor page backed up on an
+    earlier `--force` install becomes unrestorable on uninstall.  A fresh
+    backup is named after the manpath entry it displaced, which is what
+    makes an orphaned one traceable to the page it must be restored over.
     """
     if not _path_exists(dest_file):
         return None, False
-    owned = (
-        existing is not None
-        and existing.path == dest_file
-        and manifest.is_expected_link(existing)
-    )
-    if owned:
-        assert existing is not None
+    if existing is not None:
         return existing.backup, False
     if not force:
         raise FileExistsError(

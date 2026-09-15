@@ -1103,14 +1103,22 @@ def test_uninstall_keeps_a_durable_target_a_second_entry_still_records(
     target.write_text(".TH PAGE 1 shared", encoding="utf-8")
     checksum = manifest_module.checksum_of(target)
     links = {}
+    # Recorded before the links exist: an unrecorded link into `output_dir` is
+    # an orphan, and a transaction adopts it under its own filename.
     for tool, man_dir in (("first", tmp_path / "man1"), ("second", tmp_path / "man2")):
         man_dir.mkdir(parents=True)
-        link = man_dir / "page.1"
-        link.symlink_to(target)
-        links[tool] = link
+        links[tool] = man_dir / "page.1"
         record_entry(
-            tool, link, Tier.SYNTHESIS, "model", checksum, target=target, config=cfg
+            tool,
+            links[tool],
+            Tier.SYNTHESIS,
+            "model",
+            checksum,
+            target=target,
+            config=cfg,
         )
+    for link in links.values():
+        link.symlink_to(target)
 
     first = uninstall_manpage("first", config=cfg)
 
@@ -1262,3 +1270,74 @@ def test_uninstall_interrupted_before_the_manifest_write_reruns_clean(
     assert result.modified_kept == [] and result.legacy_kept == []
     assert manifest_module.load(config=cfg) == {}
     assert list(cfg.output_dir.glob("*.1")) == []
+
+
+def test_install_interrupted_before_the_manifest_write_reruns_without_force(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The link lands before the record; the rerun must not call MANIAC's own page foreign.
+
+    The orphaned link is adopted on the next transaction, so reinstalling
+    the same tool overwrites its own page instead of demanding --force.
+    """
+    cfg = _crash_config(tmp_path)
+    source = _source_page(tmp_path)
+    # An unrelated page first, so the manifest the rerun reads is intact and
+    # the orphan is adopted rather than reconstructed by recovery.
+    other = tmp_path / "cache" / "other.1"
+    other.write_text(".TH OTHER 1", encoding="utf-8")
+    install_manpage(other, "other", Tier.REPOSITORY, "owner/other", config=cfg)
+    monkeypatch.setattr(
+        "maniac.manifest.save",
+        lambda *a, **kw: (_ for _ in ()).throw(OSError("interrupted")),
+    )
+
+    with pytest.raises(OSError):
+        install_manpage(source, "tool", Tier.REPOSITORY, "owner/tool", config=cfg)
+
+    installed = cfg.man_dir / "tool.1"
+    assert installed.is_symlink()
+    assert set(manifest_module.load(config=cfg)) == {"other"}
+
+    monkeypatch.undo()
+    reinstalled = install_manpage(
+        source, "tool", Tier.REPOSITORY, "owner/tool", config=cfg
+    )
+
+    assert reinstalled == installed
+    entry = manifest_module.lookup("tool", config=cfg)
+    assert entry is not None
+    assert entry.tier is Tier.REPOSITORY
+    assert entry.backup is None
+
+
+def test_an_adopted_orphan_does_not_become_a_second_owner_of_one_page(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Adoption keys on the filename; the install that follows keys on the tool.
+
+    Both name one manpath path, and two owners of one page make the second
+    an entry whose page vanishes the moment the first is uninstalled.
+    """
+    cfg = _crash_config(tmp_path)
+    source = tmp_path / "cache" / "page.1"
+    source.parent.mkdir(parents=True)
+    source.write_text(".TH PAGE 1", encoding="utf-8")
+    other = tmp_path / "cache" / "other.1"
+    other.write_text(".TH OTHER 1", encoding="utf-8")
+    install_manpage(other, "other", Tier.REPOSITORY, "owner/other", config=cfg)
+    monkeypatch.setattr(
+        "maniac.manifest.save",
+        lambda *a, **kw: (_ for _ in ()).throw(OSError("interrupted")),
+    )
+    with pytest.raises(OSError):
+        install_manpage(source, "mytool", Tier.REPOSITORY, "owner/mytool", config=cfg)
+    monkeypatch.undo()
+
+    installed = install_manpage(
+        source, "mytool", Tier.REPOSITORY, "owner/mytool", config=cfg
+    )
+
+    entries = manifest_module.load(config=cfg)
+    assert set(entries) == {"other", "mytool"}
+    assert entries["mytool"].path == installed
