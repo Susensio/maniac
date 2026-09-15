@@ -34,9 +34,10 @@ These are findings the work surfaced and deliberately did not take; they are fir
 - Thread probe definitiveness back as a return value instead of `docs.cache`'s module-level `_lookup_state` thread-local.
   ADR-0033's split made that cross-module channel visible without removing it: `cache` writes it and `repository` reads it.
   Removing it touches every probe signature, so it was left out of the split deliberately.
-- Replace `installer.install_manpage`'s and `manifest.record`'s twelve-parameter signatures with one entry record.
-  Both describe the same installed page and drifted into parallel positional lists; ADR-0034 moved their coordination but not their shape.
-  Both still trip the raised `max-args = 10`, which is the point of that threshold: twelve parameters is coordination, seven is a command surface.
+- Replace `installer.install_manpage`'s parameter list with one entry record.
+  `manifest.record` is gone -- ADR-0046 replaced it with `Transaction.put`, which takes an `Entry` precisely to avoid re-declaring that list.
+  `install_manpage` still carries it and still trips the raised `max-args = 10`, which is the point of that threshold: a dozen parameters is coordination, seven is a command surface.
+  `put` is the shape to follow.
 - Split `sources/docs/release._fetch_and_materialize_release_asset`'s direct-asset and archive-asset flows.
   They are two flows sharing one function, which is why it still carries seven returns after ADR-0033.
 
