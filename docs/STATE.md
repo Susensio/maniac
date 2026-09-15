@@ -11,6 +11,34 @@ Nothing here is live work.
 Read ADR-0045 before proposing a cache for `list` again: three of its findings are reasons a
 whole class of fact cannot be cached at all, not incidental details of this attempt.
 
+## Upstream request budget and login-shell environment -- landed
+
+Three changes, all surfaced while benchmarking the abandoned fact cache rather than planned.
+
+`XDG_CONFIG_HOME` is no longer scrubbed from the login-shell child environment (`5af2a97`).
+It was never an activation marker, and the isolation it bought belonged to the tests, which now arrange it themselves.
+ADR-0044 records the decision, the independent review that argued the other way on ADR-0020 grounds, and the injected-redirect case that is the reason to reopen it.
+Activation-marker scrubbing is unchanged.
+
+GitHub API requests reuse the `gh` credential (`b60459d`).
+`resolve_github_token()` tries `GH_TOKEN`, then `GITHUB_TOKEN`, then `gh auth token --hostname github.com`, memoized once per process; every failure path degrades to unauthenticated rather than failing the run.
+`Authorization` attaches only when the parsed host is exactly `api.github.com`, and is stripped across a redirect to another host.
+Verified live outside the sandbox on 2026-09-16: the token resolved, the allowlist admitted `api.github.com` and refused `github.com`, a lookalike host and a subdomain, and a real request through `_download_result` reported a 5000 ceiling rather than 60.
+The suite passes identically inside the sandbox and outside it with a real credential present, so no test reads the ambient environment.
+
+One conflated cache TTL became two (`8586e5d`).
+`_DEFINITIVE_ABSENCE_TTL` is an hour across three call sites; `_RELEASE_METADATA_REVALIDATION_TTL` is twenty-four hours at the single positive site.
+A five-minute window over roughly 26 calls a run demanded about 312 requests an hour against an unauthenticated ceiling of 60.
+ADR-0025 carries a dated correction for the two sentences this made false.
+
+### Left unfinished
+
+Cross-host redirect stripping is covered by unit tests only and cannot be exercised end to end.
+Release assets are fetched from `browser_download_url`, a `github.com` URL, so they never carry the header to strip.
+It is defence in depth against a future caller that authenticates against a redirecting endpoint, not a path production reaches today.
+
+The token change never received the independent review the `coding` skill asks of a finished behaviour-changing feature.
+
 ## Architecture review follow-up
 
 Waves A, B and C of the 2026-09-14 architecture review are landed and verified.
