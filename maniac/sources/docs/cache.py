@@ -8,11 +8,16 @@ import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from hashlib import sha256
+from http.client import HTTPMessage
 from pathlib import Path
+from typing import IO
 from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+from urllib.parse import urlsplit
+from urllib.request import HTTPRedirectHandler, Request, build_opener
+from urllib.response import addinfourl
 
 from ...config import Config
+from ...github_token import resolve_github_token
 from ...logging import logger
 
 _RELEASE_ARCHIVE_LIMIT = 10 * 1024 * 1024
@@ -21,6 +26,54 @@ _CACHE_MAX_BYTES = 8 * 1024
 _cache_locks: dict[Path, threading.Lock] = {}
 _cache_locks_guard = threading.Lock()
 _lookup_state = threading.local()
+
+# Every GitHub request goes here, never api.github.com's asset host or
+# anything else derived from repository metadata or a registry entry.
+_GITHUB_API_HOST = "api.github.com"
+
+
+class _AuthStrippingRedirectHandler(HTTPRedirectHandler):
+    """Drops `Authorization` on a redirect that crosses hosts.
+
+    `urlopen`'s default redirect handling copies every header, including
+    `Authorization`, onto the redirect target. GitHub release assets
+    redirect from api.github.com to objects.githubusercontent.com, which
+    both leaks the token to a third-party host and breaks the download --
+    that host rejects a request carrying its own signed query parameters
+    alongside an `Authorization` header.
+    """
+
+    def redirect_request(
+        self,
+        req: Request,
+        fp: IO[bytes],
+        code: int,
+        msg: str,
+        headers: HTTPMessage,
+        newurl: str,
+    ) -> Request | None:
+        new_request = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if (
+            new_request is not None
+            and urlsplit(newurl).hostname != urlsplit(req.full_url).hostname
+        ):
+            new_request.remove_header("Authorization")
+        return new_request
+
+
+_opener = build_opener(_AuthStrippingRedirectHandler())
+
+
+def _open(request: Request, timeout: float) -> addinfourl:
+    return _opener.open(request, timeout=timeout)
+
+
+def _github_headers(url: str) -> dict[str, str]:
+    headers = {"User-Agent": "maniac"}
+    token = resolve_github_token()
+    if token and urlsplit(url).hostname == _GITHUB_API_HOST:
+        headers["Authorization"] = f"Bearer {token}"
+    return headers
 
 
 def _upstream_cache_path(cache_dir: Path, kind: str, *parts: str) -> Path:
@@ -125,10 +178,9 @@ def _download(url: str, cfg: Config) -> bytes | None:
 
 
 def _download_result(url: str, cfg: Config) -> tuple[bytes | None, bool]:
+    headers = _github_headers(url)
     try:
-        with urlopen(
-            Request(url, headers={"User-Agent": "maniac"}), timeout=cfg.timeout_git
-        ) as response:
+        with _open(Request(url, headers=headers), timeout=cfg.timeout_git) as response:
             content = response.read(_RELEASE_ARCHIVE_LIMIT + 1)
             if len(content) > _RELEASE_ARCHIVE_LIMIT:
                 return None, False

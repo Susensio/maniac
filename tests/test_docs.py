@@ -1,3 +1,4 @@
+import io
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -557,7 +558,7 @@ def test_github_release_not_found_is_a_definitive_probe_miss(
             "https://api.github.com/release", status, "missing", Message(), None
         )
 
-    monkeypatch.setattr(cache, "urlopen", missing)
+    monkeypatch.setattr(cache, "_open", missing)
     source = RepoSource(name="tool", target="owner/tool", is_local=False)
     cfg = Config(cache_dir=tmp_path)
 
@@ -747,7 +748,7 @@ def test_definitively_missing_download_is_cached(
         calls += 1
         raise HTTPError("https://example.test/page", status, "missing", Message(), None)
 
-    monkeypatch.setattr(cache, "urlopen", missing)
+    monkeypatch.setattr(cache, "_open", missing)
     cfg = Config(cache_dir=tmp_path)
     assert (
         cache._download_cached_result("https://example.test/page", tmp_path, cfg)[0]
@@ -778,7 +779,7 @@ def test_transient_download_is_not_cached(
             "https://example.test/page", 503, "unavailable", Message(), None
         )
 
-    monkeypatch.setattr(cache, "urlopen", unavailable)
+    monkeypatch.setattr(cache, "_open", unavailable)
     cfg = Config(cache_dir=tmp_path)
     assert (
         cache._download_cached_result("https://example.test/page", tmp_path, cfg)[0]
@@ -789,6 +790,96 @@ def test_transient_download_is_not_cached(
         is None
     )
     assert calls == 2
+
+
+@pytest.mark.parametrize("status", [401, 403])
+def test_auth_and_rate_limit_failures_are_not_definitive(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, status: int
+) -> None:
+    from email.message import Message
+    from urllib.error import HTTPError
+
+    def denied(*args: object, **kwargs: object) -> object:
+        raise HTTPError(
+            "https://api.github.com/release", status, "denied", Message(), None
+        )
+
+    monkeypatch.setattr(cache, "_open", denied)
+    cfg = Config(cache_dir=tmp_path)
+
+    content, definitive = cache._download_result("https://api.github.com/release", cfg)
+
+    assert content is None
+    assert definitive is False
+
+
+def test_authorization_header_only_for_github_api_host(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(cache, "resolve_github_token", lambda: "stub-token")
+
+    assert (
+        cache._github_headers("https://api.github.com/repos/x/y")["Authorization"]
+        == "Bearer stub-token"
+    )
+    assert "Authorization" not in cache._github_headers(
+        "https://objects.githubusercontent.com/x"
+    )
+    assert "Authorization" not in cache._github_headers(
+        "https://evil.example.com/api.github.com"
+    )
+
+
+def test_no_authorization_header_without_a_token() -> None:
+    assert "Authorization" not in cache._github_headers(
+        "https://api.github.com/repos/x/y"
+    )
+
+
+def test_redirect_handler_drops_authorization_across_hosts() -> None:
+    from http.client import HTTPMessage
+    from urllib.request import Request
+
+    request = Request(
+        "https://api.github.com/repos/x/y/releases/assets/1",
+        headers={"Authorization": "Bearer secret", "User-Agent": "maniac"},
+    )
+    handler = cache._AuthStrippingRedirectHandler()
+
+    new_request = handler.redirect_request(
+        request,
+        io.BytesIO(),
+        302,
+        "Found",
+        HTTPMessage(),
+        "https://objects.githubusercontent.com/x",
+    )
+
+    assert new_request is not None
+    assert "Authorization" not in new_request.headers
+
+
+def test_redirect_handler_keeps_authorization_same_host() -> None:
+    from http.client import HTTPMessage
+    from urllib.request import Request
+
+    request = Request(
+        "https://api.github.com/repos/x/y/releases/assets/1",
+        headers={"Authorization": "Bearer secret", "User-Agent": "maniac"},
+    )
+    handler = cache._AuthStrippingRedirectHandler()
+
+    new_request = handler.redirect_request(
+        request,
+        io.BytesIO(),
+        302,
+        "Found",
+        HTTPMessage(),
+        "https://api.github.com/other/path",
+    )
+
+    assert new_request is not None
+    assert new_request.headers.get("Authorization") == "Bearer secret"
 
 
 def test_materialize_page_replaces_an_interrupted_write(tmp_path: Path) -> None:
@@ -1141,7 +1232,7 @@ def test_truncated_compressed_manpage_is_rejected(tmp_path: Path) -> None:
 def test_download_degrades_on_invalid_request_url(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(cache, "urlopen", lambda *args, **kwargs: None)
+    monkeypatch.setattr(cache, "_open", lambda *args, **kwargs: None)
 
     assert cache._download("\x00", Config()) is None
 

@@ -2,8 +2,22 @@ from pathlib import Path
 
 import pytest
 
+from maniac.sources.docs import cache
 from maniac.sources.loginpath import login_path
 from maniac.sources.pathcache import resolve_cached
+
+
+@pytest.fixture(autouse=True)
+def _no_real_github_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`cache.py` resolves a token via `resolve_github_token()` on every request.
+
+    Stubbed to `None` suite-wide so an ordinary test never spawns `gh auth
+    token` or picks up the developer's real credential -- `resolve_github_token`
+    is process-cached, so without this the first call anywhere in the suite
+    would decide every later test's token. A test exercising resolution
+    itself patches `maniac.github_token.resolve_github_token` directly.
+    """
+    monkeypatch.setattr(cache, "resolve_github_token", lambda: None)
 
 
 @pytest.fixture(autouse=True)
