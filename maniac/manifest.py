@@ -7,20 +7,23 @@ expected manpath link; a provenance header on tier-3 pages is informational.
 
 import hashlib
 import json
-from dataclasses import dataclass
+import os
+from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import Any
 
 from .config import Config
 
-# Unbumped for the `version` and `group` fields (ADR-0018): a mismatch here
-# empties the whole manifest on load, and an absent key already reads as its
-# default on its own -- no migration is needed to make it readable.  Bumping
-# for an additive field would cost every existing installation its ownership
-# record and make MANIAC's own pages look foreign to the next install.
+# A floor, not an equality: a manifest stamped at or below this version is
+# readable, so the field can be bumped whenever a change needs a reader to
+# know which shape it is holding.  Only a *newer* stamp than this build
+# understands is refused, and it is refused as damaged -- never as empty.
+# Absent and unparseable stamps are damaged too: an unstamped document is
+# not a version-0 document, it is one whose shape nothing vouches for.
 SCHEMA_VERSION = 1
 _CHUNK_SIZE = 65_536
+_CHECKPOINT_SUFFIX = ".good"
 
 
 class Tier(Enum):
@@ -130,90 +133,184 @@ def _entry_to_row(entry: Entry) -> dict[str, Any]:
     }
 
 
-def _row_to_entry(row: Any) -> Entry | None:
-    """Return the entry a row describes, or None for anything malformed.
+def _row_to_entry(row: Any) -> Entry:
+    """Return the entry a row describes.
 
-    A row that fails to parse -- missing key, wrong type, unrecognized tier --
-    is skipped rather than voiding the whole manifest.
+    Raises KeyError, TypeError or ValueError for anything malformed -- a
+    missing key, a wrong type, an unrecognized tier.
     """
     if not isinstance(row, dict):
-        return None
+        raise TypeError(f"row is {type(row).__name__}, not an object")
+    backup = row["backup"]
+    raw_source_uri = row.get("source_uri")
+    raw_target = row.get("target")
+    raw_group = row.get("group")
+    source_uri = (
+        raw_source_uri
+        if isinstance(raw_source_uri, str)
+        and raw_source_uri.startswith(("https://", "http://", "file://"))
+        else None
+    )
+    return Entry(
+        path=Path(row["path"]),
+        tier=Tier(row["tier"]),
+        source=row["source"],
+        checksum=row["checksum"],
+        backup=Path(backup) if backup is not None else None,
+        # .get, not []: absent on every row written before this field
+        # existed (ADR-0018), and that must read as None, not fail to parse.
+        version=row.get("version"),
+        source_uri=source_uri,
+        target=Path(raw_target) if isinstance(raw_target, str) else None,
+        provider_target=row.get("provider_target") is True,
+        # .get again (ADR-0018): a row written before groups existed must
+        # read as ungrouped, not fail to parse.
+        group=raw_group if isinstance(raw_group, str) else None,
+    )
+
+
+class Health(Enum):
+    """How much of the manifest a read recovered."""
+
+    ABSENT = "absent"
+    INTACT = "intact"
+    DAMAGED = "damaged"
+
+
+@dataclass(frozen=True, slots=True)
+class Read:
+    """What a manifest read recovered, and whether that is all there was.
+
+    `entries` holds every row that deserialized, which is the best record
+    available whatever the health: `backup`, `source_uri` and `version` have
+    no filesystem evidence, so a salvaged row is unrecoverable elsewhere.
+    `reason` names a whole-document failure -- unreadable file, bad JSON,
+    wrong shape, a stamp newer than this build reads -- and is None when the
+    document itself was fine.
+    `lost` maps the tool key of each skipped row to why it was skipped.  A
+    single lost key is enough to make the read DAMAGED: ownership that
+    silently evaporates is written out permanently by the next save.
+    """
+
+    entries: dict[str, Entry]
+    health: Health
+    reason: str | None = None
+    lost: dict[str, str] = field(default_factory=dict)
+
+
+def _damaged(reason: str) -> Read:
+    return Read(entries={}, health=Health.DAMAGED, reason=reason)
+
+
+def read(config: Config | None = None) -> Read:
+    """Return the manifest's entries and the verdict on how complete they are.
+
+    Pure deserialization, like `load`: nothing here touches the filesystem
+    beyond reading the manifest file.  Checkpoint promotion is `promote`,
+    which write paths call explicitly (ADR-0034).
+    """
+    path = _manifest_path(config)
     try:
-        backup = row["backup"]
-        raw_source_uri = row.get("source_uri")
-        raw_target = row.get("target")
-        raw_group = row.get("group")
-        source_uri = (
-            raw_source_uri
-            if isinstance(raw_source_uri, str)
-            and raw_source_uri.startswith(("https://", "http://", "file://"))
-            else None
+        text = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return Read(entries={}, health=Health.ABSENT)
+    except OSError as exc:
+        return _damaged(f"unreadable: {exc}")
+    try:
+        document = json.loads(text)
+    except json.JSONDecodeError as exc:
+        return _damaged(f"invalid JSON: {exc}")
+    if not isinstance(document, dict):
+        return _damaged(f"document is {type(document).__name__}, not an object")
+
+    stored = document.get("version")
+    if not isinstance(stored, int) or isinstance(stored, bool):
+        return _damaged(f"schema version is {stored!r}, not an integer")
+    if stored > SCHEMA_VERSION:
+        return _damaged(
+            f"schema version {stored} is newer than this build reads ({SCHEMA_VERSION})"
         )
-        return Entry(
-            path=Path(row["path"]),
-            tier=Tier(row["tier"]),
-            source=row["source"],
-            checksum=row["checksum"],
-            backup=Path(backup) if backup is not None else None,
-            # .get, not []: absent on every row written before this field
-            # existed (ADR-0018), and that must read as None, not fail to parse.
-            version=row.get("version"),
-            source_uri=source_uri,
-            target=Path(raw_target) if isinstance(raw_target, str) else None,
-            provider_target=row.get("provider_target") is True,
-            # .get again (ADR-0018): a row written before groups existed must
-            # read as ungrouped, not fail to parse.
-            group=raw_group if isinstance(raw_group, str) else None,
-        )
-    except (KeyError, TypeError, ValueError):
-        return None
+
+    raw_entries = document.get("entries")
+    if not isinstance(raw_entries, dict):
+        return _damaged(f"entries is {type(raw_entries).__name__}, not an object")
+
+    entries: dict[str, Entry] = {}
+    lost: dict[str, str] = {}
+    for tool, row in raw_entries.items():
+        try:
+            entries[tool] = _row_to_entry(row)
+        except (KeyError, TypeError, ValueError) as exc:
+            lost[tool] = f"{type(exc).__name__}: {exc}"
+    if lost:
+        return Read(entries=entries, health=Health.DAMAGED, lost=lost)
+    return Read(entries=entries, health=Health.INTACT)
 
 
 def load(config: Config | None = None) -> dict[str, Entry]:
     """Return every recorded entry, keyed by tool.
 
-    Pure deserialization: an absent manifest reads empty, and nothing here
-    touches the filesystem beyond reading the manifest file, so a read-only
-    command sees ownership exactly as persisted. Seeding and link
-    reconciliation belong to `lifecycle.reconcile`, which write paths call.
-
-    A manifest that exists but fails to parse -- corrupt JSON, wrong shape,
-    an unrecognized version -- degrades to empty instead of raising; a
-    corrupt store costs a rebuild, never a crash.
+    The entries of `read`, without its verdict: for callers that only need
+    the records and have no answer to a partial loss.  Anything that decides
+    what to do about damage wants `read` instead.
     """
-    path = _manifest_path(config)
+    return read(config).entries
+
+
+def _write_document(path: Path, document: dict[str, Any]) -> None:
+    """Write `document` to `path` durably: temp file, fsync, rename, fsync dir.
+
+    The rename alone survives a process crash but not a power loss, which
+    can land the directory entry ahead of the data (ADR-0043).
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path = path.with_name(path.name + ".tmp")
+    with temporary_path.open("w", encoding="utf-8") as f:
+        json.dump(document, f, indent=2, sort_keys=True)
+        f.flush()
+        os.fsync(f.fileno())
+    temporary_path.replace(path)
+    directory = os.open(path.parent, os.O_RDONLY)
     try:
-        document = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {}
-    if not isinstance(document, dict) or document.get("version") != SCHEMA_VERSION:
-        return {}
+        os.fsync(directory)
+    finally:
+        os.close(directory)
 
-    raw_entries = document.get("entries")
-    if not isinstance(raw_entries, dict):
-        return {}
 
-    entries: dict[str, Entry] = {}
-    for tool, row in raw_entries.items():
-        entry = _row_to_entry(row)
-        if entry is not None:
-            entries[tool] = entry
-    return entries
+def _document(entries: dict[str, Entry]) -> dict[str, Any]:
+    return {
+        "version": SCHEMA_VERSION,
+        "entries": {tool: _entry_to_row(entry) for tool, entry in entries.items()},
+    }
 
 
 def save(entries: dict[str, Entry], config: Config | None = None) -> None:
     """Persist `entries` as the whole manifest, replacing what it held."""
+    _write_document(_manifest_path(config), _document(entries))
+
+
+def checkpoint_path(config: Config | None = None) -> Path:
+    """Return the `.good` checkpoint path beside the manifest."""
     path = _manifest_path(config)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    document = {
-        "version": SCHEMA_VERSION,
-        "entries": {tool: _entry_to_row(entry) for tool, entry in entries.items()},
-    }
-    temporary_path = path.with_suffix(".tmp")
-    temporary_path.write_text(
-        json.dumps(document, indent=2, sort_keys=True), encoding="utf-8"
-    )
-    temporary_path.replace(path)
+    return path.with_name(path.name + _CHECKPOINT_SUFFIX)
+
+
+def promote(read_result: Read, config: Config | None = None) -> bool:
+    """Whether `read_result` was promoted to the `.good` checkpoint.
+
+    Only an INTACT read promotes.  A damaged one leaves the existing
+    checkpoint untouched -- that refusal is the whole mechanism, and it is
+    what stops rot from overwriting the last known-good copy.
+
+    Callers hold the promotion decision, so a caller that has more evidence
+    than the read carries -- Phase 3's structural filesystem scan, which
+    lives in `lifecycle` -- gates the call rather than being threaded
+    through here.
+    """
+    if read_result.health is not Health.INTACT:
+        return False
+    _write_document(checkpoint_path(config), _document(read_result.entries))
+    return True
 
 
 def record(
@@ -232,7 +329,9 @@ def record(
     group: str | None = None,
 ) -> None:
     """Record `tool`'s installed page and its expected manpath-link target."""
-    entries = load(config)
+    current = read(config)
+    promote(current, config)
+    entries = current.entries
     entries[tool] = Entry(
         path=Path(path),
         tier=tier,
@@ -255,7 +354,9 @@ def lookup(tool: str, config: Config | None = None) -> Entry | None:
 
 def forget(tool: str, config: Config | None = None) -> None:
     """Remove `tool`'s entry, if any. A no-op if it was never recorded."""
-    entries = load(config)
+    current = read(config)
+    promote(current, config)
+    entries = current.entries
     if tool in entries:
         del entries[tool]
         save(entries, config)

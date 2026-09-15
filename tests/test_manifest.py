@@ -179,14 +179,19 @@ def test_corrupt_manifest_degrades_to_empty(tmp_path: Path) -> None:
     assert manifest.load(config=cfg) == {}
 
 
-def test_wrong_version_degrades_to_empty(tmp_path: Path) -> None:
+def test_newer_schema_version_refuses_as_damaged_not_as_empty(tmp_path: Path) -> None:
+    """A manifest this build cannot read is the one refusal case, and it says so."""
     cfg = _config(tmp_path)
     cfg.manifest_path.parent.mkdir(parents=True)
     cfg.manifest_path.write_text(
-        json.dumps({"version": 999, "entries": {}}), encoding="utf-8"
+        json.dumps({"version": manifest.SCHEMA_VERSION + 1, "entries": {}}),
+        encoding="utf-8",
     )
 
-    assert manifest.load(config=cfg) == {}
+    result = manifest.read(config=cfg)
+    assert result.health is manifest.Health.DAMAGED
+    assert result.reason is not None
+    assert "newer" in result.reason
 
 
 def test_one_malformed_entry_is_skipped_not_the_whole_file(tmp_path: Path) -> None:
@@ -310,3 +315,155 @@ def test_row_missing_group_key_loads_as_ungrouped(tmp_path: Path) -> None:
     assert entry.group is None
     assert entry.version == "1.2.3"
     assert entry.target == Path("/durable/tool.1")
+
+
+def _write_manifest(cfg: Config, document: object) -> None:
+    cfg.manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.manifest_path.write_text(json.dumps(document), encoding="utf-8")
+
+
+_GOOD_ROW = {
+    "path": "/x/good.1",
+    "tier": "synthesis",
+    "source": "m",
+    "checksum": "abc123",
+    "backup": None,
+}
+
+
+def test_read_of_absent_manifest_is_absent_not_damaged(tmp_path: Path) -> None:
+    result = manifest.read(config=_config(tmp_path))
+
+    assert result.health is manifest.Health.ABSENT
+    assert result.entries == {}
+    assert result.reason is None
+    assert result.lost == {}
+
+
+def test_read_of_a_whole_manifest_is_intact(tmp_path: Path) -> None:
+    cfg = _config(tmp_path)
+    _write_manifest(cfg, {"version": 1, "entries": {"good": _GOOD_ROW}})
+
+    result = manifest.read(config=cfg)
+
+    assert result.health is manifest.Health.INTACT
+    assert set(result.entries) == {"good"}
+    assert result.lost == {}
+
+
+def test_read_of_corrupt_json_is_damaged(tmp_path: Path) -> None:
+    cfg = _config(tmp_path)
+    cfg.manifest_path.parent.mkdir(parents=True)
+    cfg.manifest_path.write_text("{not json", encoding="utf-8")
+
+    result = manifest.read(config=cfg)
+
+    assert result.health is manifest.Health.DAMAGED
+    assert result.entries == {}
+    assert result.reason is not None
+
+
+def test_one_skipped_row_makes_the_read_damaged_and_names_the_lost_key(
+    tmp_path: Path,
+) -> None:
+    """Partial rot is the likely case: the salvage must still be reported as a loss."""
+    cfg = _config(tmp_path)
+    _write_manifest(
+        cfg,
+        {
+            "version": 1,
+            "entries": {
+                "good": _GOOD_ROW,
+                "bad_tier": {**_GOOD_ROW, "tier": "not-a-real-tier"},
+            },
+        },
+    )
+
+    result = manifest.read(config=cfg)
+
+    assert result.health is manifest.Health.DAMAGED
+    assert set(result.entries) == {"good"}
+    assert set(result.lost) == {"bad_tier"}
+    assert "not-a-real-tier" in result.lost["bad_tier"]
+
+
+def test_older_schema_version_reads_fine(tmp_path: Path) -> None:
+    """The version is a floor: anything at or below it is readable."""
+    cfg = _config(tmp_path)
+    _write_manifest(cfg, {"version": 0, "entries": {"good": _GOOD_ROW}})
+
+    result = manifest.read(config=cfg)
+
+    assert result.health is manifest.Health.INTACT
+    assert set(result.entries) == {"good"}
+
+
+def test_intact_read_promotes_the_checkpoint(tmp_path: Path) -> None:
+    cfg = _config(tmp_path)
+    _write_manifest(cfg, {"version": 1, "entries": {"good": _GOOD_ROW}})
+
+    assert manifest.promote(manifest.read(config=cfg), config=cfg) is True
+
+    checkpoint = manifest.checkpoint_path(cfg)
+    assert checkpoint == cfg.manifest_path.with_name("installed.json.good")
+    assert manifest.read(config=Config(manifest_path=checkpoint)).entries == {
+        "good": manifest.lookup("good", config=cfg)
+    }
+
+
+def test_damaged_read_leaves_an_existing_checkpoint_byte_identical(
+    tmp_path: Path,
+) -> None:
+    """The refusal to promote is the mechanism: rot must not overwrite the good copy."""
+    cfg = _config(tmp_path)
+    _write_manifest(cfg, {"version": 1, "entries": {"good": _GOOD_ROW}})
+    manifest.promote(manifest.read(config=cfg), config=cfg)
+    checkpoint = manifest.checkpoint_path(cfg)
+    before = checkpoint.read_bytes()
+
+    _write_manifest(
+        cfg,
+        {
+            "version": 1,
+            "entries": {"bad_tier": {**_GOOD_ROW, "tier": "not-a-real-tier"}},
+        },
+    )
+    assert manifest.promote(manifest.read(config=cfg), config=cfg) is False
+
+    assert checkpoint.read_bytes() == before
+
+
+def test_record_promotes_the_manifest_it_read_before_mutating_it(
+    tmp_path: Path,
+) -> None:
+    """The checkpoint holds the generation before the write, not the one after."""
+    cfg = _config(tmp_path)
+    manifest.record("first", tmp_path / "first.1", Tier.SYNTHESIS, "m", "a", config=cfg)
+    manifest.record("second", tmp_path / "sec.1", Tier.SYNTHESIS, "m", "b", config=cfg)
+
+    checkpointed = manifest.read(
+        config=Config(manifest_path=manifest.checkpoint_path(cfg))
+    )
+    assert set(checkpointed.entries) == {"first"}
+    assert set(manifest.load(config=cfg)) == {"first", "second"}
+
+
+def test_read_of_a_damaged_manifest_writes_nothing(tmp_path: Path) -> None:
+    """Load stays pure deserialization (ADR-0034), damaged or not."""
+    cfg = _config(tmp_path)
+    _write_manifest(
+        cfg,
+        {
+            "version": 1,
+            "entries": {
+                "good": _GOOD_ROW,
+                "bad_tier": {**_GOOD_ROW, "tier": "not-a-real-tier"},
+            },
+        },
+    )
+    before = _tree_state(tmp_path)
+
+    result = manifest.read(config=cfg)
+
+    assert result.health is manifest.Health.DAMAGED
+    assert _tree_state(tmp_path) == before
