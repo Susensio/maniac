@@ -1,6 +1,6 @@
 # ADR-0041: Use DiskCache for persistent facts instead of bespoke JSON records
 
-Status: Accepted
+Status: Superseded by [ADR-0045](0045-abandon-persistent-fact-cache.md)
 Date: 2026-09-15
 
 ## Context

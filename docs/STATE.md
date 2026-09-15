@@ -1,38 +1,15 @@
 # Implementation State
 
-## Persistent list cache
+## Persistent list cache -- abandoned
 
-### Goal
+Measured slower than no cache and dropped; ADR-0045 records the evidence, the negative
+findings, and the two conditions that were never measured.
+The implementation is archived unmerged at `feature/list-fact-cache` (`604581d`, with the
+measurement record at `328c93c`) and was never merged into `master`.
 
-Make warm `maniac list` fast by reusing local facts whose explicit inputs still validate.
-Keep its current answer semantics: first-PATH-entry shadowing, manifest ownership, local-manpage reachability, and version-pinned upstream evidence must remain correct.
-
-### Evidence and completed phase
-
-Phase one is complete: `maniac --verbose list` logs manifest, inventory, local-classification, upstream-probe, and total wall-clock durations.
-`--verbose` deliberately disables the live table so Structlog keeps its own formatted diagnostic stream; the final static table prints after that stream.
-A live 68-row run measured 11.853s total, 0.001s manifest load, 2.898s PATH inventory, 8.948s local classification, and 8.724s upstream probing.
-Local and upstream work overlap, so their durations must not be added to estimate total time.
-The run encountered transient DNS failures for remote release metadata, which were not cached as absence.
-
-### Implementation order
-
-1. Complete: expose phase timings and pin their debug-log contract in `tests/test_inventory.py`.
-2. Build `maniac.cache`, a single typed-fact facade backed by DiskCache (ADR-0041).
-   It owns storage, expiry, and concurrent access; fact owners supply stable keys and validate their recorded evidence.
-3. Add persistent, validated inventory and provider-detection records.
-   Their inputs must include PATH-directory ordering and executable identity, plus provider-specific metadata that establishes package, version, install root, and source.
-4. Add persistent, validated local-manpage reachability records.
-   Their inputs must include the manifest, manpath configuration, resolver result, and page or man-database fingerprints; a cache miss must retain `man -w` as authority.
-5. Move the existing version-pinned upstream cache behind the same facade and recompose rows from validated facts.
-6. Benchmark cold, warm, metadata-change, PATH-shadowing, manifest-change, corrupt-cache, and concurrent-process cases before expanding the cache.
-
-### Constraints and deferred choices
-
-Do not skip system PATH directories: it breaks first-entry shadowing and previously had no measurable safe benefit.
-Cache external facts, not pure derivations such as `ToolRow`; recomposition is cheap and keeps one answer model.
-DiskCache is the selected private storage engine (ADR-0041), while MANIAC validates the source evidence for every reusable fact.
-`--no-cache` remains deferred in `docs/BACKLOG.md` until the persistent-cache contract is settled.
+Nothing here is live work.
+Read ADR-0045 before proposing a cache for `list` again: three of its findings are reasons a
+whole class of fact cannot be cached at all, not incidental details of this attempt.
 
 ## Architecture review follow-up
 
