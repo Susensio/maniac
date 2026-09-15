@@ -321,7 +321,16 @@ A Codex review of the recovery work returned five findings; four were confirmed 
 
 ### Known gaps
 
-The scan runs on transaction open, not on every load, so `maniac list` still does not report drift.
-That is narrower than the decision taken and is in the backlog; the scan is read-only and does not conflict with ADR-0034's load purity.
-Tier-1 direct provider links are not reconstructible, reconstructed entries claim a tier they cannot know, and an ADR-0032 migration interrupted mid-relink stays stuck (`BUG:` at `lifecycle.py:276`).
-All four are in `docs/BACKLOG.md`.
+Two of the four first-cut gaps are closed.
+The scan now runs on every `read`, not only on transaction open (`477117b`), so drift is computed on the read path; `Read.links` carries it, and rendering it in the `list` table is what remains.
+Reconstructed entries recover their real tier from the provenance header (`aa5b65a`) instead of claiming `Tier.SYNTHESIS` — against real data, all four stamped pages under `~/.local/share/maniac/manpages` recover their correct model, and the live 2-entry manifest scans in 0.157 ms against an 11.8 s `list`.
+Still open: tier-1 direct provider links are not reconstructible, and an ADR-0032 migration interrupted mid-relink stays stuck (`BUG:` at `lifecycle.py:276`).
+Both are in `docs/BACKLOG.md`, and the second may be moot -- see below.
+
+### The migrations may have nothing to migrate
+
+ADR-0028's `_migrate_links` fires only on entries with `target is None`; ADR-0032's `_migrate_install_root_links` fires only on `tier=INSTALL_ROOT` entries.
+The live manifest holds two entries, `aichat` and `ty`, both `tier=synthesis` with targets set.
+Neither migration has ever had anything to do on the only machine that exists, and both ran on every install and uninstall this session.
+This is pre-1.0 (`CLAUDE.md`: the repository is the whole world, no shims to spare a caller), and the ADR-0032 path carries a permanent-corruption bug.
+Deleting both migrations rather than fixing that bug is on the table; it turns on whether any manifest exists on another machine or in a restorable backup.

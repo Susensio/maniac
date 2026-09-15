@@ -68,14 +68,17 @@ worse option — `docs/BACKLOG.md` already carries that signature as a defect.
 
 Two writes per operation replace N+1.
 
-`lifecycle._seed_from_headers`, `list_installed_manpages` and `read_provenance_header` are
-deleted: recovery now reads link targets, which ADR-0028 made the stronger evidence.
+`lifecycle._seed_from_headers` and `list_installed_manpages` are deleted: recovery now reads
+link targets, which ADR-0028 made the stronger evidence.
+`read_provenance_header` went with them and was restored in `aa5b65a` under `manifest`, for
+the narrower job it is still the only evidence for — see below.
 
-The structural scan runs on every transaction open, not inside `load`/`read`, which stay pure
-deserialization per ADR-0034.
-This is narrower than intended — the scan is itself read-only and could run on every load, so
-that `maniac list` reports drift rather than only write paths noticing it.
-Recorded in `docs/BACKLOG.md`.
+The structural scan runs on every `read`, not only on transaction open.
+It first shipped on transaction open alone, which meant only write paths could notice drift;
+that was corrected in `477117b`.
+ADR-0034 is unaffected: the scan is `lstat`/`readlink` only, and forbidding filesystem side
+effects in `load` never forbade reading the filesystem.
+`Read` carries the link state; rendering it in the `list` table is still outstanding.
 
 Tier-1 direct provider links are not reconstructible.
 "Not under `output_dir`" is not evidence of a provider root, and adopting one would let
@@ -83,9 +86,15 @@ MANIAC replace and later remove a symlink the user owns.
 Refusing to guess is consistent with ADR-0020 and ADR-0029; the cost is that a lost manifest
 loses tier-1 ownership entirely.
 
-Reconstructed entries claim `Tier.SYNTHESIS` with `source="reconstructed"`.
-The source is honest and the tier is not — `output_dir` holds tier-2 and tier-3 pages alike
-and nothing on disk separates them.
+Reconstructed entries recover their real tier from the provenance header synthesis stamps
+(`aa5b65a`). A header present means `Tier.SYNTHESIS` and its `Model:` recovers `source`;
+absent, under `output_dir`, means `Tier.REPOSITORY`.
+The first cut stamped everything `Tier.SYNTHESIS`, on the belief that nothing on disk
+separated the two — untrue, the header does, and deleting `read_provenance_header` with
+`_seed_from_headers` discarded a discriminator that was still valid.
+The reader is deliberately scoped so it cannot seed ownership again: it takes no `Config`, so
+it cannot reach `output_dir`, and it returns a tier and source rather than an `Entry`.
+Link targets remain the ownership evidence.
 
 An ADR-0032 install-root migration interrupted between relinking and its manifest write stays
 stuck: the eligibility guard skips it forever and uninstall reports it MODIFIED.
