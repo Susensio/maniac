@@ -5,25 +5,15 @@ Landed work lives in `docs/adr/` and the git history; it is removed from here on
 
 ## Unfinished
 
-### The `gh` credential change was never independently reviewed
-
-`b60459d` made GitHub API requests reuse the `gh` credential, and the `coding` skill asks for an independent review of a finished behaviour-changing feature.
-That review never ran.
-Verified live outside the sandbox on 2026-09-16 -- token resolved, allowlist admitted `api.github.com` and refused `github.com`, a lookalike and a subdomain, a real request reported a 5000 ceiling rather than 60 -- but a live check is not a review.
-
-### Cross-host redirect stripping cannot be exercised end to end
-
-Covered by unit tests only.
-Release assets are fetched from `browser_download_url`, a `github.com` URL, so they never carry the header to strip.
-Defence in depth against a future caller authenticating against a redirecting endpoint, not a path production reaches today.
-
-### `Read.links` is computed and never shown
-
-The manifest's structural link scan runs on every read (ADR-0046) and `Read` carries the result, but nothing renders it.
-`maniac list` therefore still cannot tell you the manifest disagrees with the disk.
-This waited on the list fact cache and is now simply open; `docs/BACKLOG.md` carries it.
+Nothing outstanding.
 
 ## Live-system facts worth not rediscovering
+
+Cross-host redirect stripping cannot be exercised end to end, and this is not a gap to close.
+Release assets are fetched from `browser_download_url`, a `github.com` URL, so they never carry the header to strip.
+It is defence in depth against a future caller authenticating against a redirecting endpoint, not a path production reaches today, so unit tests are the only coverage it can have.
+The independent review of the `gh` credential work ran on 2026-09-16 and passed: no credential can reach a non-GitHub host on any path in the tree.
+Its three low findings were closed in `5a3d0f7` -- the host allowlist grew regression tests for the suffix and subdomain lookalikes, the redirect handler now compares scheme as well as host so a same-host `https`-to-`http` downgrade drops the header, and an environment-supplied token is stripped rather than passed through raw.
 
 The development machine is the only MANIAC installation in existence -- solo tool, solo developer, pre-1.0.
 Its manifest holds two entries, `aichat` and `ty`, both `tier=synthesis` with targets set.

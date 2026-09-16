@@ -102,17 +102,8 @@ These are findings the work surfaced and deliberately did not take; they are fir
   The abandoned fact-cache branch neutralized both with an evidence-driven `clear_source_cache()` call, so dropping that branch leaves this unaddressed; a fix here needs its own invalidation boundary rather than that machinery.
 
 ## Refactors and architecture
-- Remove `--cache-dir` from the public CLI.
-  Keep the cache path in `Config` for internal operation and configuration, but do not expose disposable repository storage as an install or source command choice.
-- Remove `--output-dir` from `install`.
-  It currently controls tier-3 workspace files while the installed symlink target remains the configured durable output directory, so it is not an installation destination despite its name.
-- Remove `--prompt-file` and stop saving the assembled LLM prompt by default.
-  The prompt is not reused by any command and is volatile debugging material; retain the context snapshot because `eval` currently reads it.
-- Replace `--generate` and `--no-generate` with one explicit synthesis opt-in.
-  Keep synthesis in ordinary install by default, and replace the confusing pair with the explicit opt-out `--no-synthesize`; the existing tier-2 fallback policy still references `--generate` and needs the rename.
-
 - Roll back earlier pages when a grouped reinstall fails partway.
-  `BUG:` at `maniac/orchestration/install.py:211`, found by Codex review of ADR-0046's work and reproduced.
+  Marked `BUG:` in `maniac/orchestration/install.py`; found by Codex review of ADR-0046's work and reproduced.
   ADR-0046's one-transaction boundary means no page is *recorded* when a later one fails, and ADR-0046's orphan adoption recovers a first-time install's stray symlink and backup -- that half is by design, not a defect.
   A reinstall is the gap: the entry already exists carrying the old checksum while the durable target now holds the new bytes, so uninstall reports MODIFIED.
   Adoption only builds entries that are missing; it never corrects one that is present and wrong.
