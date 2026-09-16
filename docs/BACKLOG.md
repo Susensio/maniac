@@ -72,7 +72,11 @@ These are findings the work surfaced and deliberately did not take; they are fir
 - Prove a page documents a different version than the binary it is offered for.
   Live case found 2026-09-16 and not yet acted on: `man python` serves `/usr/share/man/man1/python3.12.1.gz`, Debian's system page, while `python` on `$PATH` resolves to mise's 3.14.7 and `man python3.14` has no page at all.
   MANIAC renders that row `unverified`, which is honest but understates it -- the evidence to call it wrong is available on both sides, and this is the failure the tool exists to surface.
-  The binary reports `3.14.7`; the page's filename and its roff header both say 3.12.
+  Corrected 2026-09-16 after checking: the page's roff header carries no version at all -- it is `.TH PYTHON "1"`, name and section only -- so a roff-header verifier cannot reach this case and an earlier revision of this item claiming otherwise was wrong.
+  The evidence that does exist is package ownership: `dpkg-query -S` names `python3.12-minimal` as the page's owner, while the binary's installation record says package `python`, version `3.14.7`.
+  `verify_external_page` already reads exactly that and already returns `UNVERIFIED` here, because ADR-0026 requires proving the page-owning package and the installation are the same package before any version comparison, and these genuinely are not.
+  So the real defect is narrower than a missing verifier: `UNVERIFIED` conflates "no evidence was available" with "positive evidence that another package owns this page".
+  The second is a stronger, actionable statement and the state ladder has no room for it.
   That pairs with the existing conservative roff-header verifier item: version comparison is the same mechanism, applied to refute a page rather than to establish freshness.
   Refuting needs a higher bar than confirming -- an unparsed header must stay `unverified`, never become a mismatch claim -- so decide what counts as unambiguous version evidence before wiring it to any state.
   Do not generalize from a version-suffixed filename alone: `python3.12.1.gz` is legible here but names like `git-log.1` are not versions.
