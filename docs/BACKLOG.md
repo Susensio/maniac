@@ -28,18 +28,18 @@ These are findings the work surfaced and deliberately did not take; they are fir
 
 ### Structure
 
-- Remove `_grouped_for_display`'s dead `pending` parameter.
-  No caller passes it, so the `row.tool in pending` element of the group key is constantly
-  `False` and the parameter silently widens the key for nobody.
 - Thread probe definitiveness back as a return value instead of `docs.cache`'s module-level `_lookup_state` thread-local.
   ADR-0033's split made that cross-module channel visible without removing it: `cache` writes it and `repository` reads it.
   Removing it touches every probe signature, so it was left out of the split deliberately.
-- Replace `installer.install_manpage`'s parameter list with one entry record.
-  `manifest.record` is gone -- ADR-0046 replaced it with `Transaction.put`, which takes an `Entry` precisely to avoid re-declaring that list.
-  `install_manpage` still carries it and still trips the raised `max-args = 10`, which is the point of that threshold: a dozen parameters is coordination, seven is a command surface.
-  `put` is the shape to follow.
-  Getting worse, not holding steady: `just audit` counted 13 arguments at `611d2af`, having gained one when the 2026-09-16 dry-run work threaded another flag through.
-  Every behavior added to install pays this parameter list again, which is the argument for taking it before the next one.
+- Decide whether `Entry` splits into a descriptive draft and a written record.
+  Surfaced by collapsing `install_manpage`'s parameter list into an `Entry` (`62b6881`, 13 arguments to 8).
+  `path` and `checksum` are `Entry` fields no caller can know at call time -- `install_manpage` resolves the destination and hashes the file itself -- so `draft_entry` fills them with inert placeholders (`Path()`, `""`) that `dataclasses.replace` overwrites before anything reads or stores them.
+  Documented and functionally inert, so this is a wart rather than a defect, and the alternative was worse: making every call site duplicate that resolution moves coordination outward instead of removing it.
+  The cost is that one type now serves two roles, with two fields meaningless in the first.
+  Reopening `Entry` touches ADR-0046's manifest boundary, so it is an ADR-level decision, not a mechanical follow-up.
+- Give `tests/manifest_support.record_entry` the same treatment `install_manpage` just got.
+  It declares 12 parameters and reassembles them into `txn.put(tool, Entry(...))` -- the exact list `Entry` exists to avoid re-declaring, and now the only `PLR0913` finding `just audit` reports.
+  Pre-existing and unchanged by the 2026-09-16 refactor, which fixed the production path and left its test-support twin declaring the same list.
 - Split `sources/docs/release._fetch_and_materialize_release_asset`'s direct-asset and archive-asset flows.
   They are two flows sharing one function, which is why it still carries seven returns after ADR-0033.
 
