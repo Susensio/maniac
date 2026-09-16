@@ -40,7 +40,8 @@ Refusals keep the presentation ADR-0020 gave them.
 They are still printed as refusals, in yellow, naming their reason, and still read differently from a crash — the exit status changes, the diagnostics do not.
 A multi-tool invocation still attempts every tool it was given and reports per-tool outcomes; the status reflects whether any tool ended without a page.
 
-`--dry-run` is not a refusal and is unaffected: a preview that writes nothing has done what was asked and exits zero.
+`--dry-run` is not a refusal, and its exit status reports the verdict the preview reached: zero when a page would be installed, non-zero when none would.
+A dry run answers "would this work?", and that answer is only useful to a caller if it reaches the exit status.
 
 ADR-0020's decision about *which* binaries to refuse is untouched. This settles only what the process reports afterwards.
 
@@ -57,3 +58,11 @@ The rule is stated here in terms of the outcome the caller observes, so that the
 
 Any future refusal inherits the non-zero status by default.
 A refusal that genuinely should exit zero would be a real exception to a stated rule and would have to supersede this record rather than quietly join the `InstallRefused` arm.
+
+## Corrections
+
+**2026-09-16** — the Decision's `--dry-run` sentence originally read: "`--dry-run` is not a refusal and is unaffected: a preview that writes nothing has done what was asked and exits zero."
+An independent review of the implementing commits found that `install --dry-run --no-synthesize` with no tier-1 or tier-2 candidate already exited non-zero, contradicting it.
+The sentence was written before that combination was known to exist, and reading it literally would have made a dry run report success for a tool it had just determined could not be installed.
+Replaced with the rule above: a dry run's exit status reports the verdict it reached, not the fact that it wrote nothing.
+The exemption dry-run actually has is from writing, not from the rule.

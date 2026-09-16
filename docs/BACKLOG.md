@@ -38,6 +38,8 @@ These are findings the work surfaced and deliberately did not take; they are fir
   `manifest.record` is gone -- ADR-0046 replaced it with `Transaction.put`, which takes an `Entry` precisely to avoid re-declaring that list.
   `install_manpage` still carries it and still trips the raised `max-args = 10`, which is the point of that threshold: a dozen parameters is coordination, seven is a command surface.
   `put` is the shape to follow.
+  Getting worse, not holding steady: `just audit` counted 13 arguments at `611d2af`, having gained one when the 2026-09-16 dry-run work threaded another flag through.
+  Every behavior added to install pays this parameter list again, which is the argument for taking it before the next one.
 - Split `sources/docs/release._fetch_and_materialize_release_asset`'s direct-asset and archive-asset flows.
   They are two flows sharing one function, which is why it still carries seven returns after ADR-0033.
 
@@ -51,6 +53,16 @@ These are findings the work surfaced and deliberately did not take; they are fir
 
 ## Bugs and correctness
 
+- Stop `install --dry-run` writing to the repository cache.
+  The 2026-09-16 work made the preview leave the manpath, the manifest, `output_dir` and `intermediate_dir` untouched, and opens no manifest transaction; the cache half of that item is undone.
+  Tier 2's `select_repository` and tier 3's `_extract_docs` both run before `dry_run` is consulted, so a preview still takes the `sources/docs/cache.py` lock, writes JSON cache entries and release assets, and lets `sources/docs/repository.py` mkdir and `git clone`.
+  `pipeline.py` is honest about it in a comment and the flag's help now says "without installing or generating" rather than "without writing anything", so nothing currently lies -- the behaviour is just narrower than the original item asked for.
+  Fixing it means threading `dry_run` into the discovery layer, which is why it was not taken with the rest.
+  The three tests asserting `not cfg.cache_dir.exists()` pass only because discovery is monkeypatched or the fake provider has no source; they cannot catch a regression here.
+- Widen install's unmanaged-destination precheck beyond the default `<tool>.1`.
+  It resolves only `cfg.man_dir / f"{tool}.1"`, which is exactly tier 3's destination, so no LLM call, crawl or context snapshot is ever thrown away -- that is the case it was built for and it covers it.
+  Tier 1 destinations (`<tool>.1.gz`, other sections) and tier-2 companion pages can still miss it and be refused later by `_take_backup`.
+  The wasted work there is resolution and release discovery rather than generation, which is why this is a widening and not a defect.
 - Distinguish a definitive tier-2 absence from a transient repository probe failure.
   The latter must not silently fall through to synthesis, which can conceal a wrong repository or a network, tag, tree, release, or validation failure.
   Report the consulted repository and tier immediately; then decide between interactive confirmation and uniform refusal while preserving ordinary synthesis fallback and the explicit `--no-synthesize` opt-out.
