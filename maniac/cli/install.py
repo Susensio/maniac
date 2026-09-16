@@ -79,16 +79,24 @@ def install(
                     config=cfg,
                 )
             _render_install(console, outcome)
+            if outcome.tier is None:
+                # No install-root or repository page found under
+                # --no-synthesize: no page for this tool either, so it
+                # counts toward the exit status too (ADR-0048).
+                failures += 1
         except InstallRefused as e:
-            # A refusal, not a failure: no tier ran, so nothing failed --
-            # rendered like the tier=None case above, not like an error.
+            # A refusal still leaves this tool with no page, so it counts
+            # toward the exit status like any other outcome without one
+            # (ADR-0048) -- only the exit status changes, not the yellow,
+            # reason-naming presentation ADR-0020 gave refusals.
             console.print(f"[yellow]{tool}   {e}[/yellow]")
+            failures += 1
         except (OSError, RuntimeError, ManiacError) as e:
             console.print(f"[bold red]Install failed for {tool}: {e}[/bold red]")
             failures += 1
 
     if failures:
         console.print(
-            f"\n[bold red]{failures}/{len(tools)} tool(s) failed to install.[/bold red]"
+            f"\n[bold red]{failures}/{len(tools)} tool(s) did not install.[/bold red]"
         )
         raise typer.Exit(1)

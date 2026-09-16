@@ -348,10 +348,47 @@ def test_cli_install_reuses_config_for_existing_destination(
 
     result = runner.invoke(app, ["install", "mytool"])
 
-    assert result.exit_code == 0
+    assert result.exit_code != 0
     assert "foreign or vendor manpage already exists" in result.output
     assert len(constructed) == 1
     assert observed == constructed
+
+
+def test_cli_install_exits_nonzero_for_unreachable_binary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ADR-0048: ADR-0020's unreachable-binary refusal still produces no page."""
+    monkeypatch.setattr("maniac.sources.loginpath.which_login", lambda name: None)
+    monkeypatch.setattr(
+        "maniac.orchestration.context.resolution.find_installation",
+        lambda name, bin_dir=None: None,
+    )
+
+    result = runner.invoke(app, ["install", "project-local-tool"])
+
+    assert result.exit_code != 0
+    assert "login shell" in result.output
+
+
+def test_cli_install_exits_nonzero_when_no_synthesize_finds_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ADR-0048: `--no-synthesize` finding nothing at tiers 1-2 is still no page."""
+    monkeypatch.setattr(
+        "maniac.sources.loginpath.which_login",
+        lambda name: Path(f"/bin/{name}"),
+    )
+    monkeypatch.setattr(
+        "maniac.orchestration.context.resolution.find_installation",
+        lambda name, bin_dir=None: None,
+    )
+
+    result = runner.invoke(
+        app, ["install", "nonexistent_unknown_tool_xyz", "--no-synthesize"]
+    )
+
+    assert result.exit_code != 0
+    assert "no install-root or repository page found" in result.output
 
 
 def test_cli_install_always_installs(
@@ -426,7 +463,7 @@ def test_fish_completion_includes_only_dry_run() -> None:
     )
 
     assert result.exit_code == 0
-    assert result.output == "--dry-run\tSkip LLM synthesis.\n"
+    assert result.output == "--dry-run\tPreview without writing anything.\n"
 
     result = runner.invoke(
         app,
@@ -598,7 +635,7 @@ def test_cli_install_multiple_all_fail_exits_nonzero(
     assert res.exit_code == 1
     assert "Install failed for toolone: boom" in res.output
     assert "Install failed for tooltwo: boom" in res.output
-    assert "2/2 tool(s) failed" in res.output
+    assert "2/2 tool(s) did not install" in res.output
 
 
 def test_cli_install_multiple_partial_success_exits_nonzero(
@@ -633,7 +670,7 @@ def test_cli_install_multiple_partial_success_exits_nonzero(
     monkeypatch.setattr("maniac.orchestration.pipeline.synthesize", _synthesize)
     res = runner.invoke(app, ["install", "goodtool", "badtool"])
     assert res.exit_code == 1
-    assert "1/2 tool(s) failed" in res.output
+    assert "1/2 tool(s) did not install" in res.output
 
 
 def test_render_install_does_not_swallow_bracketed_detail() -> None:
