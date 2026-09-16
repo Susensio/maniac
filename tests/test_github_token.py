@@ -108,3 +108,24 @@ def test_resolution_is_memoized_per_process(monkeypatch: pytest.MonkeyPatch) -> 
 
     monkeypatch.setenv("GH_TOKEN", "second")
     assert github_token.resolve_github_token() == "first"
+
+
+def test_env_github_token_is_stripped(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GH_TOKEN", "from-env\n")
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+
+    assert github_token.resolve_github_token() == "from-env"
+
+
+def test_whitespace_only_env_github_token_falls_through(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GH_TOKEN", "   \n")
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+
+    def fake_run(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(cmd, 0, stdout="from-gh-cli\n", stderr="")
+
+    monkeypatch.setattr(github_token.subprocess, "run", fake_run)
+
+    assert github_token.resolve_github_token() == "from-gh-cli"

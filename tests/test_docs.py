@@ -947,40 +947,6 @@ def test_redirect_handler_drops_authorization_on_scheme_downgrade() -> None:
     assert "Authorization" not in new_request.headers
 
 
-def test_env_github_token_is_stripped(monkeypatch: pytest.MonkeyPatch) -> None:
-    from maniac import github_token
-
-    github_token.resolve_github_token.cache_clear()
-    monkeypatch.setenv("GH_TOKEN", "from-env\n")
-    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
-
-    try:
-        assert github_token.resolve_github_token() == "from-env"
-    finally:
-        github_token.resolve_github_token.cache_clear()
-
-
-def test_whitespace_only_env_github_token_falls_through(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    import subprocess
-
-    from maniac import github_token
-
-    def _fake_run(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
-        return subprocess.CompletedProcess(cmd, 0, stdout="from-gh-cli\n", stderr="")
-
-    github_token.resolve_github_token.cache_clear()
-    monkeypatch.setenv("GH_TOKEN", "   \n")
-    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
-    monkeypatch.setattr(github_token.subprocess, "run", _fake_run)
-
-    try:
-        assert github_token.resolve_github_token() == "from-gh-cli"
-    finally:
-        github_token.resolve_github_token.cache_clear()
-
-
 def test_materialize_page_replaces_an_interrupted_write(tmp_path: Path) -> None:
     source = RepoSource(name="tool", target="owner/tool", is_local=False)
     key = pages.sha256(f"{source.target}\0v1\0tool.1".encode()).hexdigest()
