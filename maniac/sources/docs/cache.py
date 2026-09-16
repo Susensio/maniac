@@ -57,9 +57,11 @@ class _AuthStrippingRedirectHandler(HTTPRedirectHandler):
         newurl: str,
     ) -> Request | None:
         new_request = super().redirect_request(req, fp, code, msg, headers, newurl)
-        if (
-            new_request is not None
-            and urlsplit(newurl).hostname != urlsplit(req.full_url).hostname
+        old = urlsplit(req.full_url)
+        new = urlsplit(newurl)
+        if new_request is not None and (new.scheme, new.hostname) != (
+            old.scheme,
+            old.hostname,
         ):
             new_request.remove_header("Authorization")
         return new_request

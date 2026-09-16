@@ -32,8 +32,8 @@ def resolve_github_token() -> str | None:
     """
     for name in ("GH_TOKEN", "GITHUB_TOKEN"):
         token = os.environ.get(name)
-        if token:
-            return token
+        if token and token.strip():
+            return token.strip()
     try:
         # --hostname pins the lookup to github.com: bare `gh auth token`
         # returns whatever host GH_HOST selects, and a GitHub Enterprise

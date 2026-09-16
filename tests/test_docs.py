@@ -848,11 +848,27 @@ def test_authorization_header_only_for_github_api_host(
         cache._github_headers("https://api.github.com/repos/x/y")["Authorization"]
         == "Bearer stub-token"
     )
+    assert (
+        cache._github_headers("https://API.GitHub.com/x")["Authorization"]
+        == "Bearer stub-token"
+    )
+    assert (
+        cache._github_headers("https://api.github.com:443/x")["Authorization"]
+        == "Bearer stub-token"
+    )
     assert "Authorization" not in cache._github_headers(
         "https://objects.githubusercontent.com/x"
     )
     assert "Authorization" not in cache._github_headers(
         "https://evil.example.com/api.github.com"
+    )
+    assert "Authorization" not in cache._github_headers(
+        "https://api.github.com.evil.test/x"
+    )
+    assert "Authorization" not in cache._github_headers("https://evil.api.github.com/x")
+    assert "Authorization" not in cache._github_headers("https://api.github.com./x")
+    assert "Authorization" not in cache._github_headers(
+        "https://api.github.com@evil.test/x"
     )
 
 
@@ -906,6 +922,63 @@ def test_redirect_handler_keeps_authorization_same_host() -> None:
 
     assert new_request is not None
     assert new_request.headers.get("Authorization") == "Bearer secret"
+
+
+def test_redirect_handler_drops_authorization_on_scheme_downgrade() -> None:
+    from http.client import HTTPMessage
+    from urllib.request import Request
+
+    request = Request(
+        "https://api.github.com/repos/x/y/releases/assets/1",
+        headers={"Authorization": "Bearer secret", "User-Agent": "maniac"},
+    )
+    handler = cache._AuthStrippingRedirectHandler()
+
+    new_request = handler.redirect_request(
+        request,
+        io.BytesIO(),
+        302,
+        "Found",
+        HTTPMessage(),
+        "http://api.github.com/other/path",
+    )
+
+    assert new_request is not None
+    assert "Authorization" not in new_request.headers
+
+
+def test_env_github_token_is_stripped(monkeypatch: pytest.MonkeyPatch) -> None:
+    from maniac import github_token
+
+    github_token.resolve_github_token.cache_clear()
+    monkeypatch.setenv("GH_TOKEN", "from-env\n")
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+
+    try:
+        assert github_token.resolve_github_token() == "from-env"
+    finally:
+        github_token.resolve_github_token.cache_clear()
+
+
+def test_whitespace_only_env_github_token_falls_through(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import subprocess
+
+    from maniac import github_token
+
+    def _fake_run(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(cmd, 0, stdout="from-gh-cli\n", stderr="")
+
+    github_token.resolve_github_token.cache_clear()
+    monkeypatch.setenv("GH_TOKEN", "   \n")
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    monkeypatch.setattr(github_token.subprocess, "run", _fake_run)
+
+    try:
+        assert github_token.resolve_github_token() == "from-gh-cli"
+    finally:
+        github_token.resolve_github_token.cache_clear()
 
 
 def test_materialize_page_replaces_an_interrupted_write(tmp_path: Path) -> None:
