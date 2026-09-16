@@ -494,6 +494,92 @@ def test_uninstall_manpage_null_backup_removes_and_restores_nothing(
     assert not installed_file.exists()
 
 
+def test_uninstall_manpage_restore_reports_restored_not_empty(tmp_path: Path) -> None:
+    """F1: a bytes-matching entry restoring a vendor backup must not read as
+    'nothing happened' -- `UninstallResult` needs a way to say the page was
+    restored even when nothing was `removed` outright and its bytes never
+    changed, so `changed` stays empty too.
+    """
+    man_dir = tmp_path / "man1"
+    man_dir.mkdir(parents=True)
+    output_dir = tmp_path / "data_manpages"
+    output_dir.mkdir(parents=True)
+    backup_dir = tmp_path / "backups"
+    backup_dir.mkdir(parents=True)
+
+    target = output_dir / "tool.1"
+    target.write_text(".TH TOOL 1 maniac", encoding="utf-8")
+    installed_file = man_dir / "tool.1"
+    installed_file.symlink_to(target)
+
+    backup_file = backup_dir / "tool.1"
+    backup_file.write_text(".TH TOOL 1 vendor", encoding="utf-8")
+
+    cfg = Config(man_dir=man_dir, output_dir=output_dir, backup_dir=backup_dir)
+    record_entry(
+        "tool",
+        installed_file,
+        Tier.SYNTHESIS,
+        "model",
+        manifest_module.checksum_of(target),
+        backup=backup_file,
+        target=target,
+        config=cfg,
+    )
+
+    result = uninstall_manpage("tool", purge=False, config=cfg)
+
+    # The durable `output_dir` target itself is orphaned by the restore and
+    # discarded (`lifecycle.discard_durable_target`) -- legitimately
+    # `removed` -- but the manpath page `installed_file` is not: it exists
+    # again, as the vendor's copy.
+    assert installed_file not in result.removed
+    assert result.changed == []
+    assert result.restored == [installed_file]
+    assert installed_file.exists()
+    assert installed_file.read_text(encoding="utf-8") == ".TH TOOL 1 vendor"
+
+
+def test_uninstall_manpage_restore_of_provider_target_reports_restored(
+    tmp_path: Path,
+) -> None:
+    """F1's tier-1 `provider_target` case: `_bytes_changed` is unconditionally
+    False and `discard_durable_target` is a no-op for a provider target, so
+    `restored` is the only signal left that anything happened at all.
+    """
+    man_dir = tmp_path / "man1"
+    man_dir.mkdir(parents=True)
+    backup_dir = tmp_path / "backups"
+    backup_dir.mkdir(parents=True)
+    provider_root = tmp_path / "mise" / "1.0.0" / "share" / "man" / "man1"
+    provider_root.mkdir(parents=True)
+
+    source = provider_root / "tool.1"
+    source.write_text(".TH TOOL 1 provider", encoding="utf-8")
+    vendor_page = man_dir / "tool.1"
+    vendor_page.write_text(".TH TOOL 1 vendor", encoding="utf-8")
+
+    cfg = Config(man_dir=man_dir, output_dir=tmp_path / "mise", backup_dir=backup_dir)
+    installed = install_manpage(
+        source,
+        "tool",
+        Tier.INSTALL_ROOT,
+        "mise-root",
+        durable_source=True,
+        provider_target=True,
+        force=True,
+        config=cfg,
+    )
+
+    result = uninstall_manpage("tool", config=cfg)
+
+    assert result.removed == []
+    assert result.changed == []
+    assert result.restored == [installed]
+    assert installed.exists()
+    assert installed.read_text(encoding="utf-8") == ".TH TOOL 1 vendor"
+
+
 def test_uninstall_manpage_purge(tmp_path: Path) -> None:
     """M11: purge also removes the orphaned generated Markdown and context files."""
     man_dir = tmp_path / "man1"
@@ -1008,8 +1094,14 @@ def _legacy_targetless_entry(
 
 
 def test_uninstall_removes_a_legacy_targetless_entry(tmp_path: Path) -> None:
-    """A targetless entry is removed outright -- there is no link to check
-    for retargeting or dangling, so nothing here can be kept."""
+    """A targetless entry occupied by a plain regular file is removed outright.
+
+    A symlink or dangling path in its place would be kept instead --
+    `_is_modified` treats those as not provably MANIAC's page, targetless
+    or not -- but a plain file with no recorded target can only fall
+    through to a bytes check, which this fixture's matching checksum
+    passes.
+    """
     cfg, installed = _legacy_targetless_entry(tmp_path)
 
     result = uninstall_manpage("tool", config=cfg)
@@ -1060,6 +1152,33 @@ def test_uninstall_preserves_a_legacy_targetless_entry_retargeted_by_the_user(
     assert installed.is_symlink()
     assert installed.resolve() == users_own_page.resolve()
     assert manifest_module.lookup("tool", config=cfg) is not None
+
+
+def test_uninstall_preserves_a_legacy_targetless_entry_retargeted_at_durable_page(
+    tmp_path: Path,
+) -> None:
+    """F2: retargeting at MANIAC's own `output_dir` page must not lose that page.
+
+    `entry.target is None` for a legacy entry, so `_remove_orphaned_roff`'s
+    guard (`stored_roff != entry.target`) is unconditionally true -- it
+    would unlink `output_dir/tool.1` even though the kept link still points
+    there, leaving a dangling symlink behind the very "kept" outcome this
+    fixture is retargeted to test.
+    """
+    cfg, installed = _legacy_targetless_entry(tmp_path)
+    durable_page = cfg.output_dir / "tool.1"
+    durable_page.parent.mkdir(parents=True, exist_ok=True)
+    durable_page.write_text(".TH TOOL 1 durable", encoding="utf-8")
+    installed.unlink()
+    installed.symlink_to(durable_page)
+
+    result = uninstall_manpage("tool", config=cfg)
+
+    assert result.modified_kept == [installed]
+    assert result.removed == []
+    assert installed.is_symlink()
+    assert installed.resolve() == durable_page.resolve()
+    assert durable_page.exists()
 
 
 def test_install_refuses_to_clobber_another_entrys_durable_target(

@@ -670,17 +670,19 @@ def test_cli_uninstall_changed(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) 
     for a targetless entry with a vendor backup: `_remove_recorded_manpage`
     restores the backup instead of appending to `removed_paths`, so
     `removed` stays empty while `changed` still names the page
-    (`installer.py`). A stub pairing `removed=[changed_path]` with
-    `changed=[changed_path]` never reaches the guard this exercises --
-    `result.removed` alone already keeps the early "not found" branch from
-    firing.
+    (`installer.py`). `restored=[changed_path]` is what now keeps that shape
+    out of the "not found" guard (F1) -- `changed` alone no longer does, so
+    a stub carrying `changed` without `restored` (or `removed`) is not the
+    production shape and would wrongly hit the guard.
     """
     from maniac.cli.uninstall import compute_uninstall
 
     changed_path = tmp_path / "man1" / "mytool.1"
     monkeypatch.setattr(
         "maniac.installer.uninstall_manpage",
-        lambda tool, purge, config: UninstallResult(changed=[changed_path]),
+        lambda tool, purge, config: UninstallResult(
+            changed=[changed_path], restored=[changed_path]
+        ),
     )
     outcome = compute_uninstall("mytool")
     assert outcome.result.changed == [changed_path]
@@ -690,7 +692,32 @@ def test_cli_uninstall_changed(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) 
     assert res.exit_code == 0
     assert "No installed manpage found" not in res.output
     assert "bytes had changed since install" in res.output
-    assert "bytes had changed since install" in res.output
+
+
+def test_cli_uninstall_restored(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """F1: a bytes-matching entry with a vendor backup must not read as
+    'nothing happened' -- `removed`, `changed` and `modified_kept` are all
+    empty for this shape, so `restored` is the only field the guard can
+    check, and the render path needs a line for it too.
+    """
+    from maniac.cli.uninstall import compute_uninstall
+
+    restored_path = tmp_path / "man1" / "mytool.1"
+    monkeypatch.setattr(
+        "maniac.installer.uninstall_manpage",
+        lambda tool, purge, config: UninstallResult(restored=[restored_path]),
+    )
+    outcome = compute_uninstall("mytool")
+    assert outcome.result.restored == [restored_path]
+    assert outcome.result.removed == []
+    assert outcome.result.changed == []
+
+    res = runner.invoke(app, ["uninstall", "mytool"])
+    assert res.exit_code == 0
+    assert "No installed manpage found" not in res.output
+    assert "Uninstalled manpage for mytool!" in res.output
 
 
 def test_cli_install_multiple_all_fail_exits_nonzero(

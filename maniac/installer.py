@@ -243,6 +243,11 @@ class UninstallResult:
     # The manifest entry, not the page's current bytes, is what proves
     # MANIAC's ownership (ADR-0017), so this is a warning, not a refusal.
     changed: list[Path] = field(default_factory=list)
+    # Every group member whose vendor backup was restored in its place --
+    # not `removed`, the manpath page still exists (as the vendor's copy),
+    # but MANIAC's page is gone all the same, so `_render_uninstall`'s
+    # "nothing happened" guard must know about it too.
+    restored: list[Path] = field(default_factory=list)
 
 
 def _foreign_manpage(tool_name: str, cfg: Config) -> Path | None:
@@ -304,6 +309,7 @@ def _remove_recorded_manpage(
     *,
     removed_paths: list[Path],
     changed_paths: list[Path],
+    restored_paths: list[Path],
 ) -> tuple[Entry | None, Path | None, bool]:
     """Remove a recorded link, returning its entry and whether a page was kept modified.
 
@@ -334,6 +340,7 @@ def _remove_recorded_manpage(
         # (XDG_DATA_HOME) -- separate mounts raise EXDEV on a bare rename.
         shutil.move(entry.backup, installed_file)
         logger.info("Restored vendor backup manpage", path=str(installed_file))
+        restored_paths.append(installed_file)
     else:
         removed_paths.append(installed_file)
     txn.forget(tool_name)
@@ -411,7 +418,7 @@ def uninstall_manpage(
     cfg = config or Config()
     removed_paths: list[Path] = []
     with manifest.transaction(cfg) as txn:
-        foreign_kept, modified_kept, changed = _uninstall_group(
+        foreign_kept, modified_kept, changed, restored = _uninstall_group(
             tool_name, txn, purge=purge, removed_paths=removed_paths
         )
     return UninstallResult(
@@ -419,6 +426,7 @@ def uninstall_manpage(
         foreign_kept=foreign_kept,
         modified_kept=modified_kept,
         changed=changed,
+        restored=restored,
     )
 
 
@@ -428,12 +436,13 @@ def _uninstall_group(
     *,
     purge: bool,
     removed_paths: list[Path],
-) -> tuple[Path | None, list[Path], list[Path]]:
+) -> tuple[Path | None, list[Path], list[Path], list[Path]]:
     """Remove every member of `tool_name`'s release, reporting what was kept."""
     cfg = txn.config
     foreign_kept: Path | None = None
     modified_kept: list[Path] = []
     changed: list[Path] = []
+    restored: list[Path] = []
     for member in _group_members(tool_name, txn.entries):
         # 1. Active installed manpage, wherever the manifest says MANIAC put
         # it -- the manifest's recorded path, not a `<tool>.1` guess, is what
@@ -444,12 +453,14 @@ def _uninstall_group(
             txn,
             removed_paths=removed_paths,
             changed_paths=changed,
+            restored_paths=restored,
         )
         if member_foreign is not None:
             foreign_kept = member_foreign
         if member_kept:
             assert entry is not None
             modified_kept.append(entry.path)
+            continue
 
         # 2. XDG data storage (output_dir / <tool>.1)
         _remove_orphaned_roff(member, cfg, entry, removed_paths)
@@ -457,4 +468,4 @@ def _uninstall_group(
         if purge:
             _purge_artifacts(member, cfg, removed_paths)
 
-    return foreign_kept, modified_kept, changed
+    return foreign_kept, modified_kept, changed, restored

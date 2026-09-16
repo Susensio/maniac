@@ -12,6 +12,7 @@ installation, provider, installed version and documentation source through
 all three, so tier 3 never re-resolves what tiers 1-2 already found.
 """
 
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -116,6 +117,22 @@ def run_install(
         detail = "synthesized from repo docs only"
     else:
         detail = "synthesized from --help only"
+    if dry_run:
+        # A real run's page depends on pandoc compiling the synthesized
+        # Markdown (`compile_to_man`); `synthesize` skips that step under
+        # `dry_run` entirely, so the preview has to ask the same question
+        # pandoc would answer, or it reports success on a machine where the
+        # real run would produce no page at all.
+        if shutil.which("pandoc") is None:
+            return InstallOutcome(
+                tool=tool_name,
+                tier=None,
+                detail=f"{detail}   [dry run, pandoc missing, no page would be produced]",
+                source_path=pipeline_result.roff_path,
+                installed_path=None,
+                pipeline=pipeline_result,
+            )
+        detail += "   [dry run]"
     return InstallOutcome(
         tool=tool_name,
         tier=Tier.SYNTHESIS,
@@ -150,19 +167,11 @@ def _refuse_unmanaged_destination(tool_name: str, cfg: Config, *, force: bool) -
         # `manifest.load` reads the raw file, missing what `manifest.transaction`
         # would adopt on the way in (`_adopt_orphans`): a crash between
         # linking and recording leaves MANIAC's own page here with no
-        # manifest row yet. A symlink resolving under `output_dir` is the
-        # same proof `_linked_entries`/`_entry_from_link` accept for
-        # adoption, so it is owned here too rather than refused as foreign.
-        try:
-            target = dest_file.readlink()
-        except OSError:
-            target = None
-        resolved = (
-            target
-            if target is not None and target.is_absolute()
-            else (dest_file.parent / target if target is not None else None)
-        )
-        owned = resolved is not None and manifest.is_maniac_owned_target(resolved, cfg)
+        # manifest row yet. `is_owned_symlink` is the exact rule
+        # `_entry_from_link` uses to adopt such an orphan, so it is owned
+        # here too rather than refused as foreign -- and the two places can
+        # no longer drift apart, being the one predicate.
+        owned = manifest.is_owned_symlink(dest_file, cfg)
     if owned:
         return
     raise InstallRefused(

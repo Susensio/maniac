@@ -37,19 +37,21 @@ def _render_uninstall(target_console: Any, outcome: UninstallOutcome) -> None:
         not result.removed
         and result.foreign_kept is None
         and not result.modified_kept
-        and not result.changed
+        and not result.restored
     ):
         target_console.print(
             f"[yellow]No installed manpage found for '{outcome.tool}'.[/yellow]"
         )
         return
 
-    if result.removed:
+    if result.removed or result.restored:
         target_console.print(
             f"[bold green]✓ Uninstalled manpage for {outcome.tool}![/bold green]"
         )
         for p in result.removed:
             target_console.print(f" • Removed: {p}")
+        for p in result.restored:
+            target_console.print(f" • Restored vendor backup: {p}")
 
     if result.foreign_kept is not None:
         target_console.print(

@@ -142,6 +142,32 @@ def is_maniac_owned_target(target: Path | None, config: Config) -> bool:
     return True
 
 
+def resolve_symlink_target(path: Path) -> Path | None:
+    """Return what `path` (a symlink) points at, or None if it cannot be read."""
+    try:
+        target = path.readlink()
+    except OSError:
+        return None
+    return target if target.is_absolute() else path.parent / target
+
+
+def is_owned_symlink(path: Path, config: Config) -> bool:
+    """Whether `path` is a symlink resolving to a file MANIAC's output owns.
+
+    The one rule for adopting an orphaned manpath link: only a target under
+    `output_dir` that still exists as a regular file proves anything (ADR-0028)
+    -- a dangling link resolving there is not adoptable, and neither is a
+    live one pointing anywhere else. `_entry_from_link` and the install
+    precheck both need this same rule; encoding it twice is how they drift.
+    """
+    resolved = resolve_symlink_target(path)
+    return (
+        resolved is not None
+        and resolved.is_file()
+        and is_maniac_owned_target(resolved, config)
+    )
+
+
 def _manifest_path(config: Config | None) -> Path:
     return (config or Config()).manifest_path
 
@@ -471,11 +497,11 @@ def _entry_from_link(path: Path, config: Config) -> Entry | None:
     provider link is not reconstructible, and its page reads as foreign
     until a `--force` install records it again.
     """
+    if not is_owned_symlink(path, config):
+        return None
     try:
         target = path.readlink()
         resolved = target if target.is_absolute() else path.parent / target
-        if not resolved.is_file() or not is_maniac_owned_target(resolved, config):
-            return None
         checksum = checksum_of(resolved)
     except OSError:
         return None

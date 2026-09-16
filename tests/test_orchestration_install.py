@@ -814,6 +814,46 @@ def test_run_install_does_not_refuse_its_own_orphaned_destination(
     assert outcome.tier is None
 
 
+def test_run_install_refuses_a_dangling_output_dir_symlink(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """F3: a dangling symlink under `output_dir` is not owned, precheck or not.
+
+    `_entry_from_link` requires `resolved.is_file()` before adopting a link
+    as MANIAC's own -- a target that no longer exists proves nothing. The
+    precheck must apply the identical rule (`manifest.is_owned_symlink`),
+    or it lets a run past the cheap gate that `_adopt_orphans` will refuse
+    to adopt moments later, wasting a crawl and an LLM call before
+    `_take_backup` finally raises on the same page.
+    """
+    man_dir = tmp_path / "man1"
+    man_dir.mkdir(parents=True)
+    output_dir = tmp_path / "out"
+    output_dir.mkdir(parents=True)
+    dangling_target = output_dir / "tool.1"
+    (man_dir / "tool.1").symlink_to(dangling_target)
+    assert not dangling_target.exists()
+
+    cfg = Config(
+        man_dir=man_dir,
+        cache_dir=tmp_path / "cache",
+        output_dir=output_dir,
+        intermediate_dir=tmp_path / "intermediate",
+        manifest_path=tmp_path / "state" / "installed.json",
+    )
+    monkeypatch.setattr(
+        "maniac.orchestration.context.resolution.find_installation",
+        lambda name, bin_dir=None: pytest.fail("no resolution should run on a refusal"),
+    )
+    monkeypatch.setattr(
+        "maniac.orchestration.pipeline.synthesize",
+        lambda *a, **kw: pytest.fail("no tier should run on a refusal"),
+    )
+
+    with pytest.raises(InstallRefused):
+        run_install("tool", config=cfg)
+
+
 def test_run_install_dry_run_tier3_writes_nothing(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -841,6 +881,9 @@ def test_run_install_dry_run_tier3_writes_nothing(
         "maniac.orchestration.pipeline.install_manpage",
         lambda *args, **kwargs: pytest.fail("install_manpage reached under dry_run"),
     )
+    monkeypatch.setattr(
+        "maniac.orchestration.install.shutil.which", lambda name: "/usr/bin/pandoc"
+    )
     cfg = Config(
         man_dir=tmp_path / "man1",
         cache_dir=tmp_path / "cache",
@@ -858,6 +901,50 @@ def test_run_install_dry_run_tier3_writes_nothing(
     assert not cfg.intermediate_dir.exists()
     assert not cfg.cache_dir.exists()
     assert manifest.load(cfg) == {}
+
+
+def test_run_install_dry_run_tier3_without_pandoc_reports_no_page(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """F4: a dry run must report the same verdict a real run would reach.
+
+    Without pandoc, a real tier-3 install compiles nothing and lands no
+    page, exiting non-zero (ADR-0048). Before this fix, the dry-run branch
+    always returned `tier=Tier.SYNTHESIS` regardless of pandoc, so
+    `_no_page_installed` read it as success -- the exact case ADR-0048's
+    corrections note calls out.
+    """
+    provider = _FakeProvider(local_docs=[])
+    inst = _installation()
+    monkeypatch.setattr(
+        "maniac.orchestration.context.resolution.find_installation",
+        lambda name, bin_dir=None: (provider, inst),
+    )
+    monkeypatch.setattr(
+        "maniac.orchestration.install.discover_repo_manpages",
+        lambda *args, **kwargs: [],
+    )
+    monkeypatch.setattr(
+        "maniac.orchestration.pipeline.find_subcommands",
+        lambda cmd, **kwargs: {"> tool --help": "Usage: tool"},
+    )
+    monkeypatch.setattr(
+        "maniac.orchestration.pipeline.install_manpage",
+        lambda *args, **kwargs: pytest.fail("install_manpage reached under dry_run"),
+    )
+    monkeypatch.setattr("maniac.orchestration.install.shutil.which", lambda name: None)
+    cfg = Config(
+        man_dir=tmp_path / "man1",
+        cache_dir=tmp_path / "cache",
+        output_dir=tmp_path / "out",
+        intermediate_dir=tmp_path / "intermediate",
+        manifest_path=tmp_path / "state" / "installed.json",
+    )
+
+    outcome = run_install("tool", config=cfg, dry_run=True)
+
+    assert outcome.tier is None
+    assert "pandoc" in outcome.detail
 
 
 def test_install_reaching_tier_3_resolves_the_tool_once_not_twice(
