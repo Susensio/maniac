@@ -5,7 +5,7 @@ import pytest
 from maniac import manifest as manifest_module
 from maniac.config import Config
 from maniac.generation.compiler import build_provenance_header
-from maniac.installer import install_manpage, uninstall_manpage
+from maniac.installer import draft_entry, install_manpage, uninstall_manpage
 from maniac.manifest import Tier
 
 from .manifest_support import record_entry
@@ -25,7 +25,10 @@ def test_install_manpage_clean(tmp_path: Path) -> None:
 
     target_dir = tmp_path / "man1"
     installed = install_manpage(
-        src_file, "tool", Tier.INSTALL_ROOT, str(src_file.parent), target_dir=target_dir
+        src_file,
+        "tool",
+        draft_entry(Tier.INSTALL_ROOT, str(src_file.parent)),
+        target_dir=target_dir,
     )
 
     assert installed == target_dir / "tool.1"
@@ -49,7 +52,7 @@ def test_install_materializes_source_before_linking(tmp_path: Path) -> None:
     )
 
     installed = install_manpage(
-        source, "tool", Tier.REPOSITORY, "owner/tool", config=cfg
+        source, "tool", draft_entry(Tier.REPOSITORY, "owner/tool"), config=cfg
     )
 
     entry = manifest_module.lookup("tool", config=cfg)
@@ -77,8 +80,7 @@ def test_install_root_direct_link_requires_explicit_durable_source(
     installed = install_manpage(
         source,
         "tool",
-        Tier.INSTALL_ROOT,
-        str(source.parent),
+        draft_entry(Tier.INSTALL_ROOT, str(source.parent)),
         durable_source=True,
         config=cfg,
     )
@@ -104,10 +106,8 @@ def test_uninstall_removes_a_concrete_provider_target_but_keeps_its_source(
     installed = install_manpage(
         source,
         "tool",
-        Tier.INSTALL_ROOT,
-        "mise-root",
+        draft_entry(Tier.INSTALL_ROOT, "mise-root", provider_target=True),
         durable_source=True,
-        provider_target=True,
         config=cfg,
     )
     source.write_text(".TH TOOL 1 updated", encoding="utf-8")
@@ -127,11 +127,7 @@ def test_install_manpage_maniac_overwrite(tmp_path: Path) -> None:
     old_src.parent.mkdir(parents=True)
     old_src.write_text(".TH TOOL 1 old", encoding="utf-8")
     install_manpage(
-        old_src,
-        "tool",
-        Tier.SYNTHESIS,
-        "old-model",
-        target_dir=target_dir,
+        old_src, "tool", draft_entry(Tier.SYNTHESIS, "old-model"), target_dir=target_dir
     )
 
     src_file = tmp_path / "src" / "tool.1"
@@ -141,8 +137,7 @@ def test_install_manpage_maniac_overwrite(tmp_path: Path) -> None:
     installed = install_manpage(
         src_file,
         "tool",
-        Tier.SYNTHESIS,
-        "new-model",
+        draft_entry(Tier.SYNTHESIS, "new-model"),
         target_dir=target_dir,
         force=False,
     )
@@ -167,8 +162,7 @@ def test_install_does_not_authorize_a_different_manpath_destination(
     install_manpage(
         source,
         "tool",
-        Tier.SYNTHESIS,
-        "model",
+        draft_entry(Tier.SYNTHESIS, "model"),
         target_dir=tmp_path / "old-man1",
         config=cfg,
     )
@@ -181,8 +175,7 @@ def test_install_does_not_authorize_a_different_manpath_destination(
         install_manpage(
             source,
             "tool",
-            Tier.SYNTHESIS,
-            "model",
+            draft_entry(Tier.SYNTHESIS, "model"),
             target_dir=new_dir,
             config=cfg,
         )
@@ -204,8 +197,7 @@ def test_install_manpage_foreign_without_force_fails(tmp_path: Path) -> None:
         install_manpage(
             src_file,
             "tool",
-            Tier.SYNTHESIS,
-            "model",
+            draft_entry(Tier.SYNTHESIS, "model"),
             target_dir=target_dir,
             force=False,
         )
@@ -227,7 +219,11 @@ def test_install_manpage_foreign_with_force_creates_backup(tmp_path: Path) -> No
     src_file.write_text(".TH TOOL 1 maniac", encoding="utf-8")
 
     installed = install_manpage(
-        src_file, "tool", Tier.SYNTHESIS, "model", target_dir=target_dir, force=True
+        src_file,
+        "tool",
+        draft_entry(Tier.SYNTHESIS, "model"),
+        target_dir=target_dir,
+        force=True,
     )
     assert installed.exists()
     assert "maniac" in installed.read_text(encoding="utf-8")
@@ -257,14 +253,22 @@ def test_install_manpage_reinstall_over_own_page_preserves_prior_backup(
     src_file.write_text(".TH TOOL 1 v1", encoding="utf-8")
 
     install_manpage(
-        src_file, "tool", Tier.SYNTHESIS, "model-v1", target_dir=target_dir, force=True
+        src_file,
+        "tool",
+        draft_entry(Tier.SYNTHESIS, "model-v1"),
+        target_dir=target_dir,
+        force=True,
     )
     first_backup = manifest_module.lookup("tool")
     assert first_backup is not None and first_backup.backup is not None
 
     src_file.write_text(".TH TOOL 1 v2", encoding="utf-8")
     install_manpage(
-        src_file, "tool", Tier.SYNTHESIS, "model-v2", target_dir=target_dir, force=False
+        src_file,
+        "tool",
+        draft_entry(Tier.SYNTHESIS, "model-v2"),
+        target_dir=target_dir,
+        force=False,
     )
 
     entry = manifest_module.lookup("tool")
@@ -288,7 +292,11 @@ def test_install_manpage_reinstall_copy_failure_restores_prior_entry(
     src_file.write_text(".TH TOOL 1 v1", encoding="utf-8")
 
     install_manpage(
-        src_file, "tool", Tier.SYNTHESIS, "model-v1", target_dir=target_dir, force=True
+        src_file,
+        "tool",
+        draft_entry(Tier.SYNTHESIS, "model-v1"),
+        target_dir=target_dir,
+        force=True,
     )
     first_entry = manifest_module.lookup("tool")
     assert first_entry is not None and first_entry.backup is not None
@@ -303,8 +311,7 @@ def test_install_manpage_reinstall_copy_failure_restores_prior_entry(
         install_manpage(
             src_file,
             "tool",
-            Tier.SYNTHESIS,
-            "model-v2",
+            draft_entry(Tier.SYNTHESIS, "model-v2"),
             target_dir=target_dir,
             force=False,
         )
@@ -333,11 +340,9 @@ def test_install_manpage_reinstall_copy_failure_restores_prior_version(
     install_manpage(
         src_file,
         "tool",
-        Tier.SYNTHESIS,
-        "model-v1",
+        draft_entry(Tier.SYNTHESIS, "model-v1", version="1.0"),
         target_dir=target_dir,
         force=True,
-        version="1.0",
     )
 
     def _boom(*args: object, **kwargs: object) -> None:
@@ -350,11 +355,9 @@ def test_install_manpage_reinstall_copy_failure_restores_prior_version(
         install_manpage(
             src_file,
             "tool",
-            Tier.SYNTHESIS,
-            "model-v2",
+            draft_entry(Tier.SYNTHESIS, "model-v2", version="2.0"),
             target_dir=target_dir,
             force=False,
-            version="2.0",
         )
 
     entry = manifest_module.lookup("tool")
@@ -378,7 +381,10 @@ def test_install_manpage_copy_failure_forgets_manifest_entry(
 
     with pytest.raises(OSError):
         install_manpage(
-            src_file, "tool", Tier.SYNTHESIS, "model", target_dir=target_dir
+            src_file,
+            "tool",
+            draft_entry(Tier.SYNTHESIS, "model"),
+            target_dir=target_dir,
         )
 
     assert manifest_module.lookup("tool") is None
@@ -563,11 +569,9 @@ def test_uninstall_manpage_restore_of_provider_target_reports_restored(
     installed = install_manpage(
         source,
         "tool",
-        Tier.INSTALL_ROOT,
-        "mise-root",
-        durable_source=True,
-        provider_target=True,
+        draft_entry(Tier.INSTALL_ROOT, "mise-root", provider_target=True),
         force=True,
+        durable_source=True,
         config=cfg,
     )
 
@@ -696,7 +700,7 @@ def test_uninstall_removes_a_durable_target_whose_bytes_changed_and_warns(
     source = tmp_path / "source" / "tool.1"
     source.parent.mkdir()
     source.write_text(".TH TOOL 1 original", encoding="utf-8")
-    install_manpage(source, "tool", Tier.SYNTHESIS, "model", config=cfg)
+    install_manpage(source, "tool", draft_entry(Tier.SYNTHESIS, "model"), config=cfg)
     entry = manifest_module.lookup("tool", config=cfg)
     assert entry is not None and entry.target is not None
     entry.target.write_text(".TH TOOL 1 edited by something else", encoding="utf-8")
@@ -724,7 +728,9 @@ def test_uninstall_preserves_retargeted_link_and_backup(tmp_path: Path) -> None:
         backup_dir=backup.parent,
         manifest_path=tmp_path / "state" / "installed.json",
     )
-    installed = install_manpage(source, "tool", Tier.SYNTHESIS, "model", config=cfg)
+    installed = install_manpage(
+        source, "tool", draft_entry(Tier.SYNTHESIS, "model"), config=cfg
+    )
     entry = manifest_module.lookup("tool", config=cfg)
     assert entry is not None and entry.target is not None
     record_entry(
@@ -759,7 +765,9 @@ def test_uninstall_preserves_link_retargeted_through_an_alias(tmp_path: Path) ->
         output_dir=tmp_path / "durable",
         manifest_path=tmp_path / "state" / "installed.json",
     )
-    installed = install_manpage(source, "tool", Tier.SYNTHESIS, "model", config=cfg)
+    installed = install_manpage(
+        source, "tool", draft_entry(Tier.SYNTHESIS, "model"), config=cfg
+    )
     entry = manifest_module.lookup("tool", config=cfg)
     assert entry is not None and entry.target is not None
     alias = tmp_path / "alias.1"
@@ -813,7 +821,9 @@ def test_uninstall_preserves_replaced_link(tmp_path: Path) -> None:
         output_dir=tmp_path / "durable",
         manifest_path=tmp_path / "state" / "installed.json",
     )
-    installed = install_manpage(source, "tool", Tier.SYNTHESIS, "model", config=cfg)
+    installed = install_manpage(
+        source, "tool", draft_entry(Tier.SYNTHESIS, "model"), config=cfg
+    )
     installed.unlink()
     installed.write_text(".TH TOOL 1 user replacement", encoding="utf-8")
 
@@ -833,7 +843,9 @@ def test_uninstall_preserves_dangling_owned_link(tmp_path: Path) -> None:
         output_dir=tmp_path / "durable",
         manifest_path=tmp_path / "state" / "installed.json",
     )
-    installed = install_manpage(source, "tool", Tier.SYNTHESIS, "model", config=cfg)
+    installed = install_manpage(
+        source, "tool", draft_entry(Tier.SYNTHESIS, "model"), config=cfg
+    )
     entry = manifest_module.lookup("tool", config=cfg)
     assert entry is not None and entry.target is not None
     entry.target.unlink()
@@ -867,7 +879,9 @@ def test_round_trip_install_root(tmp_path: Path) -> None:
     src.parent.mkdir(parents=True)
     src.write_text(".TH TOOL 1", encoding="utf-8")
 
-    installed = install_manpage(src, "tool", Tier.INSTALL_ROOT, str(src.parent))
+    installed = install_manpage(
+        src, "tool", draft_entry(Tier.INSTALL_ROOT, str(src.parent))
+    )
     assert installed.exists()
 
     result = uninstall_manpage("tool")
@@ -882,7 +896,9 @@ def test_round_trip_install_root_compressed(tmp_path: Path) -> None:
     src.parent.mkdir(parents=True)
     src.write_bytes(b"\x1f\x8b\x08\x00not-really-gzip-but-bytes-are-enough")
 
-    installed = install_manpage(src, "pandoc", Tier.INSTALL_ROOT, str(src.parent))
+    installed = install_manpage(
+        src, "pandoc", draft_entry(Tier.INSTALL_ROOT, str(src.parent))
+    )
     assert installed.name == "pandoc.1.gz"
     assert installed.exists()
 
@@ -897,7 +913,7 @@ def test_round_trip_repository(tmp_path: Path) -> None:
     src.parent.mkdir(parents=True)
     src.write_text(".TH TOOL 1", encoding="utf-8")
 
-    installed = install_manpage(src, "tool", Tier.REPOSITORY, "owner/repo")
+    installed = install_manpage(src, "tool", draft_entry(Tier.REPOSITORY, "owner/repo"))
     assert installed.exists()
     durable_target = Config().output_dir / "tool.1"
     assert durable_target.exists()
@@ -916,7 +932,7 @@ def test_round_trip_synthesis(tmp_path: Path) -> None:
     header = build_provenance_header("tool", model="test-model")
     src.write_text(header + ".TH TOOL 1", encoding="utf-8")
 
-    installed = install_manpage(src, "tool", Tier.SYNTHESIS, "test-model")
+    installed = install_manpage(src, "tool", draft_entry(Tier.SYNTHESIS, "test-model"))
     assert installed.exists()
 
     result = uninstall_manpage("tool")
@@ -961,11 +977,9 @@ def _install_eza_release(
         installed[owner] = install_manpage(
             source,
             owner,
-            Tier.REPOSITORY,
-            "eza-community/eza",
+            draft_entry(Tier.REPOSITORY, "eza-community/eza", group="eza"),
             target_dir=dest_dir,
             force=vendor_pages,
-            group="eza",
             config=cfg,
         )
     return installed
@@ -1056,8 +1070,7 @@ def test_uninstalling_an_ungrouped_entry_touches_only_itself(tmp_path: Path) -> 
         install_manpage(
             source,
             Path(name).stem,
-            Tier.REPOSITORY,
-            "owner/repo",
+            draft_entry(Tier.REPOSITORY, "owner/repo"),
             config=cfg,
         )
 
@@ -1205,8 +1218,7 @@ def test_install_refuses_to_clobber_another_entrys_durable_target(
     install_manpage(
         first_source,
         "first",
-        Tier.SYNTHESIS,
-        "model",
+        draft_entry(Tier.SYNTHESIS, "model"),
         target_dir=tmp_path / "man1",
         config=cfg,
     )
@@ -1217,8 +1229,7 @@ def test_install_refuses_to_clobber_another_entrys_durable_target(
         install_manpage(
             second_source,
             "second",
-            Tier.SYNTHESIS,
-            "model",
+            draft_entry(Tier.SYNTHESIS, "model"),
             target_dir=tmp_path / "man2",
             config=cfg,
         )
@@ -1253,8 +1264,7 @@ def test_force_does_not_bypass_another_entrys_durable_target_collision(
     install_manpage(
         first_source,
         "first",
-        Tier.SYNTHESIS,
-        "model",
+        draft_entry(Tier.SYNTHESIS, "model"),
         target_dir=tmp_path / "man1",
         config=cfg,
     )
@@ -1265,8 +1275,7 @@ def test_force_does_not_bypass_another_entrys_durable_target_collision(
         install_manpage(
             second_source,
             "second",
-            Tier.SYNTHESIS,
-            "model",
+            draft_entry(Tier.SYNTHESIS, "model"),
             target_dir=tmp_path / "man2",
             force=True,
             config=cfg,
@@ -1286,10 +1295,10 @@ def test_reinstalling_a_tool_reuses_its_own_durable_target(tmp_path: Path) -> No
     source = tmp_path / "source" / "tool.1"
     source.parent.mkdir()
     source.write_text(".TH TOOL 1 first", encoding="utf-8")
-    install_manpage(source, "tool", Tier.SYNTHESIS, "model", config=cfg)
+    install_manpage(source, "tool", draft_entry(Tier.SYNTHESIS, "model"), config=cfg)
 
     source.write_text(".TH TOOL 1 second", encoding="utf-8")
-    install_manpage(source, "tool", Tier.SYNTHESIS, "model", config=cfg)
+    install_manpage(source, "tool", draft_entry(Tier.SYNTHESIS, "model"), config=cfg)
 
     entry = manifest_module.lookup("tool", config=cfg)
     assert entry is not None and entry.target is not None
@@ -1390,7 +1399,11 @@ def test_install_interrupted_before_materialize_leaves_no_backup_behind(
 
     with pytest.raises(OSError):
         install_manpage(
-            source, "tool", Tier.REPOSITORY, "owner/tool", force=True, config=cfg
+            source,
+            "tool",
+            draft_entry(Tier.REPOSITORY, "owner/tool"),
+            force=True,
+            config=cfg,
         )
 
     assert vendor.read_text(encoding="utf-8") == ".TH TOOL 1 vendor"
@@ -1399,7 +1412,11 @@ def test_install_interrupted_before_materialize_leaves_no_backup_behind(
 
     monkeypatch.undo()
     installed = install_manpage(
-        source, "tool", Tier.REPOSITORY, "owner/tool", force=True, config=cfg
+        source,
+        "tool",
+        draft_entry(Tier.REPOSITORY, "owner/tool"),
+        force=True,
+        config=cfg,
     )
     entry = manifest_module.lookup("tool", config=cfg)
     assert entry is not None and entry.backup == cfg.backup_dir / "tool.1"
@@ -1418,14 +1435,16 @@ def test_install_interrupted_before_linking_leaves_no_orphan_target(
     )
 
     with pytest.raises(OSError):
-        install_manpage(source, "tool", Tier.REPOSITORY, "owner/tool", config=cfg)
+        install_manpage(
+            source, "tool", draft_entry(Tier.REPOSITORY, "owner/tool"), config=cfg
+        )
 
     assert list(cfg.output_dir.glob("*")) == []
     assert manifest_module.load(config=cfg) == {}
 
     monkeypatch.undo()
     installed = install_manpage(
-        source, "tool", Tier.REPOSITORY, "owner/tool", config=cfg
+        source, "tool", draft_entry(Tier.REPOSITORY, "owner/tool"), config=cfg
     )
     assert installed.is_symlink()
     assert (cfg.output_dir / "tool.1").exists()
@@ -1450,7 +1469,9 @@ def test_install_interrupted_before_linking_keeps_the_synthesized_page(
     )
 
     with pytest.raises(OSError):
-        install_manpage(synthesized, "tool", Tier.SYNTHESIS, "model", config=cfg)
+        install_manpage(
+            synthesized, "tool", draft_entry(Tier.SYNTHESIS, "model"), config=cfg
+        )
 
     assert synthesized.read_text(encoding="utf-8") == ".TH TOOL 1 synthesized"
     assert manifest_module.load(config=cfg) == {}
@@ -1472,7 +1493,11 @@ def test_install_interrupted_before_linking_restores_the_displaced_page(
 
     with pytest.raises(OSError):
         install_manpage(
-            source, "tool", Tier.REPOSITORY, "owner/tool", force=True, config=cfg
+            source,
+            "tool",
+            draft_entry(Tier.REPOSITORY, "owner/tool"),
+            force=True,
+            config=cfg,
         )
 
     assert vendor.read_text(encoding="utf-8") == ".TH TOOL 1 vendor"
@@ -1487,7 +1512,7 @@ def test_uninstall_interrupted_before_the_manifest_write_reruns_clean(
     cfg = _crash_config(tmp_path)
     source = _source_page(tmp_path)
     installed = install_manpage(
-        source, "tool", Tier.REPOSITORY, "owner/tool", config=cfg
+        source, "tool", draft_entry(Tier.REPOSITORY, "owner/tool"), config=cfg
     )
     monkeypatch.setattr(
         "maniac.manifest.save",
@@ -1522,14 +1547,18 @@ def test_install_interrupted_before_the_manifest_write_reruns_without_force(
     # the orphan is adopted rather than reconstructed by recovery.
     other = tmp_path / "cache" / "other.1"
     other.write_text(".TH OTHER 1", encoding="utf-8")
-    install_manpage(other, "other", Tier.REPOSITORY, "owner/other", config=cfg)
+    install_manpage(
+        other, "other", draft_entry(Tier.REPOSITORY, "owner/other"), config=cfg
+    )
     monkeypatch.setattr(
         "maniac.manifest.save",
         lambda *a, **kw: (_ for _ in ()).throw(OSError("interrupted")),
     )
 
     with pytest.raises(OSError):
-        install_manpage(source, "tool", Tier.REPOSITORY, "owner/tool", config=cfg)
+        install_manpage(
+            source, "tool", draft_entry(Tier.REPOSITORY, "owner/tool"), config=cfg
+        )
 
     installed = cfg.man_dir / "tool.1"
     assert installed.is_symlink()
@@ -1537,7 +1566,7 @@ def test_install_interrupted_before_the_manifest_write_reruns_without_force(
 
     monkeypatch.undo()
     reinstalled = install_manpage(
-        source, "tool", Tier.REPOSITORY, "owner/tool", config=cfg
+        source, "tool", draft_entry(Tier.REPOSITORY, "owner/tool"), config=cfg
     )
 
     assert reinstalled == installed
@@ -1561,17 +1590,21 @@ def test_an_adopted_orphan_does_not_become_a_second_owner_of_one_page(
     source.write_text(".TH PAGE 1", encoding="utf-8")
     other = tmp_path / "cache" / "other.1"
     other.write_text(".TH OTHER 1", encoding="utf-8")
-    install_manpage(other, "other", Tier.REPOSITORY, "owner/other", config=cfg)
+    install_manpage(
+        other, "other", draft_entry(Tier.REPOSITORY, "owner/other"), config=cfg
+    )
     monkeypatch.setattr(
         "maniac.manifest.save",
         lambda *a, **kw: (_ for _ in ()).throw(OSError("interrupted")),
     )
     with pytest.raises(OSError):
-        install_manpage(source, "mytool", Tier.REPOSITORY, "owner/mytool", config=cfg)
+        install_manpage(
+            source, "mytool", draft_entry(Tier.REPOSITORY, "owner/mytool"), config=cfg
+        )
     monkeypatch.undo()
 
     installed = install_manpage(
-        source, "mytool", Tier.REPOSITORY, "owner/mytool", config=cfg
+        source, "mytool", draft_entry(Tier.REPOSITORY, "owner/mytool"), config=cfg
     )
 
     entries = manifest_module.load(config=cfg)

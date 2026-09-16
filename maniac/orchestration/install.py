@@ -19,7 +19,7 @@ from pathlib import Path
 from .. import manifest
 from ..config import Config
 from ..exceptions import ManiacError
-from ..installer import install_manpage
+from ..installer import draft_entry, install_manpage
 from ..manifest import Tier, manpage_owner
 from ..models import PipelineResult
 from ..sources.candidates import select_install_root, select_repository
@@ -205,12 +205,14 @@ def _try_install_root(
     installed_path = install_manpage(
         candidate.final_target,
         inst.binary,
-        Tier.INSTALL_ROOT,
-        str(inst.root),
+        draft_entry(
+            Tier.INSTALL_ROOT,
+            str(inst.root),
+            version=inst.version,
+            provider_target=candidate.provider_owned,
+        ),
         force=force,
-        version=inst.version,
         durable_source=candidate.provider_owned,
-        provider_target=candidate.provider_owned,
         config=tool.config,
     )
     detail += "   [no synthesis]"
@@ -282,13 +284,15 @@ def _try_repository(
             installed = install_manpage(
                 page.path,
                 manpage_owner(page.path),
-                Tier.REPOSITORY,
-                source.identity,
+                draft_entry(
+                    Tier.REPOSITORY,
+                    source.identity,
+                    version=inst.version,
+                    source_uri=page.uri,
+                    group=group,
+                ),
                 target_dir=_manpage_directory(page.path, cfg),
                 force=force,
-                version=inst.version,
-                source_uri=page.uri,
-                group=group,
                 transaction=txn,
             )
             if page == candidate.primary:
