@@ -47,18 +47,9 @@ These are findings the work surfaced and deliberately did not take; they are fir
   They are reached only through `compute_rows` and `run_install` today, so a change in their own behavior need not fail anything.
   ADR-0035 made the freshness capability explicit, which makes these locally testable for the first time.
 - Split `tests/test_docs.py` to mirror the five modules behind the ADR-0033 facade.
-  It is 1301 lines against a package whose patch targets are now per-module; the split rehomed the targets but not the file.
+  It is ~1400 lines against a package whose patch targets are now per-module; the split rehomed the targets but not the file.
 
 ## Bugs and correctness
-
-- Fail before synthesis when an unmanaged destination page would make install fail.
-  Resolve the intended destination(s), report the collision, and require install `--force` before crawling help or calling the LLM, so a refused install leaves no generated artifacts or manifest mutation.
-- Narrow install `--force` to taking over an unmanaged manpath destination.
-  Back up the foreign page and replace only MANIAC's destination link; do not make this flag mean relink, regenerate, or ignore unrelated safety checks.
-- Make install's dry-run a true no-write preview.
-  It currently installs tier-1/2 pages despite the flag, and the synthesis path still writes Markdown, context, and cache data; the preview must not mutate the manpath, manifest, generated artifacts, or caches.
-- Simplify uninstall ownership handling and remove uninstall `--force`.
-  Remove manifest-owned pages even when their target bytes changed, warn about the change, and continue to leave retargeted or dangling links untouched because they are no longer provably MANIAC-owned.
 
 - Distinguish a definitive tier-2 absence from a transient repository probe failure.
   The latter must not silently fall through to synthesis, which can conceal a wrong repository or a network, tag, tree, release, or validation failure.
@@ -81,9 +72,6 @@ These are findings the work surfaced and deliberately did not take; they are fir
 - Reconstruct tier-1 direct provider links, or accept losing them.
   ADR-0046 refused: "not under `output_dir`" is not evidence of a provider root, and adopting one would let MANIAC replace and later remove a symlink the user owns.
   The cost is that a fully lost manifest loses tier-1 ownership entirely. Real evidence would be a target resolving beneath a live provider install root, which `sources.candidates` can already establish.
-- Correct `modified_kept`'s message for dangling and retargeted entries.
-  It says "its bytes have changed since"; nothing was edited in either case.
-  Same defect class as the `legacy_kept` split already made, one level down.
 - Decide whether uninstalling a companion page removes its whole group.
   ADR-0042 shipped symmetric removal: uninstalling any member takes the unit, so `maniac uninstall eza_colors` removes `eza.1` too.
   That is defensible -- they are one installation, and leaving the primary without its companions is the half-installed state grouping exists to prevent -- but it deletes a page the user did not name, which is the surprising half.
