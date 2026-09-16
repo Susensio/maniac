@@ -29,6 +29,20 @@ It walks what MANIAC owns, not what is on `$PATH`.
 
 ## Conventions learned the hard way
 
+A test stub that cannot occur in production hides the bug it is standing in for.
+`maniac install`'s silent-success defect -- a compile failure leaving no page while exiting 0 and printing bold green -- survived because two CLI tests stubbed a *successful* synthesis with `installed_path=None`, a combination `pipeline.py` cannot produce.
+The suite was green on a state the program never reaches, so nothing pinned the state it does.
+The same shape hid an uninstall reporting bug twice over: one test stubbed `removed` and `changed` both populated, which that path cannot do.
+When a test builds a result object by hand, check the producer can actually emit that combination.
+
+Green is not reviewed, for uninstall and exit codes especially.
+Three rounds were needed on the 2026-09-16 install/uninstall rework: two independent reviews each returned FAIL against a green suite, and every finding of the second was the first round's defect class still reachable one path over.
+A fix written against a reported reproduction tends to close that reproduction and not the class.
+Ask which neighbouring paths reach the same code before calling one closed, and where two places encode one rule, collapse them rather than patching both.
+
+A subagent told `docs/` is out of scope may still `git checkout` an uncommitted change there, reading it as stray.
+Commit records before dispatching work that touches the same tree, or expect to rewrite them.
+
 Three sessions allocated ADR numbers concurrently in September 2026 and collided twice; the manifest transaction ADR moved from 0044 to 0046.
 Allocate a number when the decision lands, not when the work starts.
 
