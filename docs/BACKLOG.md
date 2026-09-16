@@ -69,6 +69,13 @@ These are findings the work surfaced and deliberately did not take; they are fir
   `__MISE_ORIG_PATH` records the entire pre-activation `$PATH` and is the plausible evidence source -- a live `mise activate bash` on this machine exports it alongside `MISE_SHELL`, `__MISE_EXE` and `__MISE_DIFF`.
   Using it is Mise-specific, so decide whether the fallback gets per-provider evidence adapters or stays generic.
   Shim resolution remains unexercised: this machine has no populated shim directory, and `mise which -C $HOME` is cwd-sensitive and needs ADR-0029-style root validation.
+- Stamp the tool's version into MANIAC's own generated pages, in the roff header and not only the provenance comment.
+  Today a generated page emits `.TH "GUM" "1" "" ""` -- empty date and version fields -- while the comment block carries `Tool | Date | Model` and no version.
+  The version is already known at install time and already recorded as `Entry.version`, so this is discarded information rather than missing information.
+  Field 4 of `.TH` is where every version-bearing page on this machine puts it: `"Git 2\&.43\&.0"`, `"GNU coreutils 9.4"`, `"GitHub CLI 2.100.0"`.
+  Two payoffs: a MANIAC page becomes verifiable by the same roff-header reader used on anyone else's, and `man` renders the version in the page footer where a reader expects it.
+  Worth doing before the roff-header verifier, so the verifier has a page it can actually parse to test against.
+
 - Prove a page documents a different version than the binary it is offered for.
   Live case found 2026-09-16 and not yet acted on: `man python` serves `/usr/share/man/man1/python3.12.1.gz`, Debian's system page, while `python` on `$PATH` resolves to mise's 3.14.7 and `man python3.14` has no page at all.
   MANIAC renders that row `unverified`, which is honest but understates it -- the evidence to call it wrong is available on both sides, and this is the failure the tool exists to surface.
