@@ -771,6 +771,49 @@ def test_run_install_does_not_refuse_a_manifest_owned_destination(
     assert outcome.tier is None
 
 
+def test_run_install_does_not_refuse_its_own_orphaned_destination(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A manifest row lost after linking -- a crash between link and record,
+    or manifest loss/recovery -- must not make MANIAC's own page read as
+    foreign on reinstall. `_adopt_orphans` exists precisely to recognize
+    this page (a symlink resolving under `output_dir`) as MANIAC's; the
+    precheck must recognize it the same way, not just `manifest.transaction`.
+    """
+    from maniac.installer import install_manpage
+    from maniac.manifest import Tier as ManifestTier
+
+    man_dir = tmp_path / "man1"
+    man_dir.mkdir(parents=True)
+    cfg = Config(
+        man_dir=man_dir,
+        cache_dir=tmp_path / "cache",
+        output_dir=tmp_path / "out",
+        intermediate_dir=tmp_path / "intermediate",
+        manifest_path=tmp_path / "state" / "installed.json",
+    )
+    source = tmp_path / "source" / "tool.1"
+    source.parent.mkdir()
+    source.write_text(".TH TOOL 1 maniac\n", encoding="utf-8")
+    install_manpage(
+        source, "tool", ManifestTier.SYNTHESIS, "model", target_dir=man_dir, config=cfg
+    )
+    # Simulate a crash between linking and recording: the page and its
+    # symlink stay, but the manifest row naming it is gone.
+    cfg.manifest_path.unlink()
+
+    provider = _FakeProvider(local_docs=[])
+    inst = _installation()
+    monkeypatch.setattr(
+        "maniac.orchestration.context.resolution.find_installation",
+        lambda name, bin_dir=None: (provider, inst),
+    )
+
+    outcome = run_install("tool", config=cfg, no_synthesize=True)
+
+    assert outcome.tier is None
+
+
 def test_run_install_dry_run_tier3_writes_nothing(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

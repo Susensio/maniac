@@ -281,6 +281,45 @@ def test_cli_install_dry_run(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) ->
     assert "synthesized from --help" in result.output
 
 
+def test_cli_install_exits_nonzero_when_synthesis_produces_no_page(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """ADR-0048: pandoc missing/rejecting the markdown must not read as success.
+
+    `compile_to_man` returns `False` rather than raising (`generation/compiler.py`),
+    so `synthesize` reaches tier 3 with `installed_path=None` and a
+    `Tier.SYNTHESIS` outcome -- the fourth no-page path the old
+    `outcome.tier is None` check missed entirely.
+    """
+    from maniac.models import PipelineResult
+
+    monkeypatch.setattr(
+        "maniac.sources.loginpath.which_login",
+        lambda name: Path(f"/bin/{name}"),
+    )
+
+    def _synthesize(tool: ResolvedTool, **kwargs: object) -> PipelineResult:
+        return PipelineResult(
+            tool_name=tool.tool_name,
+            repo_source=RepoSource(
+                name=tool.tool_name, target="org/repo", is_local=False
+            ),
+            command_count=1,
+            doc_file_count=0,
+            context_path=None,
+            markdown_path=tmp_path / f"{tool.tool_name}.1.md",
+            roff_path=None,
+            installed_path=None,
+            markdown_content="# doc",
+        )
+
+    monkeypatch.setattr("maniac.orchestration.pipeline.synthesize", _synthesize)
+
+    result = runner.invoke(app, ["install", "mytool"])
+    assert result.exit_code != 0
+    assert "1/1 tool(s) did not install" in result.output
+
+
 def test_cli_install_reuses_config_for_existing_destination(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -391,6 +430,30 @@ def test_cli_install_exits_nonzero_when_no_synthesize_finds_nothing(
     assert "no install-root or repository page found" in result.output
 
 
+def test_cli_install_dry_run_exits_nonzero_when_no_tier_would_answer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ADR-0048's correction: a dry run reports the verdict it reached, not
+    just the fact that it wrote nothing -- finding no tier to preview is
+    still no page, the same as a real run finding none."""
+    monkeypatch.setattr(
+        "maniac.sources.loginpath.which_login",
+        lambda name: Path(f"/bin/{name}"),
+    )
+    monkeypatch.setattr(
+        "maniac.orchestration.context.resolution.find_installation",
+        lambda name, bin_dir=None: None,
+    )
+
+    result = runner.invoke(
+        app,
+        ["install", "nonexistent_unknown_tool_xyz", "--no-synthesize", "--dry-run"],
+    )
+
+    assert result.exit_code != 0
+    assert "no install-root or repository page found" in result.output
+
+
 def test_cli_install_always_installs(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -414,8 +477,8 @@ def test_cli_install_always_installs(
             doc_file_count=1,
             context_path=None,
             markdown_path=tmp_path / f"{tool.tool_name}.1.md",
-            roff_path=None,
-            installed_path=None,
+            roff_path=tmp_path / f"{tool.tool_name}.1",
+            installed_path=tmp_path / f"{tool.tool_name}.1",
             markdown_content="# doc",
         )
 
@@ -463,7 +526,10 @@ def test_fish_completion_includes_only_dry_run() -> None:
     )
 
     assert result.exit_code == 0
-    assert result.output == "--dry-run\tPreview without writing anything.\n"
+    assert (
+        result.output
+        == "--dry-run\tPreview without installing or generating anything.\n"
+    )
 
     result = runner.invoke(
         app,
@@ -598,22 +664,32 @@ def test_cli_uninstall_modified_kept(
 
 
 def test_cli_uninstall_changed(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """A page removed despite a bytes mismatch renders a warning, not a refusal."""
+    """A page removed despite a bytes mismatch renders a warning, not a refusal.
+
+    `changed=[changed_path]` with an empty `removed` is the production shape
+    for a targetless entry with a vendor backup: `_remove_recorded_manpage`
+    restores the backup instead of appending to `removed_paths`, so
+    `removed` stays empty while `changed` still names the page
+    (`installer.py`). A stub pairing `removed=[changed_path]` with
+    `changed=[changed_path]` never reaches the guard this exercises --
+    `result.removed` alone already keeps the early "not found" branch from
+    firing.
+    """
     from maniac.cli.uninstall import compute_uninstall
 
     changed_path = tmp_path / "man1" / "mytool.1"
     monkeypatch.setattr(
         "maniac.installer.uninstall_manpage",
-        lambda tool, purge, config: UninstallResult(
-            removed=[changed_path], changed=[changed_path]
-        ),
+        lambda tool, purge, config: UninstallResult(changed=[changed_path]),
     )
     outcome = compute_uninstall("mytool")
     assert outcome.result.changed == [changed_path]
+    assert outcome.result.removed == []
 
     res = runner.invoke(app, ["uninstall", "mytool"])
     assert res.exit_code == 0
-    assert "Uninstalled manpage for mytool!" in res.output
+    assert "No installed manpage found" not in res.output
+    assert "bytes had changed since install" in res.output
     assert "bytes had changed since install" in res.output
 
 
@@ -662,8 +738,8 @@ def test_cli_install_multiple_partial_success_exits_nonzero(
             doc_file_count=1,
             context_path=None,
             markdown_path=tmp_path / f"{tool.tool_name}.1.md",
-            roff_path=None,
-            installed_path=None,
+            roff_path=tmp_path / f"{tool.tool_name}.1",
+            installed_path=tmp_path / f"{tool.tool_name}.1",
             markdown_content="# doc",
         )
 
@@ -693,9 +769,10 @@ def test_render_install_does_not_swallow_bracketed_detail() -> None:
         tool="pandoc",
         tier=Tier.INSTALL_ROOT,
         detail="upstream manpage from install root (3.10.2)   [no synthesis]",
+        installed_path=Path("/usr/share/man/man1/pandoc.1"),
     )
 
-    _render_install(test_console, outcome)
+    _render_install(test_console, outcome, dry_run=False)
 
     assert "[no synthesis]" in buf.getvalue()
 

@@ -33,7 +33,12 @@ def compute_uninstall(
 
 def _render_uninstall(target_console: Any, outcome: UninstallOutcome) -> None:
     result = outcome.result
-    if not result.removed and result.foreign_kept is None and not result.modified_kept:
+    if (
+        not result.removed
+        and result.foreign_kept is None
+        and not result.modified_kept
+        and not result.changed
+    ):
         target_console.print(
             f"[yellow]No installed manpage found for '{outcome.tool}'.[/yellow]"
         )

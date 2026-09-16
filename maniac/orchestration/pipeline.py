@@ -29,7 +29,6 @@ __all__ = ["synthesize"]
 def synthesize(
     tool: ResolvedTool,
     *,
-    intermediate_dir: str | Path | None = None,
     model: str | None = None,
     reasoning_effort: str | None = None,
     install: bool = False,
@@ -47,9 +46,7 @@ def synthesize(
     """
     cfg = tool.config
     out_dir = cfg.output_dir
-    inter_dir = (
-        Path(intermediate_dir) if intermediate_dir is not None else cfg.intermediate_dir
-    )
+    inter_dir = cfg.intermediate_dir
     if not dry_run:
         out_dir.mkdir(parents=True, exist_ok=True)
         inter_dir.mkdir(parents=True, exist_ok=True)

@@ -1039,6 +1039,29 @@ def test_uninstall_removes_a_legacy_targetless_entry_with_changed_bytes(
     assert manifest_module.lookup("tool", config=cfg) is None
 
 
+def test_uninstall_preserves_a_legacy_targetless_entry_retargeted_by_the_user(
+    tmp_path: Path,
+) -> None:
+    """A pre-ADR-0028 entry's occupying page can be retargeted just like a
+    target-carrying one -- the user swaps `man1/tool.1` for a symlink to
+    their own hand-written page -- and that must be kept, not unlinked as
+    an ordinary bytes mismatch."""
+    cfg, installed = _legacy_targetless_entry(tmp_path)
+    users_own_page = tmp_path / "users_page.1"
+    users_own_page.write_text(".TH TOOL 1 mine", encoding="utf-8")
+    installed.unlink()
+    installed.symlink_to(users_own_page)
+
+    result = uninstall_manpage("tool", config=cfg)
+
+    assert result.modified_kept == [installed]
+    assert result.changed == []
+    assert result.removed == []
+    assert installed.is_symlink()
+    assert installed.resolve() == users_own_page.resolve()
+    assert manifest_module.lookup("tool", config=cfg) is not None
+
+
 def test_install_refuses_to_clobber_another_entrys_durable_target(
     tmp_path: Path,
 ) -> None:

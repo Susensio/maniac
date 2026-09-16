@@ -2,7 +2,6 @@
 
 import shutil
 from dataclasses import dataclass, field
-from enum import Enum
 from pathlib import Path
 
 from . import lifecycle, manifest
@@ -223,15 +222,6 @@ def _path_exists(path: Path) -> bool:
     return path.exists() or path.is_symlink()
 
 
-class KeptReason(Enum):
-    """Why a recorded page survived an uninstall."""
-
-    # Recorded target present but the link no longer points where
-    # installation left it -- retargeted or dangling. Not provably MANIAC's
-    # occupying page anymore, so `force` cannot reach it either.
-    MODIFIED = "modified"
-
-
 @dataclass
 class UninstallResult:
     """Outcome of an `uninstall_manpage()` call."""
@@ -275,26 +265,27 @@ def _matches_recorded_bytes(entry: Entry) -> bool:
         return False
 
 
-def _kept_reason(entry: Entry) -> KeptReason | None:
+def _is_modified(entry: Entry) -> bool:
     """Whether `entry`'s manpath link no longer provably points to MANIAC's page.
 
-    A targetless (pre-ADR-0028) entry has nothing to compare a link
-    against, so it is never kept for that alone -- removed, with a bytes
-    mismatch reported via `_bytes_changed` instead. A retargeted or
-    dangling link is the one case still kept: the page occupying the
-    manpath, or failing to, is then not provably the one MANIAC recorded.
+    A targetless (pre-ADR-0028) entry has nothing recorded to compare a
+    link against, but a symlink or other non-regular file occupying the
+    path is still not provably the durable copy install left there -- the
+    user could have retargeted it just as they could a target-carrying
+    entry's link -- so that case is kept too, not removed as if its bytes
+    merely changed. Only a plain regular file falls through to
+    `_bytes_changed`, which reports an edited-in-place page as a warning,
+    not a refusal.
     """
     if entry.target is None:
-        return None
-    if not manifest.is_expected_link(entry):
-        return KeptReason.MODIFIED
-    return None
+        return entry.path.is_symlink() or not entry.path.is_file()
+    return not manifest.is_expected_link(entry)
 
 
 def _bytes_changed(entry: Entry) -> bool:
     """Whether the page's bytes no longer match what was recorded at install.
 
-    Only meaningful once `_kept_reason` has already let the entry through:
+    Only meaningful once `_is_modified` has already let the entry through:
     a retargeted or dangling link is reported there, not here. Never true
     for a provider-owned target -- that file is the provider's, not a
     durable copy MANIAC's checksum can judge.
@@ -313,8 +304,8 @@ def _remove_recorded_manpage(
     *,
     removed_paths: list[Path],
     changed_paths: list[Path],
-) -> tuple[Entry | None, Path | None, KeptReason | None]:
-    """Remove a recorded link, returning its entry and why any page was kept.
+) -> tuple[Entry | None, Path | None, bool]:
+    """Remove a recorded link, returning its entry and whether a page was kept modified.
 
     The transaction's entries are mutated as records are forgotten, so a
     later member of the same group sees what the earlier ones already
@@ -325,13 +316,12 @@ def _remove_recorded_manpage(
     entries = txn.entries
     entry = entries.get(tool_name)
     if entry is None:
-        return None, _foreign_manpage(tool_name, cfg), None
+        return None, _foreign_manpage(tool_name, cfg), False
     if not _path_exists(entry.path):
         txn.forget(tool_name)
-        return entry, None, None
-    kept = _kept_reason(entry)
-    if kept is not None:
-        return entry, None, kept
+        return entry, None, False
+    if _is_modified(entry):
+        return entry, None, True
     if _bytes_changed(entry):
         changed_paths.append(entry.path)
 
@@ -351,7 +341,7 @@ def _remove_recorded_manpage(
     discarded = lifecycle.discard_durable_target(entry, cfg, entries)
     if discarded is not None:
         removed_paths.append(discarded)
-    return entry, None, None
+    return entry, None, False
 
 
 def _group_members(tool_name: str, entries: dict[str, Entry]) -> list[str]:
@@ -457,7 +447,7 @@ def _uninstall_group(
         )
         if member_foreign is not None:
             foreign_kept = member_foreign
-        if member_kept is not None:
+        if member_kept:
             assert entry is not None
             modified_kept.append(entry.path)
 

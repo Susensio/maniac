@@ -18,5 +18,7 @@ ForceOption = Annotated[
 ]
 DryRunOption = Annotated[
     bool,
-    typer.Option("--dry-run", help="Preview without writing anything."),
+    typer.Option(
+        "--dry-run", help="Preview without installing or generating anything."
+    ),
 ]

@@ -20,13 +20,30 @@ from .options import (
 )
 
 
-def _render_install(target_console: Any, outcome: InstallOutcome) -> None:
+def _no_page_installed(outcome: InstallOutcome, *, dry_run: bool) -> bool:
+    """Whether `outcome` leaves this tool with no page, real or previewed (ADR-0048).
+
+    A dry run never sets `installed_path` by design -- it previews rather
+    than installs -- so `tier` is the verdict there: `None` means no tier
+    found anything to preview, the dry-run equivalent of no page. A real
+    run's verdict is `installed_path` directly, since a tier can be found
+    (`tier` set) and still fail to land a page, as tier 3 does when pandoc
+    is missing or rejects the markdown.
+    """
+    if dry_run:
+        return outcome.tier is None
+    return outcome.installed_path is None
+
+
+def _render_install(
+    target_console: Any, outcome: InstallOutcome, *, dry_run: bool
+) -> None:
     from rich.markup import escape
 
     # `outcome.detail` carries literal "[no synthesis]" -- escaped so Rich's
     # markup parser doesn't read it as an (invalid, silently dropped) style tag.
     detail = escape(outcome.detail)
-    if outcome.tier is None:
+    if _no_page_installed(outcome, dry_run=dry_run):
         target_console.print(f"[yellow]{outcome.tool}   {detail}[/yellow]")
         return
     target_console.print(f"[bold green]{outcome.tool}[/bold green]   {detail}")
@@ -78,11 +95,13 @@ def install(
                     dry_run=dry_run,
                     config=cfg,
                 )
-            _render_install(console, outcome)
-            if outcome.tier is None:
-                # No install-root or repository page found under
-                # --no-synthesize: no page for this tool either, so it
-                # counts toward the exit status too (ADR-0048).
+            _render_install(console, outcome, dry_run=dry_run)
+            if _no_page_installed(outcome, dry_run=dry_run):
+                # No page landed on disk for this tool -- whether tiers 1-2
+                # found nothing under --no-synthesize, or tier 3 reached
+                # synthesis but pandoc was missing or rejected the markdown
+                # (`installed_path` stays None either way) -- so it counts
+                # toward the exit status (ADR-0048).
                 failures += 1
         except InstallRefused as e:
             # A refusal still leaves this tool with no page, so it counts

@@ -146,6 +146,23 @@ def _refuse_unmanaged_destination(tool_name: str, cfg: Config, *, force: bool) -
         entry.path == dest_file and manifest.is_expected_link(entry)
         for entry in entries.values()
     )
+    if not owned and dest_file.is_symlink():
+        # `manifest.load` reads the raw file, missing what `manifest.transaction`
+        # would adopt on the way in (`_adopt_orphans`): a crash between
+        # linking and recording leaves MANIAC's own page here with no
+        # manifest row yet. A symlink resolving under `output_dir` is the
+        # same proof `_linked_entries`/`_entry_from_link` accept for
+        # adoption, so it is owned here too rather than refused as foreign.
+        try:
+            target = dest_file.readlink()
+        except OSError:
+            target = None
+        resolved = (
+            target
+            if target is not None and target.is_absolute()
+            else (dest_file.parent / target if target is not None else None)
+        )
+        owned = resolved is not None and manifest.is_maniac_owned_target(resolved, cfg)
     if owned:
         return
     raise InstallRefused(
