@@ -740,7 +740,7 @@ def test_run_install_does_not_refuse_a_manifest_owned_destination(
     """Reinstalling a tool MANIAC already owns must not trip the precheck --
     only a foreign, unmanaged page at the destination should.
     """
-    from maniac.installer import install_manpage
+    from maniac.installer import draft_entry, install_manpage
     from maniac.manifest import Tier as ManifestTier
 
     man_dir = tmp_path / "man1"
@@ -756,7 +756,11 @@ def test_run_install_does_not_refuse_a_manifest_owned_destination(
     source.parent.mkdir()
     source.write_text(".TH TOOL 1 maniac\n", encoding="utf-8")
     install_manpage(
-        source, "tool", ManifestTier.SYNTHESIS, "model", target_dir=man_dir, config=cfg
+        source,
+        "tool",
+        draft_entry(ManifestTier.SYNTHESIS, "model"),
+        target_dir=man_dir,
+        config=cfg,
     )
 
     provider = _FakeProvider(local_docs=[])
@@ -780,7 +784,7 @@ def test_run_install_does_not_refuse_its_own_orphaned_destination(
     this page (a symlink resolving under `output_dir`) as MANIAC's; the
     precheck must recognize it the same way, not just `manifest.transaction`.
     """
-    from maniac.installer import install_manpage
+    from maniac.installer import draft_entry, install_manpage
     from maniac.manifest import Tier as ManifestTier
 
     man_dir = tmp_path / "man1"
@@ -796,7 +800,11 @@ def test_run_install_does_not_refuse_its_own_orphaned_destination(
     source.parent.mkdir()
     source.write_text(".TH TOOL 1 maniac\n", encoding="utf-8")
     install_manpage(
-        source, "tool", ManifestTier.SYNTHESIS, "model", target_dir=man_dir, config=cfg
+        source,
+        "tool",
+        draft_entry(ManifestTier.SYNTHESIS, "model"),
+        target_dir=man_dir,
+        config=cfg,
     )
     # Simulate a crash between linking and recording: the page and its
     # symlink stay, but the manifest row naming it is gone.

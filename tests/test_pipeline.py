@@ -1,11 +1,13 @@
 """Tier-3 synthesis: both entry paths, source material, ADR-0019's recorded version."""
 
 from pathlib import Path
+from typing import cast
 
 import pytest
 
 from maniac.config import Config
 from maniac.exceptions import CrawlerError, GenerationError
+from maniac.manifest import Entry
 from maniac.models import DocFile, Installation, RepoSource
 from maniac.orchestration.context import ResolvedTool, resolve_tool
 from maniac.orchestration.pipeline import synthesize
@@ -97,7 +99,8 @@ def _mock_synthesis(
     recorded: dict[str, object] = {}
 
     def _install_manpage(*args: object, **kwargs: object) -> Path:
-        recorded["version"] = kwargs.get("version")
+        entry = cast(Entry, args[2])
+        recorded["version"] = entry.version
         return tmp_path / "testtool.1"
 
     monkeypatch.setattr(
