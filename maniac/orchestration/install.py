@@ -82,9 +82,13 @@ def run_install(
             "where the login shell can reach it first (ADR-0020)."
         )
 
+    _refuse_unmanaged_destination(tool_name, cfg, force=force)
+
     tool = resolve_tool(tool_name, config=cfg, bin_dir=bin_dir)
 
-    outcome = _try_install_root(tool, force=force) or _try_repository(tool, force=force)
+    outcome = _try_install_root(tool, force=force, dry_run=dry_run) or _try_repository(
+        tool, force=force, dry_run=dry_run
+    )
     if outcome is not None:
         return outcome
     if no_synthesize:
@@ -122,7 +126,37 @@ def run_install(
     )
 
 
-def _try_install_root(tool: ResolvedTool, *, force: bool) -> InstallOutcome | None:
+def _refuse_unmanaged_destination(tool_name: str, cfg: Config, *, force: bool) -> None:
+    """Refuse before any tier runs when the default manpath destination is foreign.
+
+    A fast, cheap version of `installer._take_backup`'s own check, run before
+    a refused install can crawl `--help`, write a context snapshot or call an
+    LLM for nothing.  It only knows the common destination (`<tool>.1`); a
+    tier that resolves a different one -- a different section, a compressed
+    extension, a page not named after the tool -- still passes here and
+    still meets `_take_backup`, which stays the enforcement point.
+    """
+    if force:
+        return
+    dest_file = cfg.man_dir / f"{tool_name}.1"
+    if not (dest_file.exists() or dest_file.is_symlink()):
+        return
+    entries = manifest.load(cfg)
+    owned = any(
+        entry.path == dest_file and manifest.is_expected_link(entry)
+        for entry in entries.values()
+    )
+    if owned:
+        return
+    raise InstallRefused(
+        f"A foreign or vendor manpage already exists at '{dest_file}'. "
+        f"Use --force to create a backup and overwrite."
+    )
+
+
+def _try_install_root(
+    tool: ResolvedTool, *, force: bool, dry_run: bool
+) -> InstallOutcome | None:
     """Tier 1: a page already inside the install root, the installed version by construction."""
     provider, inst = tool.provider, tool.installation
     if provider is None or inst is None:
@@ -130,6 +164,18 @@ def _try_install_root(tool: ResolvedTool, *, force: bool) -> InstallOutcome | No
     candidate = select_install_root(provider, inst)
     if candidate is None:
         return None
+    detail = "upstream manpage from install root"
+    if inst.version:
+        detail += f" ({inst.version})"
+    if dry_run:
+        detail += "   [dry run, no synthesis]"
+        return InstallOutcome(
+            tool=inst.binary,
+            tier=Tier.INSTALL_ROOT,
+            detail=detail,
+            source_path=candidate.discovered_page,
+            installed_path=None,
+        )
     installed_path = install_manpage(
         candidate.final_target,
         inst.binary,
@@ -141,9 +187,6 @@ def _try_install_root(tool: ResolvedTool, *, force: bool) -> InstallOutcome | No
         provider_target=candidate.provider_owned,
         config=tool.config,
     )
-    detail = "upstream manpage from install root"
-    if inst.version:
-        detail += f" ({inst.version})"
     detail += "   [no synthesis]"
     return InstallOutcome(
         tool=inst.binary,
@@ -154,7 +197,9 @@ def _try_install_root(tool: ResolvedTool, *, force: bool) -> InstallOutcome | No
     )
 
 
-def _try_repository(tool: ResolvedTool, *, force: bool) -> InstallOutcome | None:
+def _try_repository(
+    tool: ResolvedTool, *, force: bool, dry_run: bool
+) -> InstallOutcome | None:
     """Tier 2: a hand-authored page fetched from the resolved repository at the matching tag.
 
     Refuses rather than guesses in two cases ADR-0016 calls out: no
@@ -182,6 +227,16 @@ def _try_repository(tool: ResolvedTool, *, force: bool) -> InstallOutcome | None
     )
     if candidate is None:
         return None
+
+    if dry_run:
+        return InstallOutcome(
+            tool=inst.binary,
+            tier=Tier.REPOSITORY,
+            detail=f"upstream manpage from repository ({inst.version})"
+            "   [dry run, no synthesis]",
+            source_path=candidate.primary.path,
+            installed_path=None,
+        )
 
     installed_path: Path | None = None
     # Every page of one release archive records the primary's owner as its

@@ -52,6 +52,12 @@ def materialize_target(
     target = config.output_dir / src.name
     owner = _recorded_target_owner(target, entries, config, tool)
     if owner is not None:
+        # No `force` here, deliberately: this collision is two MANIAC
+        # entries naming the same durable target, not an unmanaged manpath
+        # page. `--force` means taking over unmanaged foreign pages
+        # (`installer._take_backup`); letting it through here would let one
+        # install silently steal a target another entry's checksum still
+        # verifies against.
         raise FileExistsError(
             f"The durable target '{target}' is already recorded by '{owner}'. "
             f"Uninstall '{owner}' or rename the source page before installing "

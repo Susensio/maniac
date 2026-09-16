@@ -226,11 +226,9 @@ def _path_exists(path: Path) -> bool:
 class KeptReason(Enum):
     """Why a recorded page survived an uninstall."""
 
-    # Pre-ADR-0028 entry carrying no recorded target, so nothing to verify
-    # its bytes against. Not a modification: the page may be untouched.
-    LEGACY = "legacy"
-    # Recorded target present but the page no longer matches what was
-    # installed -- edited, replaced, retargeted or left dangling.
+    # Recorded target present but the link no longer points where
+    # installation left it -- retargeted or dangling. Not provably MANIAC's
+    # occupying page anymore, so `force` cannot reach it either.
     MODIFIED = "modified"
 
 
@@ -244,16 +242,17 @@ class UninstallResult:
     # below -- conflating the two told the caller a page MANIAC did install
     # was foreign, which it was not.
     foreign_kept: Path | None = None
-    # Every group member whose manifest entry exists but whose page's bytes no
-    # longer match the checksum taken at install: ours, but changed since, so
-    # left in place unless `--force` overrides the check. A list because one
-    # uninstall covers a whole upstream release and each member is checked
-    # on its own.
+    # Every group member whose manpath link no longer points where
+    # installation left it -- retargeted or dangling. Left in place: the
+    # link no longer provably points to MANIAC's page at all, so there is
+    # nothing here checksums could vouch for either way.
     modified_kept: list[Path] = field(default_factory=list)
-    # Every group member predating ADR-0028's symlink tracking whose migration
-    # never succeeded. Nothing was edited; there is simply no recorded target
-    # to check, and only `--force` authorizes removing it.
-    legacy_kept: list[Path] = field(default_factory=list)
+    # Every group member removed despite its bytes no longer matching what
+    # was recorded at install -- edited after the fact, or (pre-ADR-0028)
+    # with no recorded target to check bytes against in the first place.
+    # The manifest entry, not the page's current bytes, is what proves
+    # MANIAC's ownership (ADR-0017), so this is a warning, not a refusal.
+    changed: list[Path] = field(default_factory=list)
 
 
 def _foreign_manpage(tool_name: str, cfg: Config) -> Path | None:
@@ -276,40 +275,44 @@ def _matches_recorded_bytes(entry: Entry) -> bool:
         return False
 
 
-def _kept_reason(entry: Entry, *, force: bool) -> KeptReason | None:
-    """Why a manifest entry is no longer safe to remove, or None when it is.
+def _kept_reason(entry: Entry) -> KeptReason | None:
+    """Whether `entry`'s manpath link no longer provably points to MANIAC's page.
 
-    `force` is consulted before the missing-target check, not after: a
-    pre-ADR-0028 entry has no recorded target at all, so checking first
-    made such an entry permanently un-uninstallable with no override.
-    A replaced, retargeted or dangling entry still outranks `force`,
-    because the page occupying the manpath is then not the one recorded.
-
-    A targetless entry whose page's bytes no longer match what was recorded
-    is still MODIFIED -- the bytes are the only evidence such an entry has.
+    A targetless (pre-ADR-0028) entry has nothing to compare a link
+    against, so it is never kept for that alone -- removed, with a bytes
+    mismatch reported via `_bytes_changed` instead. A retargeted or
+    dangling link is the one case still kept: the page occupying the
+    manpath, or failing to, is then not provably the one MANIAC recorded.
     """
     if entry.target is None:
-        if force:
-            return None
-        return (
-            KeptReason.LEGACY if _matches_recorded_bytes(entry) else KeptReason.MODIFIED
-        )
+        return None
     if not manifest.is_expected_link(entry):
         return KeptReason.MODIFIED
-    if force or entry.provider_target:
-        return None
-    target = manifest.expected_target_path(entry)
-    if manifest.checksum_of(target) != entry.checksum:
-        return KeptReason.MODIFIED
     return None
+
+
+def _bytes_changed(entry: Entry) -> bool:
+    """Whether the page's bytes no longer match what was recorded at install.
+
+    Only meaningful once `_kept_reason` has already let the entry through:
+    a retargeted or dangling link is reported there, not here. Never true
+    for a provider-owned target -- that file is the provider's, not a
+    durable copy MANIAC's checksum can judge.
+    """
+    if entry.target is None:
+        return not _matches_recorded_bytes(entry)
+    if entry.provider_target:
+        return False
+    target = manifest.expected_target_path(entry)
+    return manifest.checksum_of(target) != entry.checksum
 
 
 def _remove_recorded_manpage(
     tool_name: str,
     txn: manifest.Transaction,
     *,
-    force: bool,
     removed_paths: list[Path],
+    changed_paths: list[Path],
 ) -> tuple[Entry | None, Path | None, KeptReason | None]:
     """Remove a recorded link, returning its entry and why any page was kept.
 
@@ -326,9 +329,11 @@ def _remove_recorded_manpage(
     if not _path_exists(entry.path):
         txn.forget(tool_name)
         return entry, None, None
-    kept = _kept_reason(entry, force=force)
+    kept = _kept_reason(entry)
     if kept is not None:
         return entry, None, kept
+    if _bytes_changed(entry):
+        changed_paths.append(entry.path)
 
     installed_file = entry.path
     installed_file.unlink()
@@ -385,7 +390,6 @@ def _purge_artifacts(tool_name: str, cfg: Config, removed_paths: list[Path]) -> 
     paths = (
         cfg.output_dir / f"{tool_name}.1.md",
         cfg.intermediate_dir / f"{tool_name}_context.md",
-        cfg.intermediate_dir / f"{tool_name}_prompt.md",
     )
     for path in paths:
         if path.exists():
@@ -396,37 +400,35 @@ def _purge_artifacts(tool_name: str, cfg: Config, removed_paths: list[Path]) -> 
 def uninstall_manpage(
     tool_name: str,
     purge: bool = False,
-    force: bool = False,
     config: Config | None = None,
 ) -> UninstallResult:
     """Uninstall a MANIAC-generated manpage and restore backups if present.
 
     Uninstall operates on the whole upstream release, not one page: every
-    entry sharing `tool_name`'s group goes, each checksum-protected before
-    removal and each restoring its own displaced vendor backup.
+    entry sharing `tool_name`'s group goes, each restoring its own displaced
+    vendor backup.
 
-    A recorded page whose current bytes no longer match the checksum taken
-    at install is left in place unless `force` overrides the check,
-    mirroring `install_manpage`'s own `--force` -- but reported via
-    `modified_kept`, not `foreign_kept`: the manifest entry proves MANIAC
-    installed it (ADR-0017), so it is ours, only changed since. An entry
-    predating ADR-0028's symlink tracking has no recorded target to check
-    at all, so it is reported via `legacy_kept` instead, and `force`
-    removes it. A page missing entirely is not a mismatch: `install_manpage`
+    A recorded page is removed even when its current bytes no longer match
+    the checksum taken at install -- the manifest entry proves MANIAC
+    installed it (ADR-0017), so it is ours regardless -- but reported via
+    `changed`, a warning rather than a refusal. A retargeted or dangling
+    link is different: the manpath no longer provably points to MANIAC's
+    page at all, so it is left in place and reported via `modified_kept`
+    instead. A page missing entirely is not a mismatch: `install_manpage`
     records after materializing and linking, so a crash between the two
     leaves an entry whose page never arrived -- forgotten, not flagged.
     """
     cfg = config or Config()
     removed_paths: list[Path] = []
     with manifest.transaction(cfg) as txn:
-        foreign_kept, modified_kept, legacy_kept = _uninstall_group(
-            tool_name, txn, purge=purge, force=force, removed_paths=removed_paths
+        foreign_kept, modified_kept, changed = _uninstall_group(
+            tool_name, txn, purge=purge, removed_paths=removed_paths
         )
     return UninstallResult(
         removed=removed_paths,
         foreign_kept=foreign_kept,
         modified_kept=modified_kept,
-        legacy_kept=legacy_kept,
+        changed=changed,
     )
 
 
@@ -435,14 +437,13 @@ def _uninstall_group(
     txn: manifest.Transaction,
     *,
     purge: bool,
-    force: bool,
     removed_paths: list[Path],
 ) -> tuple[Path | None, list[Path], list[Path]]:
     """Remove every member of `tool_name`'s release, reporting what was kept."""
     cfg = txn.config
     foreign_kept: Path | None = None
     modified_kept: list[Path] = []
-    legacy_kept: list[Path] = []
+    changed: list[Path] = []
     for member in _group_members(tool_name, txn.entries):
         # 1. Active installed manpage, wherever the manifest says MANIAC put
         # it -- the manifest's recorded path, not a `<tool>.1` guess, is what
@@ -451,17 +452,14 @@ def _uninstall_group(
         entry, member_foreign, member_kept = _remove_recorded_manpage(
             member,
             txn,
-            force=force,
             removed_paths=removed_paths,
+            changed_paths=changed,
         )
         if member_foreign is not None:
             foreign_kept = member_foreign
         if member_kept is not None:
             assert entry is not None
-            kept_pages = (
-                legacy_kept if member_kept is KeptReason.LEGACY else modified_kept
-            )
-            kept_pages.append(entry.path)
+            modified_kept.append(entry.path)
 
         # 2. XDG data storage (output_dir / <tool>.1)
         _remove_orphaned_roff(member, cfg, entry, removed_paths)
@@ -469,4 +467,4 @@ def _uninstall_group(
         if purge:
             _purge_artifacts(member, cfg, removed_paths)
 
-    return foreign_kept, modified_kept, legacy_kept
+    return foreign_kept, modified_kept, changed

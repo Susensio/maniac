@@ -36,14 +36,23 @@ def synthesize(
     force: bool = False,
     dry_run: bool = False,
 ) -> PipelineResult:
-    """Extract source material for an already-resolved tool, synthesize, compile."""
+    """Extract source material for an already-resolved tool, synthesize, compile.
+
+    `dry_run` is a true preview: nothing under `output_dir` or
+    `intermediate_dir` is written, and no manifest transaction opens
+    (`install_manpage`, the only thing that opens one, is never reached --
+    it sits past the early return below). The crawl and doc fetch still run,
+    since reporting what synthesis would have to work with is the point of
+    a preview.
+    """
     cfg = tool.config
     out_dir = cfg.output_dir
-    out_dir.mkdir(parents=True, exist_ok=True)
     inter_dir = (
         Path(intermediate_dir) if intermediate_dir is not None else cfg.intermediate_dir
     )
-    inter_dir.mkdir(parents=True, exist_ok=True)
+    if not dry_run:
+        out_dir.mkdir(parents=True, exist_ok=True)
+        inter_dir.mkdir(parents=True, exist_ok=True)
 
     tree = _crawl_help(tool)
     doc_files, version_matched = _extract_docs(tool)
@@ -51,13 +60,15 @@ def synthesize(
     docs_block = format_docs_section(doc_files)
     _report_material(tool, tree=tree, doc_files=doc_files, matched=version_matched)
 
-    context_file = _write_intermediate(
-        inter_dir / f"{tool.tool_name}_context.md",
-        f"# {tool.tool_name} Extracted Context\n\n"
-        f"## CLI Help\n```text\n{help_block}\n```\n\n"
-        f"## Repository Documentation\n{docs_block}\n",
-        "Saved intermediate context",
-    )
+    context_file = inter_dir / f"{tool.tool_name}_context.md"
+    if not dry_run:
+        _write_intermediate(
+            context_file,
+            f"# {tool.tool_name} Extracted Context\n\n"
+            f"## CLI Help\n```text\n{help_block}\n```\n\n"
+            f"## Repository Documentation\n{docs_block}\n",
+            "Saved intermediate context",
+        )
     full_prompt = build_synthesis_prompt(
         tool_name=tool.tool_name,
         help_text=help_block,
@@ -71,7 +82,6 @@ def synthesize(
             f"% {tool.tool_name.upper()}(1) | User Commands\n\n"
             f"# NAME\n{tool.tool_name} - dry run"
         )
-        md_file.write_text(dummy_md, encoding="utf-8")
         return _result(
             tool,
             tree=tree,

@@ -495,7 +495,7 @@ def test_uninstall_manpage_null_backup_removes_and_restores_nothing(
 
 
 def test_uninstall_manpage_purge(tmp_path: Path) -> None:
-    """M11: purge also removes the orphaned `{tool}_prompt.md` intermediate file."""
+    """M11: purge also removes the orphaned generated Markdown and context files."""
     man_dir = tmp_path / "man1"
     man_dir.mkdir(parents=True)
     out_dir = tmp_path / "data_manpages"
@@ -514,9 +514,6 @@ def test_uninstall_manpage_purge(tmp_path: Path) -> None:
     ctx_file = inter_dir / "tool_context.md"
     ctx_file.write_text("Context", encoding="utf-8")
 
-    prompt_file = inter_dir / "tool_prompt.md"
-    prompt_file.write_text("Prompt", encoding="utf-8")
-
     cfg = Config(man_dir=man_dir, output_dir=out_dir, intermediate_dir=inter_dir)
     record_entry(
         "tool",
@@ -533,8 +530,6 @@ def test_uninstall_manpage_purge(tmp_path: Path) -> None:
     assert not installed_file.exists()
     assert not md_file.exists()
     assert not ctx_file.exists()
-    assert prompt_file in result.removed
-    assert not prompt_file.exists()
 
 
 def test_uninstall_manpage_foreign_kept(tmp_path: Path) -> None:
@@ -560,10 +555,12 @@ def test_uninstall_manpage_foreign_kept(tmp_path: Path) -> None:
     assert not stored_roff.exists()
 
 
-def test_uninstall_manpage_checksum_mismatch_is_kept_modified(tmp_path: Path) -> None:
-    """A recorded page whose bytes changed after install is ours, not foreign:
-    reported via `modified_kept`, distinct from `foreign_kept`, which stays
-    unset -- no new state, no restore, no forget."""
+def test_uninstall_removes_a_targetless_entry_with_changed_bytes_and_restores_backup(
+    tmp_path: Path,
+) -> None:
+    """A targetless entry whose bytes changed after install is still ours,
+    not foreign: removed and its backup restored like any other entry,
+    just reported via `changed` rather than `foreign_kept`."""
     man_dir = tmp_path / "man1"
     man_dir.mkdir(parents=True)
     backup_dir = tmp_path / "backups"
@@ -592,19 +589,19 @@ def test_uninstall_manpage_checksum_mismatch_is_kept_modified(tmp_path: Path) ->
 
     result = uninstall_manpage("tool", purge=False, config=cfg)
 
-    assert result.modified_kept == [installed_file]
+    assert result.modified_kept == []
+    assert result.changed == [installed_file]
     assert result.foreign_kept is None
-    assert result.removed == []
-    assert (
-        installed_file.read_text(encoding="utf-8")
-        == ".TH TOOL 1 edited by something else"
-    )
-    assert backup_file.exists()  # not restored
-    assert manifest_module.lookup("tool", config=cfg) is not None  # not forgotten
+    assert installed_file.read_text(encoding="utf-8") == ".TH TOOL 1 vendor"
+    assert manifest_module.lookup("tool", config=cfg) is None
 
 
-def test_uninstall_manpage_force_overrides_checksum_mismatch(tmp_path: Path) -> None:
-    """`--force` removes a modified page anyway, mirroring `install_manpage --force`."""
+def test_uninstall_removes_a_durable_target_whose_bytes_changed_and_warns(
+    tmp_path: Path,
+) -> None:
+    """A recorded durable target whose bytes changed is removed like any
+    other -- the manifest entry, not the target's current bytes, is what
+    proves MANIAC's ownership (ADR-0017)."""
     man_dir = tmp_path / "man1"
     man_dir.mkdir(parents=True)
 
@@ -618,10 +615,11 @@ def test_uninstall_manpage_force_overrides_checksum_mismatch(tmp_path: Path) -> 
     assert entry is not None and entry.target is not None
     entry.target.write_text(".TH TOOL 1 edited by something else", encoding="utf-8")
 
-    result = uninstall_manpage("tool", purge=False, force=True, config=cfg)
+    result = uninstall_manpage("tool", purge=False, config=cfg)
 
     assert result.foreign_kept is None
     assert result.modified_kept == []
+    assert result.changed == [installed_file]
     assert installed_file in result.removed
     assert not installed_file.exists()
     assert manifest_module.lookup("tool", config=cfg) is None
@@ -938,10 +936,12 @@ def test_uninstalling_a_group_restores_every_displaced_vendor_page(
     assert manifest_module.load(cfg) == {}
 
 
-def test_uninstalling_a_group_keeps_a_member_whose_bytes_changed(
+def test_uninstalling_a_group_removes_a_member_whose_bytes_changed_and_warns(
     tmp_path: Path,
 ) -> None:
-    """Checksum protection is per member: one edited page stays, the rest go."""
+    """A whole release goes together even when one member's bytes changed --
+    reported via `changed`, not kept, since the manifest entry still proves
+    MANIAC's ownership of the link (ADR-0017)."""
     cfg = _eza_config(tmp_path)
     installed = _install_eza_release(tmp_path, cfg)
     edited = manifest_module.lookup("eza_colors", config=cfg)
@@ -950,9 +950,10 @@ def test_uninstalling_a_group_keeps_a_member_whose_bytes_changed(
 
     result = uninstall_manpage("eza", config=cfg)
 
-    assert result.modified_kept == [installed["eza_colors"]]
-    assert installed["eza_colors"].exists()
-    assert manifest_module.lookup("eza_colors", config=cfg) is not None
+    assert result.modified_kept == []
+    assert result.changed == [installed["eza_colors"]]
+    assert not installed["eza_colors"].exists()
+    assert manifest_module.lookup("eza_colors", config=cfg) is None
     assert not installed["eza"].exists()
     assert not installed["eza_colors-explanation"].exists()
     assert manifest_module.lookup("eza", config=cfg) is None
@@ -981,12 +982,15 @@ def test_uninstalling_an_ungrouped_entry_touches_only_itself(tmp_path: Path) -> 
     assert manifest_module.lookup("beta", config=cfg) is not None
 
 
-def _legacy_targetless_entry(tmp_path: Path) -> tuple[Config, Path]:
-    """Record a pre-ADR-0028 entry with no recorded target, matching bytes."""
+def _legacy_targetless_entry(
+    tmp_path: Path, *, matching_bytes: bool = True
+) -> tuple[Config, Path]:
+    """Record a pre-ADR-0028 entry with no recorded target."""
     man_dir = tmp_path / "man1"
     man_dir.mkdir(parents=True)
     installed = man_dir / "tool.1"
     installed.write_text(".TH TOOL 1 legacy", encoding="utf-8")
+    checksum = manifest_module.checksum_of(installed) if matching_bytes else "deadbeef"
     cfg = Config(
         man_dir=man_dir,
         output_dir=tmp_path / "durable",
@@ -997,33 +1001,39 @@ def _legacy_targetless_entry(tmp_path: Path) -> tuple[Config, Path]:
         installed,
         Tier.SYNTHESIS,
         "model",
-        manifest_module.checksum_of(installed),
+        checksum,
         config=cfg,
     )
     return cfg, installed
 
 
-def test_uninstall_keeps_a_legacy_targetless_entry(tmp_path: Path) -> None:
-    """Without --force a targetless entry stays, reported as legacy, not modified."""
+def test_uninstall_removes_a_legacy_targetless_entry(tmp_path: Path) -> None:
+    """A targetless entry is removed outright -- there is no link to check
+    for retargeting or dangling, so nothing here can be kept."""
     cfg, installed = _legacy_targetless_entry(tmp_path)
 
     result = uninstall_manpage("tool", config=cfg)
 
-    assert result.legacy_kept == [installed]
     assert result.modified_kept == []
+    assert result.changed == []
     assert result.foreign_kept is None
-    assert installed.exists()
-    assert manifest_module.lookup("tool", config=cfg) is not None
+    assert installed in result.removed
+    assert not installed.exists()
+    assert manifest_module.lookup("tool", config=cfg) is None
 
 
-def test_uninstall_force_removes_a_legacy_targetless_entry(tmp_path: Path) -> None:
-    """--force reaches a targetless entry; checking `target` first made it unremovable."""
-    cfg, installed = _legacy_targetless_entry(tmp_path)
+def test_uninstall_removes_a_legacy_targetless_entry_with_changed_bytes(
+    tmp_path: Path,
+) -> None:
+    """A targetless entry whose bytes no longer match what was recorded is
+    still removed, only warned about -- there is no recorded target to
+    check bytes against, so the mismatch is the entry's own page."""
+    cfg, installed = _legacy_targetless_entry(tmp_path, matching_bytes=False)
 
-    result = uninstall_manpage("tool", force=True, config=cfg)
+    result = uninstall_manpage("tool", config=cfg)
 
-    assert result.legacy_kept == []
     assert result.modified_kept == []
+    assert result.changed == [installed]
     assert installed in result.removed
     assert not installed.exists()
     assert manifest_module.lookup("tool", config=cfg) is None
@@ -1074,6 +1084,54 @@ def test_install_refuses_to_clobber_another_entrys_durable_target(
     assert first_entry.target.read_text(encoding="utf-8") == ".TH PAGE 1 first"
     assert manifest_module.lookup("second", config=cfg) is None
     assert manifest_module.lookup("first", config=cfg) == first_entry
+
+
+def test_force_does_not_bypass_another_entrys_durable_target_collision(
+    tmp_path: Path,
+) -> None:
+    """`--force` means taking over an unmanaged manpath page, nothing more.
+
+    A second entry's durable target colliding with a first entry's is a
+    MANIAC-vs-MANIAC conflict, not an unmanaged foreign page -- `force`
+    must not let one install silently steal a target another entry's
+    checksum still verifies against.
+    """
+    cfg = Config(
+        man_dir=tmp_path / "man1",
+        output_dir=tmp_path / "durable",
+        manifest_path=tmp_path / "state" / "installed.json",
+    )
+    first_source = tmp_path / "first" / "page.1"
+    first_source.parent.mkdir()
+    first_source.write_text(".TH PAGE 1 first", encoding="utf-8")
+    second_source = tmp_path / "second" / "page.1"
+    second_source.parent.mkdir()
+    second_source.write_text(".TH PAGE 1 second", encoding="utf-8")
+
+    install_manpage(
+        first_source,
+        "first",
+        Tier.SYNTHESIS,
+        "model",
+        target_dir=tmp_path / "man1",
+        config=cfg,
+    )
+    first_entry = manifest_module.lookup("first", config=cfg)
+    assert first_entry is not None and first_entry.target is not None
+
+    with pytest.raises(FileExistsError, match="already recorded by 'first'"):
+        install_manpage(
+            second_source,
+            "second",
+            Tier.SYNTHESIS,
+            "model",
+            target_dir=tmp_path / "man2",
+            force=True,
+            config=cfg,
+        )
+
+    assert first_entry.target.read_text(encoding="utf-8") == ".TH PAGE 1 first"
+    assert manifest_module.lookup("second", config=cfg) is None
 
 
 def test_reinstalling_a_tool_reuses_its_own_durable_target(tmp_path: Path) -> None:
@@ -1303,7 +1361,7 @@ def test_uninstall_interrupted_before_the_manifest_write_reruns_clean(
     monkeypatch.undo()
     result = uninstall_manpage("tool", config=cfg)
 
-    assert result.modified_kept == [] and result.legacy_kept == []
+    assert result.modified_kept == [] and result.changed == []
     assert manifest_module.load(config=cfg) == {}
     assert list(cfg.output_dir.glob("*.1")) == []
 

@@ -88,6 +88,43 @@ def test_run_install_uses_the_install_root_page_first(
     assert outcome.installed_path == Path("/installed/tool.1")
 
 
+def test_run_install_dry_run_tier1_writes_nothing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A dry-run tier-1 install reports the page it would use without ever
+    calling `install_manpage` -- no manpath link, no manifest entry, and
+    nothing under `output_dir` or `cache_dir`.
+    """
+    page = tmp_path / "tool.1"
+    page.write_text(".TH TOOL 1\n", encoding="utf-8")
+    provider = _FakeProvider(local_docs=[page])
+    inst = _installation()
+    monkeypatch.setattr(
+        "maniac.orchestration.context.resolution.find_installation",
+        lambda name, bin_dir=None: (provider, inst),
+    )
+    monkeypatch.setattr(
+        "maniac.orchestration.install.install_manpage",
+        lambda *args, **kwargs: pytest.fail("install_manpage reached under dry_run"),
+    )
+    cfg = Config(
+        man_dir=tmp_path / "man1",
+        cache_dir=tmp_path / "cache",
+        output_dir=tmp_path / "out",
+        intermediate_dir=tmp_path / "intermediate",
+        manifest_path=tmp_path / "state" / "installed.json",
+    )
+
+    outcome = run_install("tool", config=cfg, dry_run=True)
+
+    assert outcome.tier is Tier.INSTALL_ROOT
+    assert outcome.installed_path is None
+    assert not cfg.man_dir.exists()
+    assert not cfg.output_dir.exists()
+    assert not cfg.cache_dir.exists()
+    assert manifest.load(cfg) == {}
+
+
 def test_run_install_links_a_verified_install_root_page_directly(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -176,6 +213,47 @@ def test_run_install_falls_through_to_repository_when_no_install_root_page(
     assert outcome.tier is Tier.REPOSITORY
     assert "repository" in outcome.detail
     assert "1.2.3" in outcome.detail
+
+
+def test_run_install_dry_run_tier2_writes_nothing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A dry-run tier-2 install never opens the manifest transaction that
+    installing every page of a release normally opens as one unit.
+    """
+    source = RepoSource(name="tool", target="owner/tool", is_local=False)
+    provider = _FakeProvider(local_docs=[], source=source)
+    inst = _installation()
+    monkeypatch.setattr(
+        "maniac.orchestration.context.resolution.find_installation",
+        lambda name, bin_dir=None: (provider, inst),
+    )
+    page = tmp_path / "tool.1"
+    page.write_text(".TH TOOL 1\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "maniac.orchestration.install.discover_repo_manpages",
+        lambda source, binary, cache_dir=None, config=None, version=None: [page],
+    )
+    monkeypatch.setattr(
+        "maniac.orchestration.install.install_manpage",
+        lambda *args, **kwargs: pytest.fail("install_manpage reached under dry_run"),
+    )
+    cfg = Config(
+        man_dir=tmp_path / "man1",
+        cache_dir=tmp_path / "cache",
+        output_dir=tmp_path / "out",
+        intermediate_dir=tmp_path / "intermediate",
+        manifest_path=tmp_path / "state" / "installed.json",
+    )
+
+    outcome = run_install("tool", config=cfg, dry_run=True)
+
+    assert outcome.tier is Tier.REPOSITORY
+    assert outcome.installed_path is None
+    assert not cfg.man_dir.exists()
+    assert not cfg.output_dir.exists()
+    assert not cfg.cache_dir.exists()
+    assert manifest.load(cfg) == {}
 
 
 def test_run_install_uses_the_exact_tmux_documentation_repository(
@@ -590,6 +668,153 @@ def test_run_install_explicit_bin_dir_bypasses_the_refusal(
     outcome = run_install("tool", bin_dir=bin_dir)
 
     assert outcome.tier is Tier.INSTALL_ROOT
+
+
+def test_run_install_refuses_an_unmanaged_destination_before_any_tier(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A foreign page already at the manpath destination refuses before any
+    tier runs -- not just before `install_manpage`'s own `_take_backup`
+    check, which only fires after `--help` is crawled, a context snapshot
+    is written and an LLM is called. Nothing here should be reached.
+    """
+    man_dir = tmp_path / "man1"
+    man_dir.mkdir(parents=True)
+    (man_dir / "tool.1").write_text(".TH TOOL 1 vendor\n", encoding="utf-8")
+    cfg = Config(
+        man_dir=man_dir,
+        cache_dir=tmp_path / "cache",
+        output_dir=tmp_path / "out",
+        intermediate_dir=tmp_path / "intermediate",
+        manifest_path=tmp_path / "state" / "installed.json",
+    )
+    monkeypatch.setattr(
+        "maniac.orchestration.context.resolution.find_installation",
+        lambda name, bin_dir=None: pytest.fail("no resolution should run on a refusal"),
+    )
+    monkeypatch.setattr(
+        "maniac.orchestration.pipeline.synthesize",
+        lambda *a, **kw: pytest.fail("no tier should run on a refusal"),
+    )
+
+    with pytest.raises(InstallRefused):
+        run_install("tool", config=cfg)
+
+    assert not cfg.output_dir.exists()
+    assert not cfg.intermediate_dir.exists()
+    assert not cfg.cache_dir.exists()
+    assert manifest.load(cfg) == {}
+
+
+def test_run_install_force_bypasses_the_unmanaged_destination_precheck(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`--force` reaches the precheck the same way it reaches `_take_backup`."""
+    man_dir = tmp_path / "man1"
+    man_dir.mkdir(parents=True)
+    (man_dir / "tool.1").write_text(".TH TOOL 1 vendor\n", encoding="utf-8")
+    cfg = Config(
+        man_dir=man_dir,
+        cache_dir=tmp_path / "cache",
+        output_dir=tmp_path / "out",
+        intermediate_dir=tmp_path / "intermediate",
+        manifest_path=tmp_path / "state" / "installed.json",
+    )
+    provider = _FakeProvider(local_docs=[])
+    inst = _installation()
+    monkeypatch.setattr(
+        "maniac.orchestration.context.resolution.find_installation",
+        lambda name, bin_dir=None: (provider, inst),
+    )
+
+    # No candidate at any tier -- the precheck already ran, so reaching here
+    # (rather than raising InstallRefused) is what this test is checking.
+    outcome = run_install("tool", config=cfg, force=True, no_synthesize=True)
+
+    assert outcome.tier is None
+
+
+def test_run_install_does_not_refuse_a_manifest_owned_destination(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Reinstalling a tool MANIAC already owns must not trip the precheck --
+    only a foreign, unmanaged page at the destination should.
+    """
+    from maniac.installer import install_manpage
+    from maniac.manifest import Tier as ManifestTier
+
+    man_dir = tmp_path / "man1"
+    man_dir.mkdir(parents=True)
+    cfg = Config(
+        man_dir=man_dir,
+        cache_dir=tmp_path / "cache",
+        output_dir=tmp_path / "out",
+        intermediate_dir=tmp_path / "intermediate",
+        manifest_path=tmp_path / "state" / "installed.json",
+    )
+    source = tmp_path / "source" / "tool.1"
+    source.parent.mkdir()
+    source.write_text(".TH TOOL 1 maniac\n", encoding="utf-8")
+    install_manpage(
+        source, "tool", ManifestTier.SYNTHESIS, "model", target_dir=man_dir, config=cfg
+    )
+
+    provider = _FakeProvider(local_docs=[])
+    inst = _installation()
+    monkeypatch.setattr(
+        "maniac.orchestration.context.resolution.find_installation",
+        lambda name, bin_dir=None: (provider, inst),
+    )
+
+    outcome = run_install("tool", config=cfg, no_synthesize=True)
+
+    assert outcome.tier is None
+
+
+def test_run_install_dry_run_tier3_writes_nothing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A dry-run tier-3 install still crawls `--help` and fetches docs to
+    report what synthesis would work with, but writes nothing under
+    `output_dir` or `intermediate_dir`, and never opens a manifest
+    transaction -- `install_manpage` is the only call in the synthesis path
+    that opens one, and it must never be reached.
+    """
+    provider = _FakeProvider(local_docs=[])
+    inst = _installation()
+    monkeypatch.setattr(
+        "maniac.orchestration.context.resolution.find_installation",
+        lambda name, bin_dir=None: (provider, inst),
+    )
+    monkeypatch.setattr(
+        "maniac.orchestration.install.discover_repo_manpages",
+        lambda *args, **kwargs: [],
+    )
+    monkeypatch.setattr(
+        "maniac.orchestration.pipeline.find_subcommands",
+        lambda cmd, **kwargs: {"> tool --help": "Usage: tool"},
+    )
+    monkeypatch.setattr(
+        "maniac.orchestration.pipeline.install_manpage",
+        lambda *args, **kwargs: pytest.fail("install_manpage reached under dry_run"),
+    )
+    cfg = Config(
+        man_dir=tmp_path / "man1",
+        cache_dir=tmp_path / "cache",
+        output_dir=tmp_path / "out",
+        intermediate_dir=tmp_path / "intermediate",
+        manifest_path=tmp_path / "state" / "installed.json",
+    )
+
+    outcome = run_install("tool", config=cfg, dry_run=True)
+
+    assert outcome.tier is Tier.SYNTHESIS
+    assert outcome.installed_path is None
+    assert not cfg.man_dir.exists()
+    assert not cfg.output_dir.exists()
+    assert not cfg.intermediate_dir.exists()
+    assert not cfg.cache_dir.exists()
+    assert manifest.load(cfg) == {}
 
 
 def test_install_reaching_tier_3_resolves_the_tool_once_not_twice(

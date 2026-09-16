@@ -284,9 +284,14 @@ def test_cli_install_dry_run(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) ->
 def test_cli_install_reuses_config_for_existing_destination(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """An existing destination must not make installation create another Config."""
-    import contextlib
+    """An existing destination must not make installation create another Config.
 
+    A foreign page at the destination is refused by the top-of-`run_install`
+    precheck (ADR item 1) before any tier -- and so before `install_manpage`
+    or `manifest.transaction` are ever reached -- so this now tracks the
+    `Config` instance through `manifest.load`, the precheck's own read,
+    rather than through a transaction that no longer opens.
+    """
     from maniac.models import Installation
 
     constructed: list[Config] = []
@@ -322,13 +327,6 @@ def test_cli_install_reuses_config_for_existing_destination(
             return [page]
 
     observed: list[Config | None] = []
-    real_transaction = manifest.transaction
-
-    @contextlib.contextmanager
-    def transaction(config: Config | None = None):
-        observed.append(config)
-        with real_transaction(config) as txn:
-            yield txn
 
     monkeypatch.setattr(cli_module, "Config", TrackingConfig)
     monkeypatch.setattr(
@@ -340,11 +338,17 @@ def test_cli_install_reuses_config_for_existing_destination(
         lambda tool, bin_dir=None: (Provider(), installation),
     )
     monkeypatch.setattr("maniac.manifest.Config", TrackingConfig)
-    monkeypatch.setattr("maniac.installer.manifest.transaction", transaction)
+    real_load = manifest.load
+
+    def load(config: Config | None = None) -> dict[str, manifest.Entry]:
+        observed.append(config)
+        return real_load(config)
+
+    monkeypatch.setattr("maniac.orchestration.install.manifest.load", load)
 
     result = runner.invoke(app, ["install", "mytool"])
 
-    assert result.exit_code == 1
+    assert result.exit_code == 0
     assert "foreign or vendor manpage already exists" in result.output
     assert len(constructed) == 1
     assert observed == constructed
@@ -479,9 +483,7 @@ def test_cli_uninstall(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
 
     monkeypatch.setattr(
         "maniac.installer.uninstall_manpage",
-        lambda tool, purge, force, config: UninstallResult(
-            removed=[tmp_path / f"{tool}.1"]
-        ),
+        lambda tool, purge, config: UninstallResult(removed=[tmp_path / f"{tool}.1"]),
     )
     outcome = compute_uninstall("mytool")
     assert outcome.result == UninstallResult(removed=[tmp_path / "mytool.1"])
@@ -496,7 +498,7 @@ def test_cli_uninstall_not_found(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(
         "maniac.installer.uninstall_manpage",
-        lambda tool, purge, force, config: UninstallResult(),
+        lambda tool, purge, config: UninstallResult(),
     )
     outcome = compute_uninstall("nonexistent")
     assert outcome.result == UninstallResult()
@@ -520,7 +522,7 @@ def test_cli_uninstall_foreign_kept(
     foreign_path = tmp_path / "man1" / "mytool.1"
     monkeypatch.setattr(
         "maniac.installer.uninstall_manpage",
-        lambda tool, purge, force, config: UninstallResult(
+        lambda tool, purge, config: UninstallResult(
             removed=[tmp_path / f"{tool}.1"], foreign_kept=foreign_path
         ),
     )
@@ -537,17 +539,15 @@ def test_cli_uninstall_foreign_kept(
 def test_cli_uninstall_modified_kept(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """A manifest-owned page whose bytes changed since install renders a
-    message distinct from `foreign_kept`'s -- it must say --force removes
-    it, and must not claim the file is non-MANIAC's."""
+    """A retargeted or dangling link renders a message distinct from
+    `foreign_kept`'s, and must not claim the bytes changed -- nothing here
+    was edited, the link itself no longer points where install left it."""
     from maniac.cli.uninstall import compute_uninstall
 
     modified_path = tmp_path / "man1" / "mytool.1"
     monkeypatch.setattr(
         "maniac.installer.uninstall_manpage",
-        lambda tool, purge, force, config: UninstallResult(
-            modified_kept=[modified_path]
-        ),
+        lambda tool, purge, config: UninstallResult(modified_kept=[modified_path]),
     )
     outcome = compute_uninstall("mytool")
     assert outcome.result.foreign_kept is None
@@ -555,8 +555,29 @@ def test_cli_uninstall_modified_kept(
 
     res = runner.invoke(app, ["uninstall", "mytool"])
     assert res.exit_code == 0
-    assert "--force" in res.output
+    assert "no longer points where" in res.output
+    assert "bytes have changed" not in res.output
     assert "non-MANIAC" not in res.output
+
+
+def test_cli_uninstall_changed(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """A page removed despite a bytes mismatch renders a warning, not a refusal."""
+    from maniac.cli.uninstall import compute_uninstall
+
+    changed_path = tmp_path / "man1" / "mytool.1"
+    monkeypatch.setattr(
+        "maniac.installer.uninstall_manpage",
+        lambda tool, purge, config: UninstallResult(
+            removed=[changed_path], changed=[changed_path]
+        ),
+    )
+    outcome = compute_uninstall("mytool")
+    assert outcome.result.changed == [changed_path]
+
+    res = runner.invoke(app, ["uninstall", "mytool"])
+    assert res.exit_code == 0
+    assert "Uninstalled manpage for mytool!" in res.output
+    assert "bytes had changed since install" in res.output
 
 
 def test_cli_install_multiple_all_fail_exits_nonzero(
@@ -642,28 +663,9 @@ def test_render_install_does_not_swallow_bracketed_detail() -> None:
     assert "[no synthesis]" in buf.getvalue()
 
 
-def test_cli_uninstall_legacy_kept(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """A pre-ADR-0028 entry left in place must not read as an edited page.
-
-    `modified_kept`'s wording claims the bytes changed since install, which
-    is not what happened here -- there is no recorded target to compare them
-    against.
-    """
-    from maniac.cli.uninstall import compute_uninstall
-
-    legacy_path = tmp_path / "man1" / "mytool.1"
-    monkeypatch.setattr(
-        "maniac.installer.uninstall_manpage",
-        lambda tool, purge, force, config: UninstallResult(legacy_kept=[legacy_path]),
-    )
-    outcome = compute_uninstall("mytool")
-    assert outcome.result.modified_kept == []
-    assert outcome.result.legacy_kept == [legacy_path]
-
-    res = runner.invoke(app, ["uninstall", "mytool"])
-    assert res.exit_code == 0
-    assert "--force" in res.output
-    assert "bytes have changed since" not in res.output
-    assert "non-MANIAC" not in res.output
+def test_cli_uninstall_rejects_removed_force_option() -> None:
+    """`uninstall --force` is gone: the flag never bypassed anything real,
+    and `--force` bypassing `changed` would let a stale install shadow a
+    page whose bytes moved on for an unrelated reason."""
+    res = runner.invoke(app, ["uninstall", "mytool", "--force"])
+    assert res.exit_code != 0

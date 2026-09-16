@@ -9,7 +9,6 @@ from ..config import Config
 from ..exceptions import ManiacError
 from ..installer import UninstallResult
 from . import app, console, get_config
-from .options import ForceOption
 
 
 @dataclass(frozen=True, slots=True)
@@ -21,27 +20,20 @@ class UninstallOutcome:
 
 
 def compute_uninstall(
-    tool: str, purge: bool = False, force: bool = False, config: Config | None = None
+    tool: str, purge: bool = False, config: Config | None = None
 ) -> UninstallOutcome:
     """Uninstall a MANIAC-managed manpage and report what happened."""
     from ..installer import uninstall_manpage
 
     return UninstallOutcome(
         tool=tool,
-        result=uninstall_manpage(
-            tool, purge=purge, force=force, config=config or Config()
-        ),
+        result=uninstall_manpage(tool, purge=purge, config=config or Config()),
     )
 
 
 def _render_uninstall(target_console: Any, outcome: UninstallOutcome) -> None:
     result = outcome.result
-    if (
-        not result.removed
-        and result.foreign_kept is None
-        and not result.modified_kept
-        and not result.legacy_kept
-    ):
+    if not result.removed and result.foreign_kept is None and not result.modified_kept:
         target_console.print(
             f"[yellow]No installed manpage found for '{outcome.tool}'.[/yellow]"
         )
@@ -62,16 +54,15 @@ def _render_uninstall(target_console: Any, outcome: UninstallOutcome) -> None:
 
     for kept in result.modified_kept:
         target_console.print(
-            f"[yellow]⚠ Left {kept} in place: MANIAC installed "
-            f"it, but its bytes have changed since. Use --force to remove it "
-            f"anyway.[/yellow]"
+            f"[yellow]⚠ Left {kept} in place: it no longer points where "
+            f"MANIAC's install left it, so it is not provably MANIAC's page "
+            f"anymore.[/yellow]"
         )
 
-    for kept in result.legacy_kept:
+    for changed in result.changed:
         target_console.print(
-            f"[yellow]⚠ Left {kept} in place: MANIAC installed it before it "
-            f"tracked link targets, so its bytes cannot be verified. Use "
-            f"--force to remove it anyway.[/yellow]"
+            f"[yellow]⚠ Removed {changed}, but its bytes had changed since "
+            f"install.[/yellow]"
         )
 
 
@@ -86,13 +77,10 @@ def uninstall_cmd(
             help="Also delete generated Markdown and intermediate context files.",
         ),
     ] = False,
-    force: ForceOption = False,
 ) -> None:
     """Uninstall a MANIAC-managed manpage and restore vendor backup if present."""
     try:
-        outcome = compute_uninstall(
-            tool, purge=purge, force=force, config=get_config(ctx)
-        )
+        outcome = compute_uninstall(tool, purge=purge, config=get_config(ctx))
     except (OSError, RuntimeError, ManiacError) as e:
         console.print(
             f"[bold red]Error uninstalling manpage for {tool}: {e}[/bold red]"

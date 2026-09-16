@@ -117,24 +117,31 @@ def _one_doc_file(matched: bool) -> tuple[list[DocFile], bool]:
 
 
 def test_synthesize_dry_run(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """A dry run is a true preview: it reports what synthesis would produce
+    and where, but writes nothing -- not `output_dir`, which this test
+    would otherwise have to create up front for `markdown_path` to land in.
+    """
     _help_tree(monkeypatch, {"> testtool --help": "Usage: testtool"})
     monkeypatch.setattr(
         "maniac.orchestration.pipeline.fetch_and_extract_docs",
         lambda source, cache_dir, **kwargs: _one_doc_file(False),
     )
+    out_dir = tmp_path / "manpages"
 
-    result = synthesize(_resolved(output_dir=tmp_path / "manpages"), dry_run=True)
+    result = synthesize(_resolved(output_dir=out_dir), dry_run=True)
 
     assert result.tool_name == "testtool"
     assert result.command_count == 1
     assert result.doc_file_count == 1
-    assert result.markdown_path.exists()
+    assert not out_dir.exists()
+    assert not result.markdown_path.exists()
     assert "% TESTTOOL(1)" in result.markdown_content
 
     # M1: intermediate_dir was never passed, so this only stays out of the
     # real ~/.local/state/maniac/ if the default resolves under tmp_path.
     assert result.context_path is not None
     assert result.context_path.is_relative_to(tmp_path)
+    assert not result.context_path.exists()
 
 
 def test_synthesize_consumes_the_facts_it_was_given_without_resolving_again(
@@ -429,3 +436,27 @@ def test_synthesize_unclaimed_binary_records_its_own_version_output(
 
     assert observed["cmd"] == ["testtool"]
     assert recorded["version"] == "testtool 9.9.9-custom"
+
+
+def test_synthesize_dry_run_opens_no_manifest_transaction(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`install=True` under `dry_run` must still never reach `install_manpage`
+    -- the only call in this module that opens a manifest transaction.
+    """
+    _help_tree(monkeypatch, {"> testtool --help": "Usage: testtool"})
+    monkeypatch.setattr(
+        "maniac.orchestration.pipeline.fetch_and_extract_docs",
+        lambda source, cache_dir, **kwargs: _one_doc_file(False),
+    )
+
+    def _explode(*args: object, **kwargs: object) -> Path:
+        raise AssertionError("install_manpage reached under dry_run")
+
+    monkeypatch.setattr("maniac.orchestration.pipeline.install_manpage", _explode)
+
+    result = synthesize(
+        _resolved(output_dir=tmp_path / "manpages"), install=True, dry_run=True
+    )
+
+    assert result.installed_path is None
