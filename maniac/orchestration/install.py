@@ -2,11 +2,10 @@
 
 Tier order, cheapest and most authoritative first: the install root (tier
 1), the upstream repository with the version matched (tier 2), then LLM
-synthesis (tier 3, `synthesize`). `--generate` restricts selection to tier
-3; `--no-generate` restricts it to tiers 1-2 and must never reach
-`synthesize` -- tested by `tests/test_orchestration_install.py` failing a
-monkeypatched LLM call reachable through it, not only by asserting the
-happy path.
+synthesis (tier 3, `synthesize`). Tiers 1-2 are always tried; `--no-synthesize`
+restricts selection to them and must never reach `synthesize` -- tested by
+`tests/test_orchestration_install.py` failing a monkeypatched LLM call
+reachable through it, not only by asserting the happy path.
 
 One `ResolvedTool` is resolved before the tiers and carries the binary, its
 installation, provider, installed version and documentation source through
@@ -53,12 +52,8 @@ class InstallOutcome:
 def run_install(
     tool_name: str,
     *,
-    cache_dir: str | Path | None = None,
-    output_dir: str | Path | None = None,
-    prompt_file: str | Path | None = None,
     model: str | None = None,
-    generate_only: bool = False,
-    no_generate: bool = False,
+    no_synthesize: bool = False,
     force: bool = False,
     dry_run: bool = False,
     config: Config | None = None,
@@ -66,10 +61,10 @@ def run_install(
 ) -> InstallOutcome:
     """Resolve `tool_name` through ADR-0016's tiers and report which one answered.
 
-    `generate_only` (`--generate`) restricts selection to tier 3, skipping
-    tiers 1-2 outright. `no_generate` (`--no-generate`) restricts it to
-    tiers 1-2 -- `synthesize`, the only path that can call an LLM, is
-    imported nowhere in that branch, not merely left uncalled.
+    Tiers 1-2 (install root, repository) always run first. `no_synthesize`
+    (`--no-synthesize`) restricts selection to them -- `synthesize`, the
+    only path that can call an LLM, is imported nowhere in that branch, not
+    merely left uncalled.
 
     Before any tier runs (ADR-0020): a binary the login `$PATH` cannot reach
     -- with no explicit `bin_dir` naming where it lives instead -- is refused
@@ -79,11 +74,6 @@ def run_install(
     """
     cfg = config or Config()
 
-    # Ahead of the `generate_only` branch, not inside it: the refusal asks
-    # whether MANIAC should serve this binary at all, which is prior to
-    # which tier would answer. Inside the branch, `--generate` bypassed it
-    # and synthesized a global page for a binary only this shell can see --
-    # the exact outcome ADR-0020 exists to prevent.
     if resolve_bin_path(tool_name, bin_dir) is None:
         raise InstallRefused(
             f"'{tool_name}' is reachable only from the current "
@@ -92,30 +82,25 @@ def run_install(
             "where the login shell can reach it first (ADR-0020)."
         )
 
-    tool = resolve_tool(tool_name, config=cfg, cache_dir=cache_dir, bin_dir=bin_dir)
+    tool = resolve_tool(tool_name, config=cfg, bin_dir=bin_dir)
 
-    if not generate_only:
-        outcome = _try_install_root(tool, force=force) or _try_repository(
-            tool, force=force
+    outcome = _try_install_root(tool, force=force) or _try_repository(tool, force=force)
+    if outcome is not None:
+        return outcome
+    if no_synthesize:
+        return InstallOutcome(
+            tool=tool_name,
+            tier=None,
+            detail=(
+                "no install-root or repository page found "
+                "(tried tiers 1-2 only; rerun without --no-synthesize to synthesize)"
+            ),
         )
-        if outcome is not None:
-            return outcome
-        if no_generate:
-            return InstallOutcome(
-                tool=tool_name,
-                tier=None,
-                detail=(
-                    "no install-root or repository page found "
-                    "(tried tiers 1-2 only; rerun with --generate to synthesize)"
-                ),
-            )
 
-    from .pipeline import synthesize  # deferred: tier 3 only, never on --no-generate
+    from .pipeline import synthesize  # deferred: tier 3 only, never on --no-synthesize
 
     pipeline_result = synthesize(
         tool,
-        output_dir=output_dir,
-        prompt_file=prompt_file,
         model=model,
         install=True,
         force=force,

@@ -13,7 +13,7 @@ from pathlib import Path
 from ..exceptions import CrawlerError, GenerationError
 from ..generation.compiler import compile_to_man
 from ..generation.llm import run_llm_synthesis
-from ..generation.prompts import build_synthesis_prompt, load_system_prompt
+from ..generation.prompts import build_synthesis_prompt
 from ..installer import install_manpage
 from ..logging import logger
 from ..manifest import Tier
@@ -29,9 +29,7 @@ __all__ = ["synthesize"]
 def synthesize(
     tool: ResolvedTool,
     *,
-    output_dir: str | Path | None = None,
     intermediate_dir: str | Path | None = None,
-    prompt_file: str | Path | None = None,
     model: str | None = None,
     reasoning_effort: str | None = None,
     install: bool = False,
@@ -40,7 +38,7 @@ def synthesize(
 ) -> PipelineResult:
     """Extract source material for an already-resolved tool, synthesize, compile."""
     cfg = tool.config
-    out_dir = Path(output_dir) if output_dir is not None else cfg.output_dir
+    out_dir = cfg.output_dir
     out_dir.mkdir(parents=True, exist_ok=True)
     inter_dir = (
         Path(intermediate_dir) if intermediate_dir is not None else cfg.intermediate_dir
@@ -64,12 +62,6 @@ def synthesize(
         tool_name=tool.tool_name,
         help_text=help_block,
         doc_text=docs_block,
-        system_prompt=load_system_prompt(prompt_file),
-    )
-    prompt_save_file = _write_intermediate(
-        inter_dir / f"{tool.tool_name}_prompt.md",
-        full_prompt,
-        "Saved intermediate prompt",
     )
 
     md_file = out_dir / f"{tool.tool_name}.1.md"
@@ -85,7 +77,6 @@ def synthesize(
             tree=tree,
             doc_files=doc_files,
             context_path=context_file,
-            prompt_path=prompt_save_file,
             markdown_path=md_file,
             roff_path=None,
             installed_path=None,
@@ -130,7 +121,6 @@ def synthesize(
         tree=tree,
         doc_files=doc_files,
         context_path=context_file,
-        prompt_path=prompt_save_file,
         markdown_path=md_file,
         roff_path=actual_roff_path,
         installed_path=installed_path,
@@ -222,7 +212,6 @@ def _result(
     tree: dict[str, str],
     doc_files: list[DocFile],
     context_path: Path | None,
-    prompt_path: Path | None,
     markdown_path: Path,
     roff_path: Path | None,
     installed_path: Path | None,
@@ -234,7 +223,6 @@ def _result(
         command_count=len(tree),
         doc_file_count=len(doc_files),
         context_path=context_path,
-        prompt_path=prompt_path,
         markdown_path=markdown_path,
         roff_path=roff_path,
         installed_path=installed_path,

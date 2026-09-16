@@ -2,11 +2,10 @@
 
 The inverse of `uninstall`, per ADR-0016's rename from `generate`. Tries the
 install root, then the upstream repository with the version matched, then
-LLM synthesis, in that order; `--generate` and `--no-generate` narrow which
-tiers are tried.
+LLM synthesis, in that order; `--no-synthesize` restricts it to the first
+two tiers.
 """
 
-from pathlib import Path
 from typing import Annotated, Any
 
 import typer
@@ -40,28 +39,11 @@ def install(
         list[str] | None,
         typer.Argument(help="List of tool names to install manpages for."),
     ] = None,
-    output_dir: Annotated[
-        str | None, typer.Option(help="Directory to save generated manpage.")
-    ] = None,
-    cache_dir: Annotated[
-        str | None, typer.Option(help="Directory for cached repository clones.")
-    ] = None,
-    prompt_file: Annotated[
-        Path | None,
-        typer.Option(help="Path to custom system prompt file (tier-3 synthesis only)."),
-    ] = None,
     model: ModelOption = None,
-    generate: Annotated[
+    no_synthesize: Annotated[
         bool,
         typer.Option(
-            "--generate",
-            help="Force tier-3 synthesis, skipping the install root and repository tiers.",
-        ),
-    ] = False,
-    no_generate: Annotated[
-        bool,
-        typer.Option(
-            "--no-generate",
+            "--no-synthesize",
             help=(
                 "Restrict to tiers 1-2 (install root, repository); never calls an LLM."
             ),
@@ -79,14 +61,6 @@ def install(
         return
 
     cfg = get_config(ctx)
-    output_dir = output_dir or str(cfg.output_dir)
-    cache_dir = cache_dir or str(cfg.cache_dir)
-
-    if generate and no_generate:
-        console.print(
-            "[bold red]--generate and --no-generate are mutually exclusive.[/bold red]"
-        )
-        raise typer.Exit(1)
 
     from ..orchestration.install import run_install
 
@@ -98,12 +72,8 @@ def install(
             with console.status(f"[bold green]Installing manpage for {tool}..."):
                 outcome = run_install(
                     tool,
-                    cache_dir=cache_dir,
-                    output_dir=output_dir,
-                    prompt_file=prompt_file,
                     model=model,
-                    generate_only=generate,
-                    no_generate=no_generate,
+                    no_synthesize=no_synthesize,
                     force=force,
                     dry_run=dry_run,
                     config=cfg,

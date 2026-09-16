@@ -206,7 +206,6 @@ class PipelineResult:
     command_count: int
     doc_file_count: int
     context_path: Path | None
-    prompt_path: Path | None
     markdown_path: Path
     roff_path: Path | None
     installed_path: Path | None

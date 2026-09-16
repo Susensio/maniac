@@ -6,6 +6,7 @@ row rather than dropped silently -- both were audit finding M8, and
 `tests/test_bench_harness.py` guards the regression.
 """
 
+import dataclasses
 import json
 import time
 from collections.abc import Sequence
@@ -87,8 +88,7 @@ def _generate(
     for attempt in range(retries + 1):
         try:
             result = synthesize(
-                resolve_tool(tool, config=cfg),
-                output_dir=out_dir,
+                resolve_tool(tool, config=dataclasses.replace(cfg, output_dir=out_dir)),
                 model=model_name,
                 reasoning_effort=reasoning_effort,
                 install=False,

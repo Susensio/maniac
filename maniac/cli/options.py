@@ -7,7 +7,6 @@ import typer
 OutputDirOption = Annotated[
     str, typer.Option(help="Directory to save generated manpage.")
 ]
-CacheDirOption = Annotated[str, typer.Option(help="Cache directory for repositories.")]
 ModelOption = Annotated[
     str | None,
     typer.Option(help="LLM model ID (e.g. 'gemini/gemini-3.5-flash')."),

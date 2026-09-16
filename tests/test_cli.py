@@ -274,11 +274,9 @@ def test_cli_install_dry_run(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) ->
         "maniac.orchestration.context.resolution.find_installation",
         lambda name, bin_dir=None: None,
     )
+    monkeypatch.setattr(cli_module, "Config", lambda: Config(output_dir=tmp_path))
 
-    result = runner.invoke(
-        app,
-        ["install", "mytool", "--output-dir", str(tmp_path), "--dry-run"],
-    )
+    result = runner.invoke(app, ["install", "mytool", "--dry-run"])
     assert result.exit_code == 0
     assert "synthesized from --help" in result.output
 
@@ -374,7 +372,6 @@ def test_cli_install_always_installs(
             command_count=1,
             doc_file_count=1,
             context_path=None,
-            prompt_path=None,
             markdown_path=tmp_path / f"{tool.tool_name}.1.md",
             roff_path=None,
             installed_path=None,
@@ -606,7 +603,6 @@ def test_cli_install_multiple_partial_success_exits_nonzero(
             command_count=1,
             doc_file_count=1,
             context_path=None,
-            prompt_path=None,
             markdown_path=tmp_path / f"{tool.tool_name}.1.md",
             roff_path=None,
             installed_path=None,

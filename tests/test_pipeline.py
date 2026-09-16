@@ -50,6 +50,7 @@ def _resolved(
     version: str | None = None,
     claimed: bool = True,
     bin_dir: Path | None = None,
+    output_dir: Path | None = None,
 ) -> ResolvedTool:
     """A `ResolvedTool` as `run_install` would hand one to tier 3.
 
@@ -61,7 +62,7 @@ def _resolved(
         if target is not None
         else None
     )
-    config = Config()
+    config = Config(output_dir=output_dir) if output_dir is not None else Config()
     return ResolvedTool(
         tool_name=tool_name,
         config=config,
@@ -122,7 +123,7 @@ def test_synthesize_dry_run(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> 
         lambda source, cache_dir, **kwargs: _one_doc_file(False),
     )
 
-    result = synthesize(_resolved(), output_dir=tmp_path / "manpages", dry_run=True)
+    result = synthesize(_resolved(output_dir=tmp_path / "manpages"), dry_run=True)
 
     assert result.tool_name == "testtool"
     assert result.command_count == 1
@@ -133,9 +134,7 @@ def test_synthesize_dry_run(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> 
     # M1: intermediate_dir was never passed, so this only stays out of the
     # real ~/.local/state/maniac/ if the default resolves under tmp_path.
     assert result.context_path is not None
-    assert result.prompt_path is not None
     assert result.context_path.is_relative_to(tmp_path)
-    assert result.prompt_path.is_relative_to(tmp_path)
 
 
 def test_synthesize_consumes_the_facts_it_was_given_without_resolving_again(
@@ -158,7 +157,7 @@ def test_synthesize_consumes_the_facts_it_was_given_without_resolving_again(
         ),
     )
 
-    result = synthesize(_resolved(version="1.2.3"), output_dir=tmp_path, dry_run=True)
+    result = synthesize(_resolved(version="1.2.3", output_dir=tmp_path), dry_run=True)
 
     assert observed == [
         RepoSource(name="testtool", target="org/testtool", is_local=False)
@@ -191,8 +190,8 @@ def test_resolve_tool_is_the_direct_synthesis_entry(
         "maniac.orchestration.pipeline.fetch_and_extract_docs", _fetch_and_extract_docs
     )
 
-    tool = resolve_tool("testtool", config=Config())
-    result = synthesize(tool, output_dir=tmp_path, dry_run=True)
+    tool = resolve_tool("testtool", config=Config(output_dir=tmp_path))
+    result = synthesize(tool, dry_run=True)
 
     assert tool.installation is inst
     assert observed["version"] == "1.2.3"
@@ -213,8 +212,8 @@ def test_synthesize_fetches_docs_from_the_canonical_repository(
         ),
     )
 
-    tool = _resolved("tmux", target="tmux/tmux-builds")
-    result = synthesize(tool, output_dir=tmp_path, dry_run=True)
+    tool = _resolved("tmux", target="tmux/tmux-builds", output_dir=tmp_path)
+    result = synthesize(tool, dry_run=True)
 
     assert observed == [RepoSource(name="tmux", target="tmux/tmux", is_local=False)]
     assert result.repo_source == observed[0]
@@ -239,7 +238,7 @@ def test_synthesize_uses_a_custom_bin_dir(
         lambda source, cache_dir, **kwargs: _one_doc_file(False),
     )
 
-    synthesize(_resolved(bin_dir=bin_dir), output_dir=tmp_path, dry_run=True)
+    synthesize(_resolved(bin_dir=bin_dir, output_dir=tmp_path), dry_run=True)
 
     assert observed == {"command": [str(bin_dir / "testtool")]}
 
@@ -253,7 +252,7 @@ def test_synthesize_from_root_help_only(
         lambda source, cache_dir, **kwargs: ([], False),
     )
 
-    result = synthesize(_resolved(), output_dir=tmp_path, dry_run=True)
+    result = synthesize(_resolved(output_dir=tmp_path), dry_run=True)
 
     assert result.command_count == 1
     assert result.doc_file_count == 0
@@ -279,7 +278,7 @@ def test_synthesize_reports_its_source_material(
         lambda source, cache_dir, **kwargs: _one_doc_file(True),
     )
 
-    synthesize(_resolved(), output_dir=tmp_path, dry_run=True)
+    synthesize(_resolved(output_dir=tmp_path), dry_run=True)
 
     assert (
         "Synthesis source material found",
@@ -308,7 +307,7 @@ def test_synthesize_warns_when_only_root_help_is_available(
         lambda source, cache_dir, **kwargs: ([], False),
     )
 
-    synthesize(_resolved(), output_dir=tmp_path, dry_run=True)
+    synthesize(_resolved(output_dir=tmp_path), dry_run=True)
 
     assert "Limited source material: synthesizing from root --help only" in messages
 
@@ -325,7 +324,7 @@ def test_synthesize_from_repository_docs_without_help(
         lambda source, cache_dir, **kwargs: _one_doc_file(True),
     )
 
-    result = synthesize(_resolved(), output_dir=tmp_path, dry_run=True)
+    result = synthesize(_resolved(output_dir=tmp_path), dry_run=True)
 
     assert result.command_count == 0
     assert result.doc_file_count == 1
@@ -340,7 +339,7 @@ def test_synthesize_rejects_when_no_help_or_repository_docs(
     )
 
     with pytest.raises(GenerationError, match="no usable --help output"):
-        synthesize(_resolved(target=None), output_dir=tmp_path, dry_run=True)
+        synthesize(_resolved(target=None, output_dir=tmp_path), dry_run=True)
 
 
 def test_synthesize_records_the_matched_tag_version(
@@ -361,7 +360,7 @@ def test_synthesize_records_the_matched_tag_version(
     )
     recorded = _mock_synthesis(monkeypatch, tmp_path)
 
-    synthesize(_resolved(version="1.2.3"), output_dir=tmp_path, install=True)
+    synthesize(_resolved(version="1.2.3", output_dir=tmp_path), install=True)
 
     assert observed["version"] == "1.2.3"
     assert recorded["version"] == "1.2.3"
@@ -385,7 +384,7 @@ def test_synthesize_records_no_version_when_tag_unmatched(
     )
     recorded = _mock_synthesis(monkeypatch, tmp_path)
 
-    synthesize(_resolved(version="9.9.9"), output_dir=tmp_path, install=True)
+    synthesize(_resolved(version="9.9.9", output_dir=tmp_path), install=True)
 
     assert recorded["version"] is None
 
@@ -403,7 +402,7 @@ def test_synthesize_without_an_installation_records_no_version(
     )
     recorded = _mock_synthesis(monkeypatch, tmp_path)
 
-    synthesize(_resolved(claimed=False), output_dir=tmp_path, install=True)
+    synthesize(_resolved(claimed=False, output_dir=tmp_path), install=True)
 
     assert recorded["version"] is None
 
@@ -426,7 +425,7 @@ def test_synthesize_unclaimed_binary_records_its_own_version_output(
     monkeypatch.setattr("maniac.orchestration.pipeline.get_version", _get_version)
     recorded = _mock_synthesis(monkeypatch, tmp_path)
 
-    synthesize(_resolved(claimed=False), output_dir=tmp_path, install=True)
+    synthesize(_resolved(claimed=False, output_dir=tmp_path), install=True)
 
     assert observed["cmd"] == ["testtool"]
     assert recorded["version"] == "testtool 9.9.9-custom"

@@ -39,9 +39,6 @@ def docs(
     tool: Annotated[
         str, typer.Argument(help="Name of the tool/binary to extract docs for.")
     ],
-    cache_dir: Annotated[
-        str | None, typer.Option(help="Directory for cached repository clones.")
-    ] = None,
 ) -> None:
     """Discover repository and extract documentation files for a tool."""
     from ..sources.docs import fetch_and_extract_docs
@@ -50,7 +47,6 @@ def docs(
 
     try:
         cfg = get_config(ctx)
-        cache_dir = cache_dir or str(cfg.cache_dir)
         source = discover_repo(tool, config=cfg)
         if source is None:
             console.print(
@@ -61,7 +57,9 @@ def docs(
         console.print(
             f"[bold green]Discovered repository source:[/bold green] {source.identity} (local={source.is_local})"
         )
-        doc_files, _ = fetch_and_extract_docs(source, cache_dir=cache_dir, config=cfg)
+        doc_files, _ = fetch_and_extract_docs(
+            source, cache_dir=cfg.cache_dir, config=cfg
+        )
         console.print(
             f"[bold green]Found {len(doc_files)} documentation files:[/bold green]"
         )

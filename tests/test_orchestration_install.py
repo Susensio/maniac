@@ -1,4 +1,4 @@
-"""Tests for `run_install` (ADR-0016): tier selection, `--generate`/`--no-generate`."""
+"""Tests for `run_install` (ADR-0016): tier selection, `--no-synthesize`."""
 
 from collections import Counter
 from pathlib import Path
@@ -203,7 +203,7 @@ def test_run_install_uses_the_exact_tmux_documentation_repository(
         lambda *args, **kwargs: Path("/installed/tmux.1"),
     )
 
-    outcome = run_install("tmux", no_generate=True)
+    outcome = run_install("tmux", no_synthesize=True)
 
     assert outcome.tier is Tier.REPOSITORY
     assert observed == [RepoSource(name="tmux", target="tmux/tmux", is_local=False)]
@@ -236,7 +236,6 @@ def test_run_install_tier2_rejects_a_page_naming_a_different_binary(
             command_count=1,
             doc_file_count=0,
             context_path=None,
-            prompt_path=None,
             markdown_path=tmp_path / f"{tool.tool_name}.1.md",
             roff_path=None,
             installed_path=None,
@@ -269,7 +268,6 @@ def test_run_install_reports_repository_docs_only_synthesis(
             command_count=0,
             doc_file_count=1,
             context_path=None,
-            prompt_path=None,
             markdown_path=tmp_path / f"{tool.tool_name}.1.md",
             roff_path=None,
             installed_path=None,
@@ -277,7 +275,7 @@ def test_run_install_reports_repository_docs_only_synthesis(
         ),
     )
 
-    outcome = run_install("tool", generate_only=True)
+    outcome = run_install("tool")
 
     assert outcome.detail == "synthesized from repo docs only"
 
@@ -304,7 +302,7 @@ def test_run_install_tier2_skipped_without_an_installed_version(
         "maniac.orchestration.install.discover_repo_manpages", _discover_repo_manpages
     )
 
-    outcome = run_install("tool", no_generate=True)
+    outcome = run_install("tool", no_synthesize=True)
 
     assert not called
     assert outcome.tier is None
@@ -340,7 +338,7 @@ def test_run_install_installs_all_anchored_release_manpages(
         lambda *args, **kwargs: [primary, companion],
     )
 
-    outcome = run_install("eza", no_generate=True, force=True, config=cfg)
+    outcome = run_install("eza", no_synthesize=True, force=True, config=cfg)
 
     assert outcome.installed_path == cfg.man_dir / primary.name
     assert (cfg.man_dir / primary.name).read_text(encoding="utf-8") == ".TH EZA 1\n"
@@ -413,7 +411,7 @@ def test_run_install_records_a_release_in_one_manifest_write(
         )[1],
     )
 
-    run_install("eza", no_generate=True, config=cfg)
+    run_install("eza", no_synthesize=True, config=cfg)
 
     assert writes == [["eza", "eza_colors", "eza_colors-explanation"]]
 
@@ -441,70 +439,24 @@ def test_run_install_records_no_page_when_a_release_fails_partway(
     monkeypatch.setattr("maniac.lifecycle.link_manpath_entry", link_once)
 
     with pytest.raises(OSError):
-        run_install("eza", no_generate=True, config=cfg)
+        run_install("eza", no_synthesize=True, config=cfg)
 
     assert manifest.load(config=cfg) == {}
 
 
-def test_generate_flag_skips_tiers_1_and_2(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """`--generate` still resolves the tool -- tier 3 needs those facts too --
-    but consults neither tier's documentation source.
-    """
-    page = tmp_path / "tool.1"
-    page.write_text(".TH TOOL 1\n", encoding="utf-8")
-
-    def _fail_if_called(*args: object, **kwargs: object) -> list[Path]:
-        raise AssertionError("--generate must not consult tiers 1-2")
-
-    provider = _FakeProvider(local_docs=[page])
-    monkeypatch.setattr(provider, "local_docs", _fail_if_called)
-    monkeypatch.setattr(
-        "maniac.orchestration.install.discover_repo_manpages", _fail_if_called
-    )
-    monkeypatch.setattr(
-        "maniac.orchestration.context.resolution.find_installation",
-        lambda name, bin_dir=None: (provider, _installation()),
-    )
-
-    from maniac.models import PipelineResult
-
-    def _synthesize(tool: ResolvedTool, **kwargs: object) -> PipelineResult:
-        return PipelineResult(
-            tool_name=tool.tool_name,
-            repo_source=None,
-            command_count=1,
-            doc_file_count=2,
-            context_path=None,
-            prompt_path=None,
-            markdown_path=tmp_path / f"{tool.tool_name}.1.md",
-            roff_path=None,
-            installed_path=None,
-            markdown_content="# doc",
-        )
-
-    monkeypatch.setattr("maniac.orchestration.pipeline.synthesize", _synthesize)
-
-    outcome = run_install("tool", generate_only=True)
-
-    assert outcome.tier is Tier.SYNTHESIS
-    assert "repo docs" in outcome.detail
-
-
-def test_no_generate_never_reaches_the_llm_when_no_tier_1_or_2_page_exists(
+def test_no_synthesize_never_reaches_the_llm_when_no_tier_1_or_2_page_exists(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The guarantee ADR-0016 makes for `--no-generate`: falsified by a reachable LLM call.
+    """The guarantee ADR-0016 makes for `--no-synthesize`: falsified by a reachable LLM call.
 
     Both tiers fail (no provider claims the binary), so a bug that fell
     through to synthesis anyway would call `run_llm_synthesis` -- patched
     here to raise, so the test fails loudly if that path is ever reached,
-    rather than only asserting the happy `--no-generate` case succeeds.
+    rather than only asserting the happy `--no-synthesize` case succeeds.
     """
 
     def _explode(*args: object, **kwargs: object) -> str:
-        raise AssertionError("an LLM call is reachable under --no-generate")
+        raise AssertionError("an LLM call is reachable under --no-synthesize")
 
     monkeypatch.setattr("maniac.generation.llm.run_llm_synthesis", _explode)
     monkeypatch.setattr(
@@ -512,18 +464,18 @@ def test_no_generate_never_reaches_the_llm_when_no_tier_1_or_2_page_exists(
         lambda name, bin_dir=None: None,
     )
 
-    outcome = run_install("nonexistent_unknown_tool_xyz", no_generate=True)
+    outcome = run_install("nonexistent_unknown_tool_xyz", no_synthesize=True)
 
     assert outcome.tier is None
 
 
-def test_no_generate_installs_a_tier_1_page_with_no_llm_call(
+def test_no_synthesize_installs_a_tier_1_page_with_no_llm_call(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """The happy-path pairing: `--no-generate` still does its job when tier 1 answers."""
+    """The happy-path pairing: `--no-synthesize` still does its job when tier 1 answers."""
 
     def _explode(*args: object, **kwargs: object) -> str:
-        raise AssertionError("an LLM call is reachable under --no-generate")
+        raise AssertionError("an LLM call is reachable under --no-synthesize")
 
     monkeypatch.setattr("maniac.generation.llm.run_llm_synthesis", _explode)
 
@@ -540,7 +492,7 @@ def test_no_generate_installs_a_tier_1_page_with_no_llm_call(
         lambda *args, **kwargs: Path("/installed/tool.1"),
     )
 
-    outcome = run_install("tool", no_generate=True)
+    outcome = run_install("tool", no_synthesize=True)
 
     assert outcome.tier is Tier.INSTALL_ROOT
 
@@ -567,15 +519,14 @@ def test_run_install_refuses_a_binary_the_login_path_cannot_reach(
     assert "global" in message
 
 
-def test_run_install_refuses_under_generate_too(
+def test_run_install_refuses_under_no_synthesize_too(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """`--generate` does not buy past the refusal.
+    """`--no-synthesize` does not buy past the refusal.
 
     The check asks whether MANIAC should serve this binary at all, which is
-    prior to which tier would answer -- so forcing synthesis cannot reach a
-    binary the login `$PATH` cannot. Placed inside the `generate_only`
-    branch it could, which is the bug this pins.
+    prior to which tier would answer -- so restricting to tiers 1-2 cannot
+    reach a binary the login `$PATH` cannot.
     """
     monkeypatch.setattr(loginpath, "which_login", lambda name: None)
     monkeypatch.setattr(
@@ -584,7 +535,7 @@ def test_run_install_refuses_under_generate_too(
     )
 
     with pytest.raises(InstallRefused):
-        run_install("project-local-tool", generate_only=True)
+        run_install("project-local-tool", no_synthesize=True)
 
 
 def test_run_install_refusal_runs_no_tier(

@@ -109,7 +109,7 @@ pandoc   upstream manpage from install root (3.10.2)   [no synthesis]
 hx       synthesized from --help + repo docs
 ```
 
-`--no-generate` restricts this to the first two tiers and never calls an LLM; `--generate` forces the third, skipping the first two outright.
+`--no-synthesize` restricts this to the first two tiers and never calls an LLM.
 
 Before synthesis, MANIAC reports how many commands, subcommands, and repository documents it found, which repository it used, and whether those documents matched the installed version.
 Root `--help` alone is enough to generate a page when no better source exists, but MANIAC warns that the source material is limited.
@@ -133,7 +133,7 @@ maniac install hx
 maniac install uv howdoi glow ruff bat
 
 # Never call an LLM: install root or repository only
-maniac install pandoc --no-generate
+maniac install pandoc --no-synthesize
 
 # Now use standard man immediately
 man hx

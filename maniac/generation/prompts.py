@@ -24,15 +24,6 @@ def get_default_system_prompt() -> str:
     return load_template("system_prompt.md", "% {TOOL_NAME}(1) | User Commands\n")
 
 
-def load_system_prompt(prompt_path: str | Path | None = None) -> str:
-    """Load system prompt from file or fallback to default template."""
-    if prompt_path:
-        path = Path(prompt_path)
-        if path.exists():
-            return path.read_text(encoding="utf-8")
-    return get_default_system_prompt()
-
-
 def build_synthesis_prompt(
     tool_name: str,
     help_text: str,
