@@ -110,9 +110,7 @@ def _upstream_key(upstream: RepoSource | None) -> str | None:
     return upstream.identity
 
 
-def _grouped_for_display(
-    rows: list[ToolRow], *, pending: set[str] | None = None
-) -> list[tuple[str, ToolRow]]:
+def _grouped_for_display(rows: list[ToolRow]) -> list[tuple[str, ToolRow]]:
     """Collapse binaries sharing one (provider, package, state, source, upstream) into one row.
 
     A solo group's label is its one tool's name, unchanged. A group of
@@ -134,11 +132,8 @@ def _grouped_for_display(
     package split across two states can still render two rows a reader
     cannot tell apart by label alone (`docs/BACKLOG.md`).
     """
-    pending = pending or set()
-    groups: dict[
-        tuple[str, str, ActionState, PageSource, Any, bool], list[ToolRow]
-    ] = {}
-    order: list[tuple[str, str, ActionState, PageSource, Any, bool]] = []
+    groups: dict[tuple[str, str, ActionState, PageSource, Any], list[ToolRow]] = {}
+    order: list[tuple[str, str, ActionState, PageSource, Any]] = []
     for row in rows:
         key = (
             row.provider,
@@ -146,7 +141,6 @@ def _grouped_for_display(
             row.state,
             row.source,
             _upstream_key(row.upstream),
-            row.tool in pending,
         )
         if key not in groups:
             order.append(key)
