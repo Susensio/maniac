@@ -19,6 +19,15 @@ The development machine is the only MANIAC installation in existence -- solo too
 Its manifest holds two entries, `aichat` and `ty`, both `tier=synthesis` with targets set.
 That is why both historical migrations were deleted rather than fixed: neither could ever have fired.
 
+Mise links into `~/.local/bin` rather than using shims on this machine, so a `$PATH` lookup for `python` hits `~/.local/bin/python`, a symlink to `../share/mise/installs/python/3.14.7/bin/python3.14`.
+Two rungs of evidence are needed to tell one program under several names from several programs.
+`python`, `python3` and `python3.14` collapse under `readlink -f`, which resolves all three to one file.
+`pip`, `pip3` and `pip3.14` do not -- they resolve to three distinct paths holding byte-identical content (sha256 `6b2d4f13...`), because Python packaging writes `console_scripts` entry points as real files, one per configured name, and never symlinks them.
+So symlink identity alone under-collapses every Python-packaged tool, and content hash is the rung that catches it; neither is the `--version` guessing ADR-0020 rejected.
+Twelve names in that bin directory are five distinct programs.
+
+The system python is not shadowed away entirely: `/usr/bin/python` and `/usr/bin/python3` lose to `~/.local/bin`, but `python3.12` has no mise counterpart and resolves to `/usr/bin/python3.12` on its own.
+
 There is no populated Mise shim directory here, so shim discovery is unverified and `mise which -C $HOME` remains cwd-sensitive.
 A live `mise activate bash` exports `MISE_SHELL`, `__MISE_EXE`, `__MISE_DIFF` and `__MISE_ORIG_PATH`.
 

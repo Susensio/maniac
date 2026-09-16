@@ -69,6 +69,14 @@ These are findings the work surfaced and deliberately did not take; they are fir
   `__MISE_ORIG_PATH` records the entire pre-activation `$PATH` and is the plausible evidence source -- a live `mise activate bash` on this machine exports it alongside `MISE_SHELL`, `__MISE_EXE` and `__MISE_DIFF`.
   Using it is Mise-specific, so decide whether the fallback gets per-provider evidence adapters or stays generic.
   Shim resolution remains unexercised: this machine has no populated shim directory, and `mise which -C $HOME` is cwd-sensitive and needs ADR-0029-style root validation.
+- Prove a page documents a different version than the binary it is offered for.
+  Live case found 2026-09-16 and not yet acted on: `man python` serves `/usr/share/man/man1/python3.12.1.gz`, Debian's system page, while `python` on `$PATH` resolves to mise's 3.14.7 and `man python3.14` has no page at all.
+  MANIAC renders that row `unverified`, which is honest but understates it -- the evidence to call it wrong is available on both sides, and this is the failure the tool exists to surface.
+  The binary reports `3.14.7`; the page's filename and its roff header both say 3.12.
+  That pairs with the existing conservative roff-header verifier item: version comparison is the same mechanism, applied to refute a page rather than to establish freshness.
+  Refuting needs a higher bar than confirming -- an unparsed header must stay `unverified`, never become a mismatch claim -- so decide what counts as unambiguous version evidence before wiring it to any state.
+  Do not generalize from a version-suffixed filename alone: `python3.12.1.gz` is legible here but names like `git-log.1` are not versions.
+
 - Show manifest drift in the `list` table.
   The structural link scan runs on every manifest read and `Read` carries a `links` map (ADR-0046), but nothing renders it, so `maniac list` still cannot say the manifest disagrees with the disk.
   Divergence is the common failure and corruption the rare one: a page deleted by hand, `output_dir` or `backup_dir` cleaned, another user-level installer writing into `~/.local/share/man/man1`.
