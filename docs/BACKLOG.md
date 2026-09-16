@@ -53,12 +53,6 @@ These are findings the work surfaced and deliberately did not take; they are fir
 
 ## Bugs and correctness
 
-- Stop `install --dry-run` writing to the repository cache.
-  The 2026-09-16 work made the preview leave the manpath, the manifest, `output_dir` and `intermediate_dir` untouched, and opens no manifest transaction; the cache half of that item is undone.
-  Tier 2's `select_repository` and tier 3's `_extract_docs` both run before `dry_run` is consulted, so a preview still takes the `sources/docs/cache.py` lock, writes JSON cache entries and release assets, and lets `sources/docs/repository.py` mkdir and `git clone`.
-  `pipeline.py` is honest about it in a comment and the flag's help now says "without installing or generating" rather than "without writing anything", so nothing currently lies -- the behaviour is just narrower than the original item asked for.
-  Fixing it means threading `dry_run` into the discovery layer, which is why it was not taken with the rest.
-  The three tests asserting `not cfg.cache_dir.exists()` pass only because discovery is monkeypatched or the fake provider has no source; they cannot catch a regression here.
 - Widen install's unmanaged-destination precheck beyond the default `<tool>.1`.
   It resolves only `cfg.man_dir / f"{tool}.1"`, which is exactly tier 3's destination, so no LLM call, crawl or context snapshot is ever thrown away -- that is the case it was built for and it covers it.
   Tier 1 destinations (`<tool>.1.gz`, other sections) and tier-2 companion pages can still miss it and be refused later by `_take_backup`.
@@ -180,6 +174,13 @@ These are findings the work surfaced and deliberately did not take; they are fir
   Debian provenance and local documentation are viable, but broad candidate enumeration and cross-package-manager support need batching and measured scope.
 
 ## Settled exclusions
+- Do not thread `dry_run` into the discovery layer to stop `install --dry-run` writing to the repository cache.
+  Decided 2026-09-16: the cache is disposable repository storage, so a preview populating it is not a mutation worth preventing.
+  What dry-run must not touch is the manpath, the manifest, `output_dir` and `intermediate_dir`, and it does not -- it opens no manifest transaction either.
+  The original item asked for caches too; that half is withdrawn rather than outstanding.
+  The flag's help says "without installing or generating anything", which is true, and `pipeline.py` carries a comment saying the crawl and doc fetch still run, so nothing claims otherwise.
+  Note if this is ever revisited: the three tests asserting `not cfg.cache_dir.exists()` pass only because discovery is monkeypatched or the fake provider has no source, so they would not catch a change here either way.
+
 - Do not change what `maniac list` prints when stdout is not a terminal.
   It renders the Tool column alone, because Rich falls back to 80 columns and drops the other three.
   Decided 2026-09-15: bare names are the wanted pipe output, so the accident and the intent coincide.
