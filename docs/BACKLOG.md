@@ -51,10 +51,18 @@ These are findings the work surfaced and deliberately did not take; they are fir
 
 ## Bugs and correctness
 
+- Fail before synthesis when an unmanaged destination page would make install fail.
+  Resolve the intended destination(s), report the collision, and require install `--force` before crawling help or calling the LLM, so a refused install leaves no generated artifacts or manifest mutation.
+- Narrow install `--force` to taking over an unmanaged manpath destination.
+  Back up the foreign page and replace only MANIAC's destination link; do not make this flag mean relink, regenerate, or ignore unrelated safety checks.
+- Make install's dry-run a true no-write preview.
+  It currently installs tier-1/2 pages despite the flag, and the synthesis path still writes Markdown, context, and cache data; the preview must not mutate the manpath, manifest, generated artifacts, or caches.
+- Simplify uninstall ownership handling and remove uninstall `--force`.
+  Remove manifest-owned pages even when their target bytes changed, warn about the change, and continue to leave retargeted or dangling links untouched because they are no longer provably MANIAC-owned.
+
 - Distinguish a definitive tier-2 absence from a transient repository probe failure.
   The latter must not silently fall through to synthesis, which can conceal a wrong repository or a network, tag, tree, release, or validation failure.
-  Report the consulted repository and tier immediately; then decide between interactive confirmation and uniform refusal with an explicit synthesis override.
-  This also decides whether `install --generate` remains necessary: ADR-0016's authoritative-first order makes forcing tier 3 normally worse, but it may be the deliberate replacement escape hatch.
+  Report the consulted repository and tier immediately; then decide between interactive confirmation and uniform refusal while preserving ordinary synthesis fallback and the explicit `--no-synthesize` opt-out.
 - Distinguish a wrong documentation repository from one that legitimately has no manpage.
   Flag-inventory overlap and whether the repository contains implementation source are possible evidence, but absence is a normal synthesis fallback and must not be treated as proof of misresolution.
 - Drop Mise-activated `$PATH` entries on a degraded login-path fallback, as venv and conda entries already are.
@@ -94,6 +102,15 @@ These are findings the work surfaced and deliberately did not take; they are fir
   The abandoned fact-cache branch neutralized both with an evidence-driven `clear_source_cache()` call, so dropping that branch leaves this unaddressed; a fix here needs its own invalidation boundary rather than that machinery.
 
 ## Refactors and architecture
+- Remove `--cache-dir` from the public CLI.
+  Keep the cache path in `Config` for internal operation and configuration, but do not expose disposable repository storage as an install or source command choice.
+- Remove `--output-dir` from `install`.
+  It currently controls tier-3 workspace files while the installed symlink target remains the configured durable output directory, so it is not an installation destination despite its name.
+- Remove `--prompt-file` and stop saving the assembled LLM prompt by default.
+  The prompt is not reused by any command and is volatile debugging material; retain the context snapshot because `eval` currently reads it.
+- Replace `--generate` and `--no-generate` with one explicit synthesis opt-in.
+  Keep synthesis in ordinary install by default, and replace the confusing pair with the explicit opt-out `--no-synthesize`; the existing tier-2 fallback policy still references `--generate` and needs the rename.
+
 - Roll back earlier pages when a grouped reinstall fails partway.
   `BUG:` at `maniac/orchestration/install.py:211`, found by Codex review of ADR-0046's work and reproduced.
   ADR-0046's one-transaction boundary means no page is *recorded* when a later one fails, and ADR-0046's orphan adoption recovers a first-time install's stray symlink and backup -- that half is by design, not a defect.
