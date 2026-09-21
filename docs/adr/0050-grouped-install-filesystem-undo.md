@@ -1,6 +1,6 @@
 # ADR-0050: Undo a grouped install's earlier pages on a later page's failure, instead of healing checksums after the fact
 
-Status: Accepted
+Status: Superseded by [ADR-0051](0051-grouped-install-undo-restore-fix.md)
 Date: 2026-09-21
 
 ## Context
