@@ -1620,6 +1620,104 @@ def test_classify_surfaces_the_provable_external_owner(
     assert result.owning_package == "python3.12-minimal"
 
 
+@pytest.mark.parametrize(
+    ("freshness", "state"),
+    [
+        (ExternalPageFreshness.MATCH, ActionState.OK),
+        (ExternalPageFreshness.MISMATCH, ActionState.OUTDATED),
+    ],
+)
+def test_classify_falls_back_to_roff_header_when_dpkg_is_unverified(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    freshness: ExternalPageFreshness,
+    state: ActionState,
+) -> None:
+    """A page `dpkg` cannot own -- a non-Debian system, or one `dpkg -S`
+    cannot attribute -- still has a shot at a freshness verdict from its own
+    `.TH`/`.Dt` header (docs/BACKLOG.md's roff-header-freshness item)."""
+    cfg = _config(tmp_path)
+    installed = tmp_path / "usr" / "share" / "man" / "man1" / "tool.1"
+    monkeypatch.setattr(
+        "maniac.listing.classification.find_installed_manpage_path",
+        lambda man_bin, tool_name: installed,
+    )
+    monkeypatch.setattr(
+        "maniac.listing.classification.verify_external_page",
+        lambda page, **kwargs: ExternalPageVerification(
+            ExternalPageFreshness.UNVERIFIED, None
+        ),
+    )
+    monkeypatch.setattr(
+        "maniac.listing.classification.verify_page_header",
+        lambda page, **kwargs: freshness,
+    )
+
+    assert _classification_pair(_FakeProvider(), _installation(), "tool", cfg) == (
+        state,
+        PageSource.SYSTEM,
+    )
+
+
+def test_classify_roff_fallback_never_sets_owning_package(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The roff path proves freshness, not ownership -- `owning_package`
+    stays whatever dpkg found (here nothing) even on a roff `MATCH`."""
+    cfg = _config(tmp_path)
+    installed = tmp_path / "usr" / "share" / "man" / "man1" / "tool.1"
+    monkeypatch.setattr(
+        "maniac.listing.classification.find_installed_manpage_path",
+        lambda man_bin, tool_name: installed,
+    )
+    monkeypatch.setattr(
+        "maniac.listing.classification.verify_external_page",
+        lambda page, **kwargs: ExternalPageVerification(
+            ExternalPageFreshness.UNVERIFIED, None
+        ),
+    )
+    monkeypatch.setattr(
+        "maniac.listing.classification.verify_page_header",
+        lambda page, **kwargs: ExternalPageFreshness.MATCH,
+    )
+
+    result = classify(_candidate(_FakeProvider(), _installation(), "tool"), cfg)
+
+    assert result.state is ActionState.OK
+    assert result.owning_package is None
+
+
+def test_classify_dpkg_match_never_overridden_by_roff_fallback(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """dpkg is tried first; the roff verifier is never even consulted once
+    dpkg has already proven a `MATCH`/`MISMATCH`."""
+    cfg = _config(tmp_path)
+    installed = tmp_path / "usr" / "share" / "man" / "man1" / "tool.1"
+    monkeypatch.setattr(
+        "maniac.listing.classification.find_installed_manpage_path",
+        lambda man_bin, tool_name: installed,
+    )
+    monkeypatch.setattr(
+        "maniac.listing.classification.verify_external_page",
+        lambda page, **kwargs: ExternalPageVerification(
+            ExternalPageFreshness.MATCH, "tool-package"
+        ),
+    )
+
+    def _unexpected_roff_call(page: Path, **kwargs: object) -> ExternalPageFreshness:
+        raise AssertionError("roff fallback must not run when dpkg already matched")
+
+    monkeypatch.setattr(
+        "maniac.listing.classification.verify_page_header", _unexpected_roff_call
+    )
+
+    assert _classification_pair(_FakeProvider(), _installation(), "tool", cfg) == (
+        ActionState.OK,
+        PageSource.SYSTEM,
+    )
+
+
 # -- _classify: reversal of ADR-0016's manifest-only rule --------------------
 
 

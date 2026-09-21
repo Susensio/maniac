@@ -23,6 +23,7 @@ from ..sources.manpages import (
 from ..sources.packages import ExternalPageFreshness, verify_external_page
 from ..sources.pathcache import resolve_cached
 from ..sources.providers.base import DirectPageProvider
+from ..sources.roff import verify_page_header
 from .models import ActionState, Candidate, LocalClassification, PageSource
 
 
@@ -115,17 +116,30 @@ def _managed_page_state(
 def _external_page_state(
     installed: Path, candidate: Candidate
 ) -> tuple[ActionState, str | None]:
-    """Return the verified state and provable owner for an external page."""
+    """Return the verified state and provable owner for an external page.
+
+    dpkg is tried first; only when it has nothing to say (`UNVERIFIED`, a
+    page it cannot attribute or that is not on a Debian system at all) does
+    the page's own `.TH`/`.Dt` header get a chance to prove freshness
+    instead. The roff path never overrides an actual dpkg `MATCH`/
+    `MISMATCH`, and never sets `owning_package` -- it proves freshness, not
+    ownership.
+    """
     inst = candidate.installation
     assert inst is not None
     verification = verify_external_page(
         installed, package=inst.package, version=inst.version
     )
+    freshness = verification.freshness
+    if freshness is ExternalPageFreshness.UNVERIFIED:
+        freshness = verify_page_header(
+            installed, binary_name=candidate.tool, version=inst.version
+        )
     state = {
         ExternalPageFreshness.MATCH: ActionState.OK,
         ExternalPageFreshness.MISMATCH: ActionState.OUTDATED,
         ExternalPageFreshness.UNVERIFIED: ActionState.UNVERIFIED,
-    }[verification.freshness]
+    }[freshness]
     return state, verification.owner
 
 
