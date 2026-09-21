@@ -25,17 +25,9 @@ These are findings the work surfaced and deliberately did not take; they are fir
   Documented and functionally inert, so this is a wart rather than a defect, and the alternative was worse: making every call site duplicate that resolution moves coordination outward instead of removing it.
   The cost is that one type now serves two roles, with two fields meaningless in the first.
   Reopening `Entry` touches ADR-0046's manifest boundary, so it is an ADR-level decision, not a mechanical follow-up.
-- Give `tests/manifest_support.record_entry` the same treatment `install_manpage` just got.
-  It declares 12 parameters and reassembles them into `txn.put(tool, Entry(...))` -- the exact list `Entry` exists to avoid re-declaring, and now the only `PLR0913` finding `just audit` reports.
-  Pre-existing and unchanged by the 2026-09-16 refactor, which fixed the production path and left its test-support twin declaring the same list.
-- Split `sources/docs/release._fetch_and_materialize_release_asset`'s direct-asset and archive-asset flows.
-  They are two flows sharing one function, which is why it still carries seven returns after ADR-0033.
 
 ### Coverage
 
-- Give `cli/listing._provider_target_freshness`, `_build_inventory`, `_try_install_root` and `_try_repository` direct unit tests.
-  They are reached only through `compute_rows` and `run_install` today, so a change in their own behavior need not fail anything.
-  ADR-0035 made the freshness capability explicit, which makes these locally testable for the first time.
 - Split `tests/test_docs.py` to mirror the five modules behind the ADR-0033 facade.
   It is ~1400 lines against a package whose patch targets are now per-module; the split rehomed the targets but not the file.
 
@@ -101,7 +93,8 @@ These are findings the work surfaced and deliberately did not take; they are fir
   ADR-0046's one-transaction boundary means no page is *recorded* when a later one fails, and ADR-0046's orphan adoption recovers a first-time install's stray symlink and backup -- that half is by design, not a defect.
   A reinstall is the gap: the entry already exists carrying the old checksum while the durable target now holds the new bytes, so uninstall reports MODIFIED.
   Adoption only builds entries that are missing; it never corrects one that is present and wrong.
-  Needs a cross-page filesystem undo log, which is a new mechanism and an ADR-level decision -- weigh it against simply re-verifying checksums against disk on the next transaction, which the link scan already has the shape for.
+  Design decided 2026-09-21: [ADR-0050](adr/0050-grouped-install-filesystem-undo.md) -- a cross-page filesystem undo log, extending `_materialize_and_link`'s existing per-call rollback across the loop; checksum re-verification was investigated and rejected, not merely weighed, since the structural link scan gives it no head start (`lstat`/`readlink` only, no byte comparison) and it would need a policy this project has avoided elsewhere.
+  Unimplemented -- see `docs/STATE.md`.
 - Install every page of a multi-page install-root release, not just the primary.
   `_try_install_root` uses `candidate.final_target` alone and ignores `candidate.pages`, so a tier-1 release ships its primary with no `group` recorded.
   Tier 2 installs the whole bundle as one unit (ADR-0042, ADR-0046); tier 1 does not, and nothing says why.
