@@ -314,6 +314,13 @@ def _try_repository(
             for result in reversed(installed):
                 _undo_installed_page(result, cfg, baseline_entries)
             raise
+        # The loop reached here clean: every page's own reinstall stands, so
+        # any throwaway undo copy taken for it (ADR-0051's reused-own-target
+        # gap) was never needed and would otherwise sit under `backup_dir`
+        # forever with nothing left to reference or restore it.
+        for result in installed:
+            if result.attempt_backup and result.backup_path is not None:
+                result.backup_path.unlink(missing_ok=True)
     assert installed_path is not None
     detail = f"upstream manpage from repository ({inst.version})   [no synthesis]"
     return InstallOutcome(

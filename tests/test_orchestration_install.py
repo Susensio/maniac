@@ -825,6 +825,55 @@ def test_try_repository_undo_restores_a_displaced_foreign_pages_backup(
     assert foreign_path.read_text(encoding="utf-8") == foreign_content
 
 
+def test_try_repository_undo_restores_a_version_bumped_pages_prior_bytes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """ADR-0051's examined-and-accepted gap, now closed: reinstalling over a
+    page this same tool already owns must still leave something for a
+    sibling's later failure to restore, even though `_take_backup` carries
+    `existing.backup` forward unchanged rather than taking a fresh one for
+    that case.
+
+    `eza.1` is installed once, then reinstalled with new bytes (a version
+    bump reusing its own prior target) as the first page of a second grouped
+    install whose later page (`eza_colors.5`) fails.  The loop-level undo for
+    `eza.1` must put back the bytes this reinstall was about to overwrite,
+    not the (nonexistent) vendor backup, and must not leave the new bytes in
+    place -- the residual gap ADR-0051 named and declined to close.
+    """
+    cfg = _release_config(tmp_path)
+    pages = _eza_release(tmp_path)
+    _resolve_eza_release(monkeypatch, pages)
+    run_install("eza", no_synthesize=True, config=cfg)
+
+    eza_path = cfg.man_dir / "eza.1"
+    old_content = eza_path.read_text(encoding="utf-8")
+    assert old_content == ".TH EZA 1\n"
+    first_entries = manifest.load(config=cfg)
+
+    pages[0].write_text(".TH EZA 1 v2\n", encoding="utf-8")
+
+    real_link = lifecycle.link_manpath_entry
+    linked = Counter()
+
+    def link_once_then_fail(path: Path, target: Path) -> None:
+        linked["calls"] += 1
+        if linked["calls"] > 1:
+            raise OSError("read-only manpath")
+        real_link(path, target)
+
+    monkeypatch.setattr("maniac.lifecycle.link_manpath_entry", link_once_then_fail)
+
+    with pytest.raises(OSError):
+        run_install("eza", no_synthesize=True, config=cfg)
+
+    assert manifest.load(config=cfg) == first_entries
+    assert not eza_path.is_symlink()
+    assert eza_path.read_text(encoding="utf-8") == old_content
+    # No throwaway undo copy left behind once it has done its job.
+    assert list(cfg.backup_dir.glob("*.reinstall.tmp")) == []
+
+
 def test_no_synthesize_never_reaches_the_llm_when_no_tier_1_or_2_page_exists(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

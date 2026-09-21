@@ -54,11 +54,18 @@ class InstallResult:
     one transaction (`orchestration.install._try_repository`) can replay the
     same undo for an earlier page's already-committed success, once a later
     page in the same transaction fails.
+
+    `attempt_backup` marks `backup_path` as a throwaway copy taken only for
+    that same-transaction undo (ADR-0051's reused-own-target gap), not the
+    long-lived vendor backup a manifest `Entry.backup` carries -- the caller
+    must delete it once the transaction it protects commits clean, since
+    nothing else will ever reference or restore it.
     """
 
     path: Path
     materialized: lifecycle.Materialized | None
     backup_path: Path | None
+    attempt_backup: bool = False
 
 
 def install_manpage(
@@ -120,6 +127,25 @@ def install_manpage(
         _drop_other_records_of(dest_file, txn, tool=tool)
         backup_path, fresh_backup = _take_backup(dest_file, owner, cfg, force=force)
         undo_backup_path = backup_path if fresh_backup else None
+        attempt_backup = False
+        if (
+            transaction is not None
+            and undo_backup_path is None
+            and owner is not None
+            and _path_exists(dest_file)
+        ):
+            # A reinstall over a page this same tool already owns
+            # (`owner is not None`) carries `existing.backup` forward
+            # unchanged in `backup_path` above, so it never becomes this
+            # call's own undo point -- but `transaction is not None` means
+            # this call is one page of a grouped install
+            # (`orchestration.install._try_repository`'s shared
+            # transaction; the two single-page callers never pass one), so
+            # a sibling failing later in the same loop still needs
+            # something to restore this page's pre-reinstall bytes from
+            # (ADR-0051's reused-own-target gap).
+            undo_backup_path = _copy_attempt_backup(dest_file, cfg)
+            attempt_backup = True
         materialized = _materialize_and_link(
             src,
             dest_file,
@@ -141,7 +167,10 @@ def install_manpage(
         )
     logger.info("Installed manpage", path=str(dest_file))
     return InstallResult(
-        path=dest_file, materialized=materialized, backup_path=undo_backup_path
+        path=dest_file,
+        materialized=materialized,
+        backup_path=undo_backup_path,
+        attempt_backup=attempt_backup,
     )
 
 
@@ -204,6 +233,20 @@ def _take_backup(
     shutil.copy2(dest_file, backup_path)
     logger.info("Created backup of foreign manpage", backup_file=str(backup_path))
     return backup_path, True
+
+
+def _copy_attempt_backup(dest_file: Path, cfg: Config) -> Path:
+    """Copy `dest_file`'s current bytes to a throwaway, transaction-scoped undo point.
+
+    Distinct from `_take_backup`'s own path (`cfg.backup_dir / dest_file.name`)
+    by a suffix neither it nor a vendor backup ever uses, so the two can
+    never collide even when both exist under the same `dest_file.name` at
+    once (ADR-0051).
+    """
+    cfg.backup_dir.mkdir(parents=True, exist_ok=True)
+    attempt_path = cfg.backup_dir / f".{dest_file.name}.reinstall.tmp"
+    shutil.copy2(dest_file, attempt_path)
+    return attempt_path
 
 
 def _materialize_and_link(
