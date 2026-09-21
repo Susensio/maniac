@@ -6,6 +6,7 @@ from pathlib import Path
 
 from . import lifecycle, manifest
 from .config import Config
+from .exceptions import ManiacError
 from .logging import logger
 from .manifest import Entry, Tier
 
@@ -448,8 +449,11 @@ def _group_members(tool_name: str, entries: dict[str, Entry]) -> list[str]:
     """Return every manifest key uninstalling `tool_name` must reach, primary first.
 
     Pages installed from one upstream release carry that release's primary
-    key in `group`, so any member reaches the whole unit -- uninstalling a
-    companion and uninstalling the primary name the same set.  A tool with
+    key in `group`, so any member reaches the whole unit. `tool_name` is
+    ordinarily the primary here -- `_refuse_companion_uninstall` (ADR-0053)
+    turns a companion request away before it reaches this function, unless
+    the primary entry is already gone, in which case a companion reaches
+    whatever else still shares its (now-primary-less) group. A tool with
     no entry, or an entry recorded before groups existed, is its own sole
     member.
     """
@@ -463,6 +467,41 @@ def _group_members(tool_name: str, entries: dict[str, Entry]) -> list[str]:
     )
     primary = [entry.group] if entry.group in entries else []
     return primary + companions
+
+
+class UninstallRefused(ManiacError):
+    """`uninstall` declined outright, before any member was touched.
+
+    `cli/uninstall.py` renders this apart from an ordinary failure: nothing
+    was removed, so "Error uninstalling manpage for X" would misdescribe a
+    refusal.
+    """
+
+
+def _refuse_companion_uninstall(tool_name: str, entries: dict[str, Entry]) -> None:
+    """Refuse a companion request while its primary is still recorded (ADR-0053).
+
+    `tool_name` is a manifest key nobody chose directly when it names a
+    companion page bundled into a release (ADR-0042) -- it is derived from
+    a filename that arrived with the primary, not something typed as an
+    install target. Redirect to the primary instead of silently taking it
+    down too.
+
+    Not refused once the primary entry is already gone: there is nothing
+    left to redirect to, and the point of this refusal is to keep a
+    working group's members reachable together, not to trap an orphaned
+    companion that has already lost its anchor (docs/BACKLOG.md).
+    """
+    entry = entries.get(tool_name)
+    if entry is None or entry.group is None or entry.group == tool_name:
+        return
+    if entry.group not in entries:
+        return
+    raise UninstallRefused(
+        f"'{tool_name}' is part of '{entry.group}'s installation (bundled "
+        f"in the same release, ADR-0042) -- run 'maniac uninstall "
+        f"{entry.group}' to remove the whole group."
+    )
 
 
 def _remove_orphaned_roff(
@@ -496,7 +535,9 @@ def uninstall_manpage(
 
     Uninstall operates on the whole upstream release, not one page: every
     entry sharing `tool_name`'s group goes, each restoring its own displaced
-    vendor backup.
+    vendor backup. Naming a companion while its primary is still recorded
+    raises `UninstallRefused` instead (ADR-0053) -- `tool_name` is redirected
+    to its primary rather than silently taking the primary down too.
 
     A recorded page is removed even when its current bytes no longer match
     the checksum taken at install -- the manifest entry proves MANIAC
@@ -509,6 +550,11 @@ def uninstall_manpage(
     leaves an entry whose page never arrived -- forgotten, not flagged.
     """
     cfg = config or Config()
+    # Cheap check against a plain load, before the transaction's lock --
+    # mirrors `orchestration.install._refuse_unmanaged_destination`. A
+    # refusal changes nothing, so losing a race against a concurrent writer
+    # just means the next run refuses again with the same message.
+    _refuse_companion_uninstall(tool_name, manifest.load(cfg))
     removed_paths: list[Path] = []
     with manifest.transaction(cfg) as txn:
         foreign_kept, modified_kept, changed, restored = _uninstall_group(

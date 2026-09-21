@@ -7,7 +7,7 @@ import typer
 
 from ..config import Config
 from ..exceptions import ManiacError
-from ..installer import UninstallResult
+from ..installer import UninstallRefused, UninstallResult
 from . import app, console, get_config
 
 
@@ -88,6 +88,12 @@ def uninstall_cmd(
     """Uninstall a MANIAC-managed manpage and restore vendor backup if present."""
     try:
         outcome = compute_uninstall(tool, purge=purge, config=get_config(ctx))
+    except UninstallRefused as e:
+        # Nothing was removed, so the red "Error uninstalling" framing below
+        # would misdescribe this (ADR-0053) -- still exits non-zero, per
+        # ADR-0048's reasoning for a deliberate refusal.
+        console.print(f"[yellow]⚠ {e}[/yellow]")
+        raise typer.Exit(1) from e
     except (OSError, RuntimeError, ManiacError) as e:
         console.print(
             f"[bold red]Error uninstalling manpage for {tool}: {e}[/bold red]"

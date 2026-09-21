@@ -13,7 +13,7 @@ import maniac.cli as cli_module
 from maniac import manifest
 from maniac.cli import _render_eval_table, _repo_cell, app
 from maniac.config import Config
-from maniac.installer import UninstallResult
+from maniac.installer import UninstallRefused, UninstallResult
 from maniac.models import DocFile, EvaluationResult, RepoSource
 from maniac.orchestration.context import ResolvedTool
 
@@ -609,6 +609,26 @@ def test_cli_uninstall_not_found(monkeypatch: pytest.MonkeyPatch) -> None:
     res = runner.invoke(app, ["uninstall", "nonexistent"])
     assert res.exit_code == 0
     assert "No installed manpage found for 'nonexistent'" in res.output
+
+
+def test_cli_uninstall_refused_companion(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A companion request (ADR-0053) renders yellow, not red, and still
+    exits non-zero (ADR-0048's reasoning for a deliberate refusal)."""
+
+    def _raise(tool: str, purge: bool, config: object) -> UninstallResult:
+        raise UninstallRefused(
+            f"'{tool}' is part of 'eza's installation (bundled in the same "
+            f"release, ADR-0042) -- run 'maniac uninstall eza' to remove "
+            f"the whole group."
+        )
+
+    monkeypatch.setattr("maniac.installer.uninstall_manpage", _raise)
+
+    res = runner.invoke(app, ["uninstall", "eza_colors"])
+    assert res.exit_code == 1
+    assert "eza_colors" in res.output
+    assert "maniac uninstall eza" in res.output
+    assert "Error uninstalling" not in res.output
 
 
 def test_cli_uninstall_foreign_kept(

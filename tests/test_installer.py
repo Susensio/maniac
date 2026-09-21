@@ -5,7 +5,12 @@ import pytest
 from maniac import manifest as manifest_module
 from maniac.config import Config
 from maniac.generation.compiler import build_provenance_header
-from maniac.installer import draft_entry, install_manpage, uninstall_manpage
+from maniac.installer import (
+    UninstallRefused,
+    draft_entry,
+    install_manpage,
+    uninstall_manpage,
+)
 from maniac.manifest import Entry, Tier
 
 from .manifest_support import record_entry
@@ -1034,17 +1039,48 @@ def test_uninstalling_the_primary_removes_every_group_member(tmp_path: Path) -> 
     assert manifest_module.load(cfg) == {}
 
 
-def test_uninstalling_a_companion_removes_every_group_member(tmp_path: Path) -> None:
-    """A companion reaches the whole unit, primary included -- the ambiguity
-    `source_uri` could not resolve."""
+def test_uninstalling_a_companion_refuses_and_redirects_to_the_primary(
+    tmp_path: Path,
+) -> None:
+    """`eza_colors` is not something the user chose to install (ADR-0053) --
+    refuse it and name the primary rather than silently taking `eza` down
+    too."""
     cfg = _eza_config(tmp_path)
     installed = _install_eza_release(tmp_path, cfg)
 
-    result = uninstall_manpage("eza_colors", config=cfg)
+    with pytest.raises(UninstallRefused, match=r"eza_colors.*'eza'"):
+        uninstall_manpage("eza_colors", config=cfg)
 
     for path in installed.values():
-        assert path in result.removed
-        assert not path.exists()
+        assert path.exists()
+    assert set(manifest_module.load(cfg)) == set(installed)
+
+
+def test_uninstalling_an_orphaned_companion_removes_what_still_shares_its_group(
+    tmp_path: Path,
+) -> None:
+    """The escape hatch: once the primary is gone by some other means -- its
+    manifest entry forgotten and its page deleted, standing in for a crash or
+    a manual manifest edit -- there is nothing left to redirect to, so a
+    companion request proceeds (ADR-0053).
+
+    The primary's page is deleted, not just forgotten: a forgotten entry
+    whose symlink still exists gets re-adopted by the next transaction
+    (ADR-0046), which would put the primary right back into the group this
+    test means to leave without one.
+    """
+    cfg = _eza_config(tmp_path)
+    installed = _install_eza_release(tmp_path, cfg)
+    with manifest_module.transaction(cfg) as txn:
+        txn.forget("eza")
+    installed["eza"].unlink()
+
+    result = uninstall_manpage("eza_colors", config=cfg)
+
+    assert installed["eza_colors"] in result.removed
+    assert installed["eza_colors-explanation"] in result.removed
+    assert not installed["eza_colors"].exists()
+    assert not installed["eza_colors-explanation"].exists()
     assert manifest_module.load(cfg) == {}
 
 
@@ -1054,7 +1090,7 @@ def test_uninstalling_a_group_restores_every_displaced_vendor_page(
     cfg = _eza_config(tmp_path)
     installed = _install_eza_release(tmp_path, cfg, vendor_pages=True)
 
-    result = uninstall_manpage("eza_colors-explanation", config=cfg)
+    result = uninstall_manpage("eza", config=cfg)
 
     for name, path in installed.items():
         assert path not in result.removed
