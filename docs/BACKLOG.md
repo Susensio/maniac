@@ -10,13 +10,6 @@ These are findings the work surfaced and deliberately did not take; they are fir
 
 ### Correctness
 
-- Sort the table by the label it renders, not by first-encountered member.
-  `_build_inventory` sorts candidates alphabetically by individual binary name (`inventory.py:105`), and `_grouped_for_display`'s `order` list preserves first-encounter position, so a group's row lands wherever its earliest-alphabetical *member* falls, not where its *label* would sort.
-  Confirmed live 2026-09-16: the package-`python` binaries alphabetically interleave with every other package's, so `python (7 binaries) missing` and `python (4 binaries) unverified` land apart from each other and from where "python" belongs, with neither row adjacent to the other.
-  [ADR-0049](adr/0049-collapse-display-rows-on-proven-target-not-shared-package.md) landed 2026-09-21 (`eeb5e3b`): those two rows no longer exist as such, and the label-collision and Source/owning-package items that stood next to this one are closed. The live inventory now measures exactly the ADR's provisional split -- `idle3 (2 binaries)`, `pip (3 binaries)`, `pydoc3.14`, `python3.14-config` out of the first row; `python (2 binaries)`, `pydoc3`, `python3-config` out of the second -- each correctly linked and owned.
-  Unblocked, not fixed: more distinct labels now exist to sort, still alphabetically interleaved by member rather than by label. Sorting after grouping, by the rendered label, is the direct fix, against this finer grouping.
-  Unimplemented.
-
 - Assert `lifecycle.link_manpath_entry`'s atomic replacement, not just its end state.
   Current tests pin that the manpath entry ends as the right symlink; nothing pins that a pre-existing entry is replaced atomically rather than unlinked and recreated.
   Needs an interleaving harness the project does not yet have.
