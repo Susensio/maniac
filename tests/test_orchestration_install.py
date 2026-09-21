@@ -7,6 +7,8 @@ import pytest
 
 from maniac import lifecycle, manifest
 from maniac.config import Config
+from maniac.installer import InstallResult
+from maniac.manifest import Entry
 from maniac.models import DocFile, Installation, RepoSource
 from maniac.orchestration.context import ResolvedTool
 from maniac.orchestration.install import (
@@ -19,6 +21,8 @@ from maniac.orchestration.install import (
 from maniac.sources import loginpath
 from maniac.sources.providers.base import Provider, SourceResolver
 from maniac.sources.providers.registry import registry
+
+from .manifest_support import record_entry
 
 
 @pytest.fixture(autouse=True)
@@ -82,7 +86,9 @@ def test_run_install_uses_the_install_root_page_first(
     )
     monkeypatch.setattr(
         "maniac.orchestration.install.install_manpage",
-        lambda *args, **kwargs: Path("/installed/tool.1"),
+        lambda *args, **kwargs: InstallResult(
+            path=Path("/installed/tool.1"), materialized=None, backup_path=None
+        ),
     )
 
     outcome = run_install("tool")
@@ -211,7 +217,9 @@ def test_run_install_falls_through_to_repository_when_no_install_root_page(
     )
     monkeypatch.setattr(
         "maniac.orchestration.install.install_manpage",
-        lambda *args, **kwargs: Path("/installed/tool.1"),
+        lambda *args, **kwargs: InstallResult(
+            path=Path("/installed/tool.1"), materialized=None, backup_path=None
+        ),
     )
 
     outcome = run_install("tool")
@@ -326,7 +334,9 @@ def test_try_install_root_installs_the_page(
     tool = _resolved_tool(tmp_path, provider=provider, inst=_installation())
     monkeypatch.setattr(
         "maniac.orchestration.install.install_manpage",
-        lambda *args, **kwargs: Path("/installed/tool.1"),
+        lambda *args, **kwargs: InstallResult(
+            path=Path("/installed/tool.1"), materialized=None, backup_path=None
+        ),
     )
 
     outcome = _try_install_root(tool, force=False, dry_run=False)
@@ -405,7 +415,9 @@ def test_try_repository_installs_the_page(
     )
     monkeypatch.setattr(
         "maniac.orchestration.install.install_manpage",
-        lambda *args, **kwargs: Path("/installed/tool.1"),
+        lambda *args, **kwargs: InstallResult(
+            path=Path("/installed/tool.1"), materialized=None, backup_path=None
+        ),
     )
 
     outcome = _try_repository(tool, force=False, dry_run=False)
@@ -437,7 +449,9 @@ def test_run_install_uses_the_exact_tmux_documentation_repository(
     monkeypatch.setattr("maniac.orchestration.install.discover_repo_manpages", discover)
     monkeypatch.setattr(
         "maniac.orchestration.install.install_manpage",
-        lambda *args, **kwargs: Path("/installed/tmux.1"),
+        lambda *args, **kwargs: InstallResult(
+            path=Path("/installed/tmux.1"), materialized=None, backup_path=None
+        ),
     )
 
     outcome = run_install("tmux", no_synthesize=True)
@@ -681,6 +695,94 @@ def test_run_install_records_no_page_when_a_release_fails_partway(
     assert manifest.load(config=cfg) == {}
 
 
+def test_try_repository_undoes_earlier_pages_when_a_later_page_fails(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """ADR-0050: the third page's failure must not leave the first two's
+    durable targets behind as litter no manifest entry names.
+
+    Before ADR-0050, `eza` and `eza_colors` were fully materialized and
+    linked (both `install_manpage` calls succeeded on their own) before
+    `eza_colors-explanation` failed; nothing undid them, so their durable
+    targets under `output_dir` survived with no manifest entry ever
+    recording them -- exactly the litter this fix removes.
+    """
+    cfg = _release_config(tmp_path)
+    _resolve_eza_release(monkeypatch, _eza_release(tmp_path))
+    real_link = lifecycle.link_manpath_entry
+    linked = Counter()
+
+    def link_twice_then_fail(path: Path, target: Path) -> None:
+        linked["calls"] += 1
+        if linked["calls"] > 2:
+            raise OSError("read-only manpath")
+        real_link(path, target)
+
+    monkeypatch.setattr("maniac.lifecycle.link_manpath_entry", link_twice_then_fail)
+
+    with pytest.raises(OSError):
+        run_install("eza", no_synthesize=True, config=cfg)
+
+    assert manifest.load(config=cfg) == {}
+    # Neither page had a prior entry, so `baseline_entries` names no user of
+    # either durable target -- undo must remove both, not just leave them
+    # as unrecorded litter (the bug this record closes).  Checking against
+    # the loop's *live* entries instead would see each page's own
+    # just-`put` record and wrongly treat its target as still in use.
+    assert list(cfg.output_dir.rglob("*")) == []
+
+
+def test_try_repository_undo_leaves_an_unrelated_entrys_target_alone(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The `baseline_entries` trap: a target legitimately used by an entry
+    outside this loop must survive the loop's own undo.
+
+    `other`'s entry is recorded before the release's transaction even
+    opens, so it is part of `baseline_entries` from the start -- undoing one
+    of this loop's own pages must never touch it, whether or not either
+    happens to share a target (it does not here; the point is that undo
+    only ever inspects the two records it was actually asked to undo).
+    """
+    cfg = _release_config(tmp_path)
+    other_target = cfg.output_dir / "other.1"
+    other_target.parent.mkdir(parents=True)
+    other_target.write_text("other tool's page\n", encoding="utf-8")
+    other_path = cfg.man_dir / "other.1"
+    other_path.parent.mkdir(parents=True, exist_ok=True)
+    other_path.symlink_to(other_target)
+    record_entry(
+        "other",
+        Entry(
+            path=other_path,
+            tier=Tier.REPOSITORY,
+            source="owner/other",
+            checksum=manifest.checksum_of(other_target),
+            target=other_target,
+        ),
+        config=cfg,
+    )
+
+    _resolve_eza_release(monkeypatch, _eza_release(tmp_path))
+    real_link = lifecycle.link_manpath_entry
+    linked = Counter()
+
+    def link_once(path: Path, target: Path) -> None:
+        linked["calls"] += 1
+        if linked["calls"] > 1:
+            raise OSError("read-only manpath")
+        real_link(path, target)
+
+    monkeypatch.setattr("maniac.lifecycle.link_manpath_entry", link_once)
+
+    with pytest.raises(OSError):
+        run_install("eza", no_synthesize=True, config=cfg)
+
+    assert other_target.read_text(encoding="utf-8") == "other tool's page\n"
+    assert manifest.lookup("other", config=cfg) is not None
+    assert set(manifest.load(config=cfg)) == {"other"}
+
+
 def test_no_synthesize_never_reaches_the_llm_when_no_tier_1_or_2_page_exists(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -726,7 +828,9 @@ def test_no_synthesize_installs_a_tier_1_page_with_no_llm_call(
     )
     monkeypatch.setattr(
         "maniac.orchestration.install.install_manpage",
-        lambda *args, **kwargs: Path("/installed/tool.1"),
+        lambda *args, **kwargs: InstallResult(
+            path=Path("/installed/tool.1"), materialized=None, backup_path=None
+        ),
     )
 
     outcome = run_install("tool", no_synthesize=True)
@@ -821,7 +925,9 @@ def test_run_install_explicit_bin_dir_bypasses_the_refusal(
     )
     monkeypatch.setattr(
         "maniac.orchestration.install.install_manpage",
-        lambda *args, **kwargs: Path("/installed/tool.1"),
+        lambda *args, **kwargs: InstallResult(
+            path=Path("/installed/tool.1"), materialized=None, backup_path=None
+        ),
     )
 
     outcome = run_install("tool", bin_dir=bin_dir)

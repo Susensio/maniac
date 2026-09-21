@@ -19,7 +19,13 @@ from pathlib import Path
 from .. import manifest
 from ..config import Config
 from ..exceptions import ManiacError
-from ..installer import draft_entry, install_manpage
+from ..installer import (
+    InstallResult,
+    _discard_materialized_target,
+    _restore_or_discard_backup,
+    draft_entry,
+    install_manpage,
+)
 from ..manifest import Tier, manpage_owner
 from ..models import PipelineResult
 from ..sources.candidates import select_install_root, select_repository
@@ -214,7 +220,7 @@ def _try_install_root(
         force=force,
         durable_source=candidate.provider_owned,
         config=tool.config,
-    )
+    ).path
     detail += "   [no synthesis]"
     return InstallOutcome(
         tool=inst.binary,
@@ -276,27 +282,41 @@ def _try_repository(
     # cannot record a group naming a primary that was never written
     # (ADR-0046, ADR-0042).  The pages are already materialized by here, so
     # no generation happens under the lock (ADR-0043).
-    # BUG: reinstalling a recorded release that fails partway leaves the
-    # earlier pages' new bytes on disk under their old entries' checksums,
-    # which uninstall then reads as MODIFIED.
     with manifest.transaction(cfg) as txn:
-        for page in candidate.pages:
-            installed = install_manpage(
-                page.path,
-                manpage_owner(page.path),
-                draft_entry(
-                    Tier.REPOSITORY,
-                    source.identity,
-                    version=inst.version,
-                    source_uri=page.uri,
-                    group=group,
-                ),
-                target_dir=_manpage_directory(page.path, cfg),
-                force=force,
-                transaction=txn,
-            )
-            if page == candidate.primary:
-                installed_path = installed
+        # Snapshot before this loop's own puts, for ADR-0050's undo below --
+        # `txn.entries` is mutated in place by every `install_manpage` call
+        # through `manifest.joined`, so checking target usage against it at
+        # undo time would see the very entry now being undone.
+        baseline_entries = dict(txn.entries)
+        installed: list[InstallResult] = []
+        try:
+            for page in candidate.pages:
+                result = install_manpage(
+                    page.path,
+                    manpage_owner(page.path),
+                    draft_entry(
+                        Tier.REPOSITORY,
+                        source.identity,
+                        version=inst.version,
+                        source_uri=page.uri,
+                        group=group,
+                    ),
+                    target_dir=_manpage_directory(page.path, cfg),
+                    force=force,
+                    transaction=txn,
+                )
+                installed.append(result)
+                if page == candidate.primary:
+                    installed_path = result.path
+        except Exception:
+            # A later page failed: undo every earlier page this loop already
+            # installed, in reverse order, before the transaction's own exit
+            # discards the manifest side (ADR-0046).
+            for result in reversed(installed):
+                _discard_materialized_target(result.materialized, cfg, baseline_entries)
+                if result.backup_path is not None:
+                    _restore_or_discard_backup(result.backup_path, result.path)
+            raise
     assert installed_path is not None
     detail = f"upstream manpage from repository ({inst.version})   [no synthesis]"
     return InstallOutcome(

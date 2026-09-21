@@ -7,6 +7,7 @@ import pytest
 
 from maniac.config import Config
 from maniac.exceptions import CrawlerError, GenerationError
+from maniac.installer import InstallResult
 from maniac.manifest import Entry
 from maniac.models import DocFile, Installation, RepoSource
 from maniac.orchestration.context import ResolvedTool, resolve_tool
@@ -98,10 +99,12 @@ def _mock_synthesis(
 
     recorded: dict[str, object] = {}
 
-    def _install_manpage(*args: object, **kwargs: object) -> Path:
+    def _install_manpage(*args: object, **kwargs: object) -> InstallResult:
         entry = cast(Entry, args[2])
         recorded["version"] = entry.version
-        return tmp_path / "testtool.1"
+        return InstallResult(
+            path=tmp_path / "testtool.1", materialized=None, backup_path=None
+        )
 
     monkeypatch.setattr(
         "maniac.orchestration.pipeline.install_manpage", _install_manpage

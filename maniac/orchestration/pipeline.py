@@ -125,7 +125,7 @@ def synthesize(
             ),
             force=force,
             config=cfg,
-        )
+        ).path
 
     return _result(
         tool,

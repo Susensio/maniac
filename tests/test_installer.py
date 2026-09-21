@@ -29,7 +29,7 @@ def test_install_manpage_clean(tmp_path: Path) -> None:
         "tool",
         draft_entry(Tier.INSTALL_ROOT, str(src_file.parent)),
         target_dir=target_dir,
-    )
+    ).path
 
     assert installed == target_dir / "tool.1"
     assert installed.exists()
@@ -53,7 +53,7 @@ def test_install_materializes_source_before_linking(tmp_path: Path) -> None:
 
     installed = install_manpage(
         source, "tool", draft_entry(Tier.REPOSITORY, "owner/tool"), config=cfg
-    )
+    ).path
 
     entry = manifest_module.lookup("tool", config=cfg)
     assert entry is not None and entry.target == cfg.output_dir / "tool.1"
@@ -83,7 +83,7 @@ def test_install_root_direct_link_requires_explicit_durable_source(
         draft_entry(Tier.INSTALL_ROOT, str(source.parent)),
         durable_source=True,
         config=cfg,
-    )
+    ).path
 
     entry = manifest_module.lookup("tool", config=cfg)
     assert entry is not None and entry.target == source.absolute()
@@ -109,7 +109,7 @@ def test_uninstall_removes_a_concrete_provider_target_but_keeps_its_source(
         draft_entry(Tier.INSTALL_ROOT, "mise-root", provider_target=True),
         durable_source=True,
         config=cfg,
-    )
+    ).path
     source.write_text(".TH TOOL 1 updated", encoding="utf-8")
 
     result = uninstall_manpage("tool", config=cfg)
@@ -140,7 +140,7 @@ def test_install_manpage_maniac_overwrite(tmp_path: Path) -> None:
         draft_entry(Tier.SYNTHESIS, "new-model"),
         target_dir=target_dir,
         force=False,
-    )
+    ).path
     assert installed.exists()
     assert "new" in installed.read_text(encoding="utf-8")
 
@@ -224,7 +224,7 @@ def test_install_manpage_foreign_with_force_creates_backup(tmp_path: Path) -> No
         draft_entry(Tier.SYNTHESIS, "model"),
         target_dir=target_dir,
         force=True,
-    )
+    ).path
     assert installed.exists()
     assert "maniac" in installed.read_text(encoding="utf-8")
 
@@ -581,7 +581,7 @@ def test_uninstall_manpage_restore_of_provider_target_reports_restored(
         force=True,
         durable_source=True,
         config=cfg,
-    )
+    ).path
 
     result = uninstall_manpage("tool", config=cfg)
 
@@ -742,7 +742,7 @@ def test_uninstall_preserves_retargeted_link_and_backup(tmp_path: Path) -> None:
     )
     installed = install_manpage(
         source, "tool", draft_entry(Tier.SYNTHESIS, "model"), config=cfg
-    )
+    ).path
     entry = manifest_module.lookup("tool", config=cfg)
     assert entry is not None and entry.target is not None
     record_entry(
@@ -781,7 +781,7 @@ def test_uninstall_preserves_link_retargeted_through_an_alias(tmp_path: Path) ->
     )
     installed = install_manpage(
         source, "tool", draft_entry(Tier.SYNTHESIS, "model"), config=cfg
-    )
+    ).path
     entry = manifest_module.lookup("tool", config=cfg)
     assert entry is not None and entry.target is not None
     alias = tmp_path / "alias.1"
@@ -839,7 +839,7 @@ def test_uninstall_preserves_replaced_link(tmp_path: Path) -> None:
     )
     installed = install_manpage(
         source, "tool", draft_entry(Tier.SYNTHESIS, "model"), config=cfg
-    )
+    ).path
     installed.unlink()
     installed.write_text(".TH TOOL 1 user replacement", encoding="utf-8")
 
@@ -861,7 +861,7 @@ def test_uninstall_preserves_dangling_owned_link(tmp_path: Path) -> None:
     )
     installed = install_manpage(
         source, "tool", draft_entry(Tier.SYNTHESIS, "model"), config=cfg
-    )
+    ).path
     entry = manifest_module.lookup("tool", config=cfg)
     assert entry is not None and entry.target is not None
     entry.target.unlink()
@@ -904,7 +904,7 @@ def test_round_trip_install_root(tmp_path: Path) -> None:
 
     installed = install_manpage(
         src, "tool", draft_entry(Tier.INSTALL_ROOT, str(src.parent))
-    )
+    ).path
     assert installed.exists()
 
     result = uninstall_manpage("tool")
@@ -921,7 +921,7 @@ def test_round_trip_install_root_compressed(tmp_path: Path) -> None:
 
     installed = install_manpage(
         src, "pandoc", draft_entry(Tier.INSTALL_ROOT, str(src.parent))
-    )
+    ).path
     assert installed.name == "pandoc.1.gz"
     assert installed.exists()
 
@@ -936,7 +936,9 @@ def test_round_trip_repository(tmp_path: Path) -> None:
     src.parent.mkdir(parents=True)
     src.write_text(".TH TOOL 1", encoding="utf-8")
 
-    installed = install_manpage(src, "tool", draft_entry(Tier.REPOSITORY, "owner/repo"))
+    installed = install_manpage(
+        src, "tool", draft_entry(Tier.REPOSITORY, "owner/repo")
+    ).path
     assert installed.exists()
     durable_target = Config().output_dir / "tool.1"
     assert durable_target.exists()
@@ -955,7 +957,9 @@ def test_round_trip_synthesis(tmp_path: Path) -> None:
     header = build_provenance_header("tool", model="test-model")
     src.write_text(header + ".TH TOOL 1", encoding="utf-8")
 
-    installed = install_manpage(src, "tool", draft_entry(Tier.SYNTHESIS, "test-model"))
+    installed = install_manpage(
+        src, "tool", draft_entry(Tier.SYNTHESIS, "test-model")
+    ).path
     assert installed.exists()
 
     result = uninstall_manpage("tool")
@@ -1004,7 +1008,7 @@ def _install_eza_release(
             target_dir=dest_dir,
             force=vendor_pages,
             config=cfg,
-        )
+        ).path
     return installed
 
 
@@ -1444,7 +1448,7 @@ def test_install_interrupted_before_materialize_leaves_no_backup_behind(
         draft_entry(Tier.REPOSITORY, "owner/tool"),
         force=True,
         config=cfg,
-    )
+    ).path
     entry = manifest_module.lookup("tool", config=cfg)
     assert entry is not None and entry.backup == cfg.backup_dir / "tool.1"
     assert installed.is_symlink()
@@ -1472,7 +1476,7 @@ def test_install_interrupted_before_linking_leaves_no_orphan_target(
     monkeypatch.undo()
     installed = install_manpage(
         source, "tool", draft_entry(Tier.REPOSITORY, "owner/tool"), config=cfg
-    )
+    ).path
     assert installed.is_symlink()
     assert (cfg.output_dir / "tool.1").exists()
 
@@ -1540,7 +1544,7 @@ def test_uninstall_interrupted_before_the_manifest_write_reruns_clean(
     source = _source_page(tmp_path)
     installed = install_manpage(
         source, "tool", draft_entry(Tier.REPOSITORY, "owner/tool"), config=cfg
-    )
+    ).path
     monkeypatch.setattr(
         "maniac.manifest.save",
         lambda *a, **kw: (_ for _ in ()).throw(OSError("interrupted")),
@@ -1594,7 +1598,7 @@ def test_install_interrupted_before_the_manifest_write_reruns_without_force(
     monkeypatch.undo()
     reinstalled = install_manpage(
         source, "tool", draft_entry(Tier.REPOSITORY, "owner/tool"), config=cfg
-    )
+    ).path
 
     assert reinstalled == installed
     entry = manifest_module.lookup("tool", config=cfg)
@@ -1632,7 +1636,7 @@ def test_an_adopted_orphan_does_not_become_a_second_owner_of_one_page(
 
     installed = install_manpage(
         source, "mytool", draft_entry(Tier.REPOSITORY, "owner/mytool"), config=cfg
-    )
+    ).path
 
     entries = manifest_module.load(config=cfg)
     assert set(entries) == {"other", "mytool"}

@@ -42,6 +42,25 @@ def draft_entry(
     )
 
 
+@dataclass(frozen=True)
+class InstallResult:
+    """Where a page landed, plus what undoing this call later would need.
+
+    `path` doubles as the `dest_file` argument `_discard_materialized_target`
+    and `_restore_or_discard_backup` each take -- this call's destination and
+    the one a later undo of it acts on are the same path.  `materialized` and
+    `backup_path` are those two functions' other inputs, carried past this
+    call's own return so a caller making several `install_manpage` calls in
+    one transaction (`orchestration.install._try_repository`) can replay the
+    same undo for an earlier page's already-committed success, once a later
+    page in the same transaction fails.
+    """
+
+    path: Path
+    materialized: lifecycle.Materialized | None
+    backup_path: Path | None
+
+
 def install_manpage(
     source_file: str | Path,
     tool: str,
@@ -52,7 +71,7 @@ def install_manpage(
     durable_source: bool = False,
     transaction: manifest.Transaction | None = None,
     config: Config | None = None,
-) -> Path:
+) -> InstallResult:
     """Link a manpath entry to a durable page with conflict guard and backup.
 
     `entry` (built by `draft_entry`) carries the page's tier, source,
@@ -100,14 +119,15 @@ def install_manpage(
         owner = _owner_of(dest_file, entries)
         _drop_other_records_of(dest_file, txn, tool=tool)
         backup_path, fresh_backup = _take_backup(dest_file, owner, cfg, force=force)
-        target = _materialize_and_link(
+        undo_backup_path = backup_path if fresh_backup else None
+        materialized = _materialize_and_link(
             src,
             dest_file,
             cfg,
             entries=entries,
             tool=tool,
             durable_source=durable_source,
-            backup_path=backup_path if fresh_backup else None,
+            backup_path=undo_backup_path,
         )
         txn.put(
             tool,
@@ -116,11 +136,13 @@ def install_manpage(
                 path=dest_file,
                 checksum=checksum,
                 backup=backup_path,
-                target=target,
+                target=materialized.path,
             ),
         )
     logger.info("Installed manpage", path=str(dest_file))
-    return dest_file
+    return InstallResult(
+        path=dest_file, materialized=materialized, backup_path=undo_backup_path
+    )
 
 
 def _owner_of(dest_file: Path, entries: dict[str, Entry]) -> Entry | None:
@@ -193,8 +215,8 @@ def _materialize_and_link(
     tool: str,
     durable_source: bool,
     backup_path: Path | None,
-) -> Path:
-    """Return the linked target, undoing every partial step if one of them fails.
+) -> lifecycle.Materialized:
+    """Return the materialized target, undoing every partial step if one of them fails.
 
     A failure here leaves nothing behind: the transaction discards the
     manifest side, and this discards the filesystem side -- the durable
@@ -212,7 +234,7 @@ def _materialize_and_link(
         if backup_path is not None:
             _restore_or_discard_backup(backup_path, dest_file)
         raise
-    return materialized.path
+    return materialized
 
 
 def _discard_materialized_target(
