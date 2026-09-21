@@ -28,6 +28,13 @@ Twelve names in that bin directory are five distinct programs.
 
 The system python is not shadowed away entirely: `/usr/bin/python` and `/usr/bin/python3` lose to `~/.local/bin`, but `python3.12` has no mise counterpart and resolves to `/usr/bin/python3.12` on its own.
 
+The 2026-09-21 owning-package work (`2f51106`) exposed three different real owners inside that one `python (4 binaries) unverified` group, confirmed live: `python`/`python3` are owned by `python3.12-minimal`, `pydoc3` by plain `python3.12`, `python3-config` by `libpython3.12-dev:amd64` (dpkg's raw output, architecture qualifier included -- `_package_name()` strips it only for the comparison, not for display).
+The collapsed row shows only one, per whichever member is representative; see `docs/BACKLOG.md`'s Source-link item.
+
+`python3.14` -- despite resolving to the identical file `python`/`python3` do via `readlink -f` -- is not one of the four `unverified` rows above; it is its own `ok`/`vendor` row.
+`man -w python3.14` finds nothing on this machine (no distro page is registered under that exact name), but MANIAC's own managed manpath makes it reachable anyway.
+Executable identity does not imply the same reachability answer, let alone the same page: a would-be identity-based grouping rule needs to check the resolved answer agrees, not only that the binaries do.
+
 There is no populated Mise shim directory here, so shim discovery is unverified and `mise which -C $HOME` remains cwd-sensitive.
 A live `mise activate bash` exports `MISE_SHELL`, `__MISE_EXE`, `__MISE_DIFF` and `__MISE_ORIG_PATH`.
 

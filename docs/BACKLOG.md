@@ -14,7 +14,9 @@ These are findings the work surfaced and deliberately did not take; they are fir
   Preserve bare-name pipeline output; choose either package-plus-binary labels or a width-capped binary list.
   Now the common case rather than an edge one: the default unfiltered table groups since
   2026-09-14, and the live inventory renders `python (7 binaries) | missing` above
-  `python (2 binaries) | unverified` -- two rows no label tells apart.
+  `python (4 binaries) | unverified` -- two rows no label tells apart.
+  Corrected 2026-09-21: the second row was `python (2 binaries)` when this was first written; it is 4 as of the same live inventory the sort-order item below measured.
+  The Source cell for that row no longer reads `system` either -- see the linking item just below, which the 2026-09-21 owning-package work extended rather than resolved.
 - Key a display group on its members' pages, or stop linking Source on a collapsed row.
   A group's Source hyperlink is the representative's page alone: `page_path` and `page_uri`
   are not in the group key, unlike state, source and upstream. On the live inventory 5 of 68
@@ -22,9 +24,13 @@ These are findings the work surfaced and deliberately did not take; they are fir
   under `node (3 binaries)`, `pandoc-lua.1.gz` under `pandoc (3 binaries)`.
   Pre-existing and previously reachable only through a filtered view; grouping the default
   table made it the common case.
+  Widened 2026-09-21: the same representative-only reasoning now also mislabels the owning package the 2026-09-21 Source work (`2f51106`) added.
+  `python (4 binaries) unverified` shows `python3.12-minimal` -- `python`'s own owner -- for the whole row, but the group's other members have different owners `dpkg` genuinely reports: `pydoc3` is owned by `python3.12`, `python3-config` by `libpython3.12-dev:amd64`.
+  One more field now inherited from the representative alone rather than checked for group-wide agreement; the grouping redesign under discussion this session (collapse only when members provably share one target, not merely one package) closes this the same way it closes the Source-link case, rather than needing a separate fix.
 - Sort the table by the label it renders, not by first-encountered member.
   `_build_inventory` sorts candidates alphabetically by individual binary name (`inventory.py:105`), and `_grouped_for_display`'s `order` list preserves first-encounter position, so a group's row lands wherever its earliest-alphabetical *member* falls, not where its *label* would sort.
-  Confirmed live 2026-09-16: the package-`python` binaries alphabetically interleave with every other package's, so `python (7 binaries) missing` and `python (4 binaries) ... system` land apart from each other and from where "python" belongs, with neither row adjacent to the other.
+  Confirmed live 2026-09-16: the package-`python` binaries alphabetically interleave with every other package's, so `python (7 binaries) missing` and `python (4 binaries) unverified` land apart from each other and from where "python" belongs, with neither row adjacent to the other.
+  Source read `system` for the second row when this was measured; it now reads `python3.12-minimal`, per the item above -- the sort defect itself is unaffected by that change.
   Distinct from the label-collision and Source-link items above -- this is display order carrying no relationship to the displayed label, not a labeling or linking defect.
   Sorting after grouping, by the rendered label, is the direct fix; check it against the existing sibling-vs-alias grouping decision first, since narrowing what collapses changes how many distinct labels there are to sort.
 
@@ -189,6 +195,10 @@ These are findings the work surfaced and deliberately did not take; they are fir
   `.HP` option counting has two known dead ends: unconditional counts mistake synopsis markers for options, and rendered bold-hyphen regexes miss common roff forms.
 - Serve system and distro-packaged binaries.
   Debian provenance and local documentation are viable, but broad candidate enumeration and cross-package-manager support need batching and measured scope.
+- Pick up shell completions alongside manpages.
+  Suggested 2026-09-21; scope and shape not decided, captured so it is not lost.
+  The same discovery problem MANIAC already solves for manpages -- does the tool ship its own, can one be generated, is it reachable from where the shell looks -- applies to completions too, and many CLIs already expose a `completions`/`--generate-completion` subcommand the way others ship a manpage in their install tree.
+  The installation surface does not transfer directly, though: manpages have one convention (`MANPATH`), completions have three, one per shell (`~/.local/share/bash-completion/completions/`, zsh's `fpath`, fish's `~/.config/fish/completions/`), so this is closer in shape to a second product than an extension of `install_manpage`.
 
 ## Settled exclusions
 - Do not thread `dry_run` into the discovery layer to stop `install --dry-run` writing to the repository cache.
