@@ -18,6 +18,7 @@ from typer.testing import CliRunner
 import maniac.cli as cli_module
 from maniac.cli import app
 from maniac.cli.listing import (
+    _SOURCE_COLUMN_MAX_WIDTH,
     _UPSTREAM_COLUMN_MAX_WIDTH,
     _filter_rows,
     _grouped_for_display,
@@ -32,7 +33,7 @@ from maniac.cli.listing import (
 )
 from maniac.listing import ActionState, PageSource, ToolRow, compute_rows
 from maniac.models import RepoSource
-from maniac.sources.packages import ExternalPageFreshness
+from maniac.sources.packages import ExternalPageFreshness, ExternalPageVerification
 
 from .listing_support import _config, _FakeProvider, _installation
 
@@ -586,7 +587,7 @@ def test_streaming_table_keeps_column_geometry_for_long_upstreams() -> None:
     ]
     assert checking_columns[0].width == len("long-tool-name")
     assert checking_columns[1].width == len(ActionState.UNVERIFIED.value)
-    assert checking_columns[2].width == len("upstream")
+    assert checking_columns[2].width == _SOURCE_COLUMN_MAX_WIDTH
     assert checking_columns[3].width == _UPSTREAM_COLUMN_MAX_WIDTH
     assert not checking.expand
 
@@ -1287,7 +1288,9 @@ def test_cli_list_pipe_unverified_emits_exactly_the_filtered_set(
     )
     monkeypatch.setattr(
         "maniac.listing.classification.verify_external_page",
-        lambda page, **kwargs: ExternalPageFreshness.UNVERIFIED,
+        lambda page, **kwargs: ExternalPageVerification(
+            ExternalPageFreshness.UNVERIFIED, None
+        ),
     )
     monkeypatch.setattr(
         "maniac.listing.inventory.resolution.enumerate_installations",
@@ -1486,6 +1489,37 @@ def test_upstream_source_keyword_links_to_the_upstream_manpage() -> None:
 
     assert uri in output.getvalue()
     assert "file:///cached/tool.1" not in output.getvalue()
+
+
+def test_system_source_shows_owning_package_when_provable() -> None:
+    row = ToolRow(
+        "python",
+        "python",
+        "mise",
+        ActionState.UNVERIFIED,
+        PageSource.SYSTEM,
+        None,
+        owning_package="python3.12-minimal",
+    )
+    output = io.StringIO()
+    Console(file=output, force_terminal=True, color_system="standard").print(
+        _source_cell(row)
+    )
+
+    assert "python3.12-minimal" in output.getvalue()
+    assert "system" not in output.getvalue()
+
+
+def test_system_source_without_provable_owner_still_shows_plain_system() -> None:
+    row = ToolRow(
+        "tool", "tool", "fake", ActionState.UNVERIFIED, PageSource.SYSTEM, None
+    )
+    output = io.StringIO()
+    Console(file=output, force_terminal=True, color_system="standard").print(
+        _source_cell(row)
+    )
+
+    assert output.getvalue().strip() == "system"
 
 
 def test_render_list_tty_shows_the_four_column_table() -> None:

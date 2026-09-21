@@ -29,7 +29,7 @@ from maniac.listing.upstream import resolve_upstream
 from maniac.manifest import Tier
 from maniac.models import Installation, RepoSource
 from maniac.sources import discovery
-from maniac.sources.packages import ExternalPageFreshness
+from maniac.sources.packages import ExternalPageFreshness, ExternalPageVerification
 from maniac.sources.providers import mise as mise_module
 from maniac.sources.providers.base import SourceResolver
 
@@ -1060,7 +1060,9 @@ def test_classify_source_is_unverified_when_resolved_page_is_external(
     )
     monkeypatch.setattr(
         "maniac.listing.classification.verify_external_page",
-        lambda page, **kwargs: ExternalPageFreshness.UNVERIFIED,
+        lambda page, **kwargs: ExternalPageVerification(
+            ExternalPageFreshness.UNVERIFIED, None
+        ),
     )
     inst = _installation(root=tmp_path / "install_root")
 
@@ -1550,7 +1552,9 @@ def test_classify_unverified_when_external_page_has_no_provenance(
     )
     monkeypatch.setattr(
         "maniac.listing.classification.verify_external_page",
-        lambda page, **kwargs: ExternalPageFreshness.UNVERIFIED,
+        lambda page, **kwargs: ExternalPageVerification(
+            ExternalPageFreshness.UNVERIFIED, None
+        ),
     )
     inst = _installation(version="2.0.0")
 
@@ -1581,13 +1585,39 @@ def test_classify_uses_proven_external_package_evidence(
     )
     monkeypatch.setattr(
         "maniac.listing.classification.verify_external_page",
-        lambda page, **kwargs: freshness,
+        lambda page, **kwargs: ExternalPageVerification(freshness, None),
     )
 
     assert _classification_pair(_FakeProvider(), _installation(), "tool", cfg) == (
         state,
         PageSource.SYSTEM,
     )
+
+
+def test_classify_surfaces_the_provable_external_owner(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The owner `verify_external_page` proves rides along even when it does
+    not match the candidate's own package -- the live `python3.12-minimal`
+    case, where freshness stays `UNVERIFIED` but the owner is still known."""
+    cfg = _config(tmp_path)
+    installed = tmp_path / "usr" / "share" / "man" / "man1" / "python.1"
+    monkeypatch.setattr(
+        "maniac.listing.classification.find_installed_manpage_path",
+        lambda man_bin, tool_name: installed,
+    )
+    monkeypatch.setattr(
+        "maniac.listing.classification.verify_external_page",
+        lambda page, **kwargs: ExternalPageVerification(
+            ExternalPageFreshness.UNVERIFIED, "python3.12-minimal"
+        ),
+    )
+
+    result = classify(_candidate(_FakeProvider(), _installation(), "python"), cfg)
+
+    assert result.state is ActionState.UNVERIFIED
+    assert result.source is PageSource.SYSTEM
+    assert result.owning_package == "python3.12-minimal"
 
 
 # -- _classify: reversal of ADR-0016's manifest-only rule --------------------

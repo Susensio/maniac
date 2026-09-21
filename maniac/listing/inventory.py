@@ -141,6 +141,7 @@ def _classified_row(
         managed=classified.managed,
         page_path=classified.page_path,
         page_uri=classified.page_uri,
+        owning_package=classified.owning_package,
     )
 
 

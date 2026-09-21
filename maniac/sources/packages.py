@@ -2,6 +2,7 @@
 
 import re
 import subprocess
+from dataclasses import dataclass
 from enum import Enum
 from functools import cache
 from pathlib import Path
@@ -13,6 +14,20 @@ class ExternalPageFreshness(Enum):
     MATCH = "match"
     MISMATCH = "mismatch"
     UNVERIFIED = "unverified"
+
+
+@dataclass(frozen=True, slots=True)
+class ExternalPageVerification:
+    """Freshness verdict alongside the Debian package proven to own the page.
+
+    `owner` is set whenever `_debian_owner` names one, independent of
+    `freshness` -- a page can resolve to a provable owner that is not the
+    binary's own package (freshness stays `UNVERIFIED`) just as easily as
+    to no provable owner at all.
+    """
+
+    freshness: ExternalPageFreshness
+    owner: str | None
 
 
 def _package_name(package: str) -> str:
@@ -70,16 +85,16 @@ def _debian_version(package: str) -> str | None:
 
 def verify_external_page(
     page: Path, *, package: str, version: str | None
-) -> ExternalPageFreshness:
-    """Return Debian-backed freshness, otherwise an explicitly unknown result."""
+) -> ExternalPageVerification:
+    """Return Debian-backed freshness, alongside the owner it was checked against."""
     if version is None:
-        return ExternalPageFreshness.UNVERIFIED
+        return ExternalPageVerification(ExternalPageFreshness.UNVERIFIED, None)
     owner = _debian_owner(str(page))
     if owner is None or _package_name(owner) != _package_name(package):
-        return ExternalPageFreshness.UNVERIFIED
+        return ExternalPageVerification(ExternalPageFreshness.UNVERIFIED, owner)
     package_version = _debian_version(owner)
     if package_version is None:
-        return ExternalPageFreshness.UNVERIFIED
+        return ExternalPageVerification(ExternalPageFreshness.UNVERIFIED, owner)
     if _debian_upstream_version(package_version) == version:
-        return ExternalPageFreshness.MATCH
-    return ExternalPageFreshness.MISMATCH
+        return ExternalPageVerification(ExternalPageFreshness.MATCH, owner)
+    return ExternalPageVerification(ExternalPageFreshness.MISMATCH, owner)

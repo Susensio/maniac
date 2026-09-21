@@ -39,7 +39,7 @@ def test_verify_external_page_marks_tldr_shaped_debian_mismatch(
         Path("/usr/share/man/man1/tldr.1.gz"), package="tealdeer", version="1.9.0"
     )
 
-    assert result is packages.ExternalPageFreshness.MISMATCH
+    assert result.freshness is packages.ExternalPageFreshness.MISMATCH
 
 
 def test_verify_external_page_accepts_matching_debian_epoch_and_revision(
@@ -57,7 +57,7 @@ def test_verify_external_page_accepts_matching_debian_epoch_and_revision(
         Path("/usr/share/man/man1/tldr.1.gz"), package="tealdeer", version="1.9.0"
     )
 
-    assert result is packages.ExternalPageFreshness.MATCH
+    assert result.freshness is packages.ExternalPageFreshness.MATCH
 
 
 def test_verify_external_page_rejects_different_package_without_binary_guessing(
@@ -75,7 +75,8 @@ def test_verify_external_page_rejects_different_package_without_binary_guessing(
         Path("/usr/share/man/man1/tldr.1.gz"), package="tealdeer", version="1.9.0"
     )
 
-    assert result is packages.ExternalPageFreshness.UNVERIFIED
+    assert result.freshness is packages.ExternalPageFreshness.UNVERIFIED
+    assert result.owner == "other-package:amd64"
     assert len(calls) == 1
 
 
@@ -87,12 +88,32 @@ def test_verify_external_page_degrades_when_dpkg_is_unavailable(
 
     monkeypatch.setattr(packages.subprocess, "run", missing)
 
-    assert (
-        packages.verify_external_page(
-            Path("/usr/share/man/man1/tldr.1.gz"), package="tealdeer", version="1.9.0"
-        )
-        is packages.ExternalPageFreshness.UNVERIFIED
+    result = packages.verify_external_page(
+        Path("/usr/share/man/man1/tldr.1.gz"), package="tealdeer", version="1.9.0"
     )
+
+    assert result.freshness is packages.ExternalPageFreshness.UNVERIFIED
+    assert result.owner is None
+
+
+def test_verify_external_page_skips_the_owner_lookup_without_a_version(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[list[str]] = []
+
+    def run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        calls.append(args)
+        return _result(args, owner="tealdeer:amd64", version="1.9.0-1")
+
+    monkeypatch.setattr(packages.subprocess, "run", run)
+
+    result = packages.verify_external_page(
+        Path("/usr/share/man/man1/tldr.1.gz"), package="tealdeer", version=None
+    )
+
+    assert result.freshness is packages.ExternalPageFreshness.UNVERIFIED
+    assert result.owner is None
+    assert calls == []
 
 
 def test_verify_external_page_caches_owner_and_version_subprocesses(
@@ -108,11 +129,15 @@ def test_verify_external_page_caches_owner_and_version_subprocesses(
     page = Path("/usr/share/man/man1/tldr.1.gz")
 
     assert (
-        packages.verify_external_page(page, package="tealdeer", version="1.9.0")
+        packages.verify_external_page(
+            page, package="tealdeer", version="1.9.0"
+        ).freshness
         is packages.ExternalPageFreshness.MATCH
     )
     assert (
-        packages.verify_external_page(page, package="tealdeer", version="1.9.0")
+        packages.verify_external_page(
+            page, package="tealdeer", version="1.9.0"
+        ).freshness
         is packages.ExternalPageFreshness.MATCH
     )
     assert len(calls) == 2

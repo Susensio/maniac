@@ -73,6 +73,7 @@ class ToolRow:
     managed: bool = False
     page_path: Path | None = None
     page_uri: str | None = None
+    owning_package: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,6 +85,7 @@ class LocalClassification:
     managed: bool
     page_path: Path | None
     page_uri: str | None = None
+    owning_package: str | None = None
 
 
 RowSnapshot = tuple[ToolRow, ...]

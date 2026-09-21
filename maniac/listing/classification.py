@@ -112,18 +112,21 @@ def _managed_page_state(
     return ActionState.OK
 
 
-def _external_page_state(installed: Path, candidate: Candidate) -> ActionState:
-    """Return the verified state for an external page with package provenance."""
+def _external_page_state(
+    installed: Path, candidate: Candidate
+) -> tuple[ActionState, str | None]:
+    """Return the verified state and provable owner for an external page."""
     inst = candidate.installation
     assert inst is not None
-    freshness = verify_external_page(
+    verification = verify_external_page(
         installed, package=inst.package, version=inst.version
     )
-    return {
+    state = {
         ExternalPageFreshness.MATCH: ActionState.OK,
         ExternalPageFreshness.MISMATCH: ActionState.OUTDATED,
         ExternalPageFreshness.UNVERIFIED: ActionState.UNVERIFIED,
-    }[freshness]
+    }[verification.freshness]
+    return state, verification.owner
 
 
 def _resolved_page_classification(
@@ -142,8 +145,13 @@ def _resolved_page_classification(
         )
     claimed = candidate.provider is not None and candidate.installation is not None
     if claimed and source is PageSource.SYSTEM:
+        state, owning_package = _external_page_state(installed, candidate)
         return LocalClassification(
-            _external_page_state(installed, candidate), source, False, installed
+            state,
+            source,
+            False,
+            installed,
+            owning_package=owning_package,
         )
     return LocalClassification(ActionState.OK, source, False, installed)
 

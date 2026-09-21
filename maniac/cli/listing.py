@@ -41,8 +41,12 @@ _STATE_COLOR: dict[ActionState, str] = {
 _STATE_COLUMN_WIDTH = max(
     len("checking…"), *(len(state.value) for state in ActionState)
 )
-_STREAMING_SOURCE_WIDTH = max(len(source.value) for source in PageSource)
 _TOOL_COLUMN_MAX_WIDTH = 24
+# A provable owning package can render in place of "system" (`_source_cell`),
+# and Debian package names run long -- "python3.12-minimal" is 19 already.
+# Capped the same way Tool is, so the longest name on a real system cannot
+# blow out the table.
+_SOURCE_COLUMN_MAX_WIDTH = 24
 # Wide enough for the longest realistic repository identity -- GitHub caps an
 # owner at 39 characters and the widest "owner/repo" on a live inventory here
 # is 37 -- and for a home-relative checkout path. Still a cap, so the column
@@ -175,7 +179,24 @@ def _tool_column_width(labels: list[str]) -> int:
     )
 
 
-def _upstream_budget(tool_labels: list[str], terminal_width: int) -> int:
+def _source_label(row: ToolRow) -> str:
+    """The text `_source_cell` renders: a provable owning package, else the source."""
+    if row.source is PageSource.SYSTEM and row.owning_package is not None:
+        return row.owning_package
+    return row.source.value
+
+
+def _source_column_width(labels: list[str]) -> int:
+    """Widest Source label, capped, and never below the header."""
+    return min(
+        _SOURCE_COLUMN_MAX_WIDTH,
+        max([len("Source"), *(len(label) for label in labels)]),
+    )
+
+
+def _upstream_budget(
+    tool_labels: list[str], source_width: int, terminal_width: int
+) -> int:
     """Columns Upstream may take: the cap, less whatever the terminal cannot spare.
 
     Upstream yields first because it is the one column whose ellipsis is
@@ -185,7 +206,7 @@ def _upstream_budget(tool_labels: list[str], terminal_width: int) -> int:
     fixed = (
         _tool_column_width(tool_labels)
         + _STATE_COLUMN_WIDTH
-        + _STREAMING_SOURCE_WIDTH
+        + source_width
         + _TABLE_CHROME_WIDTH
     )
     return max(len("Upstream"), min(_UPSTREAM_COLUMN_MAX_WIDTH, terminal_width - fixed))
@@ -201,7 +222,7 @@ def _source_cell(row: ToolRow) -> Any:
     from rich.style import Style
     from rich.text import Text
 
-    text = Text(row.source.value)
+    text = Text(_source_label(row))
     link = row.page_uri
     if (
         link is None
@@ -258,6 +279,7 @@ def _list_table(rows: list[ToolRow], *, terminal_width: int) -> Table:
         (label, row, _upstream_cell(row.upstream))
         for label, row in _grouped_for_display(rows)
     ]
+    source_width = _source_column_width([_source_label(row) for _, row, _ in rendered])
     table = Table(title="Manpage Reachability")
     table.add_column(
         "Tool",
@@ -267,12 +289,16 @@ def _list_table(rows: list[ToolRow], *, terminal_width: int) -> Table:
         overflow="ellipsis",
     )
     table.add_column("State", width=_STATE_COLUMN_WIDTH, no_wrap=True)
-    table.add_column("Source", width=_STREAMING_SOURCE_WIDTH, no_wrap=True)
+    table.add_column(
+        "Source", max_width=_SOURCE_COLUMN_MAX_WIDTH, no_wrap=True, overflow="ellipsis"
+    )
     table.add_column(
         "Upstream",
         width=_upstream_width(
             [cell for _, _, cell in rendered],
-            _upstream_budget([label for label, _, _ in rendered], terminal_width),
+            _upstream_budget(
+                [label for label, _, _ in rendered], source_width, terminal_width
+            ),
         ),
         no_wrap=True,
         overflow="ellipsis",
@@ -308,9 +334,15 @@ def _streaming_table(
     visible_rows = rows if maximum_rows is None else rows[:maximum_rows]
     upstream_cells = [_upstream_cell(row.upstream) for row in visible_rows]
     tool_labels = [row.tool for row in rows]
+    # A live table's Source content can gain an owning-package name well
+    # after the skeleton is drawn (verified asynchronously per row, like
+    # Upstream), so its width is the static cap here rather than content-fit
+    # -- recomputing per frame would jitter the column exactly as an
+    # unpinned Upstream would (see the docstring above).
+    source_width = _SOURCE_COLUMN_MAX_WIDTH
     if upstream_width is None:
         upstream_width = _upstream_width(
-            upstream_cells, _upstream_budget(tool_labels, terminal_width)
+            upstream_cells, _upstream_budget(tool_labels, source_width, terminal_width)
         )
     tool_width = _tool_column_width(tool_labels)
     table = Table(title="Manpage Reachability")
@@ -325,7 +357,7 @@ def _streaming_table(
     )
     table.add_column(
         "Source",
-        width=_STREAMING_SOURCE_WIDTH,
+        width=source_width,
         no_wrap=True,
         overflow="ellipsis",
     )
@@ -413,7 +445,9 @@ class _StreamingList:
         self._reporter.stop()
         rich_console = getattr(self._console, "_instance", self._console)
         self._upstream_width = _upstream_budget(
-            [row.tool for row in rows], rich_console.size.width
+            [row.tool for row in rows],
+            _SOURCE_COLUMN_MAX_WIDTH,
+            rich_console.size.width,
         )
         self._terminal_width = rich_console.size.width
         self._row_limit = self._live_row_limit(rows)
