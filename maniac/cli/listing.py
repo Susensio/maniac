@@ -9,6 +9,7 @@ no `--ok`, deliberately (ADR-0018): it would select exactly the rows
 needing no action.
 """
 
+from dataclasses import replace
 from pathlib import Path
 from time import monotonic
 from typing import Annotated, Any
@@ -162,9 +163,34 @@ def _grouped_for_display(rows: list[ToolRow]) -> list[tuple[str, ToolRow]]:
                 (member.tool for member in group), key=lambda name: (len(name), name)
             )
             label = f"{anchor} ({len(group)} binaries)"
+        # Drift is per-tool manifest evidence, outside the grouping key, so a
+        # representative alone could hide a sibling's broken link.
+        if any(member.drift for member in group) and not representative.drift:
+            representative = replace(representative, drift=True)
         rendered.append((label, representative))
     rendered.sort(key=lambda pair: pair[0])
     return rendered
+
+
+# Marks manifest drift (ADR-0046's structural scan finding a broken manpath
+# link) on the Tool column instead of a new column, per docs/BACKLOG.md: two
+# other unresolved list items already want a label/width solution here.
+_DRIFT_MARKER = "⚠"  # warning sign
+
+
+def _tool_display(label: str, *, drift: bool) -> str:
+    """Plain (unmarked-up) Tool cell text, for width accounting.
+
+    Marker leads rather than trails: the column's own overflow="ellipsis"
+    truncates from the right, and a trailing marker on a label at or past
+    the cap would be the first thing cut, hiding drift silently.
+    """
+    return f"{_DRIFT_MARKER} {label}" if drift else label
+
+
+def _tool_cell(label: str, *, drift: bool) -> str:
+    """Rendered Tool cell text: the drift marker in yellow when present."""
+    return f"[yellow]{_DRIFT_MARKER}[/yellow] {label}" if drift else label
 
 
 def _upstream_cell(upstream: RepoSource | None) -> Any:
@@ -307,7 +333,9 @@ def _list_table(rows: list[ToolRow], *, terminal_width: int) -> Table:
         width=_upstream_width(
             [cell for _, _, cell in rendered],
             _upstream_budget(
-                [label for label, _, _ in rendered], source_width, terminal_width
+                [_tool_display(label, drift=row.drift) for label, row, _ in rendered],
+                source_width,
+                terminal_width,
             ),
         ),
         no_wrap=True,
@@ -318,7 +346,9 @@ def _list_table(rows: list[ToolRow], *, terminal_width: int) -> Table:
         state = (
             f"[{_STATE_COLOR[row.state]}]{row.state.value}[/{_STATE_COLOR[row.state]}]"
         )
-        table.add_row(label, state, _source_cell(row), upstream)
+        table.add_row(
+            _tool_cell(label, drift=row.drift), state, _source_cell(row), upstream
+        )
     return table
 
 
@@ -343,7 +373,7 @@ def _streaming_table(
         return Text("No tools to report.", style="yellow")
     visible_rows = rows if maximum_rows is None else rows[:maximum_rows]
     upstream_cells = [_upstream_cell(row.upstream) for row in visible_rows]
-    tool_labels = [row.tool for row in rows]
+    tool_labels = [_tool_display(row.tool, drift=row.drift) for row in rows]
     # A live table's Source content can gain an owning-package name well
     # after the skeleton is drawn (verified asynchronously per row, like
     # Upstream), so its width is the static cap here rather than content-fit
@@ -387,7 +417,9 @@ def _streaming_table(
                 f"[{_STATE_COLOR[row.state]}]{row.state.value}[/{_STATE_COLOR[row.state]}]"
             )
         )
-        table.add_row(row.tool, state, _source_cell(row), upstream)
+        table.add_row(
+            _tool_cell(row.tool, drift=row.drift), state, _source_cell(row), upstream
+        )
     hidden_rows = len(rows) - len(visible_rows)
     if hidden_rows:
         table.add_row(

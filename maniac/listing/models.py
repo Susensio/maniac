@@ -76,6 +76,10 @@ class ToolRow:
     page_uri: str | None = None
     owning_package: str | None = None
     target_cluster: int | None = None
+    drift: bool = False
+    """Manifest has an entry for this tool, but its manpath link is broken --
+    a page deleted by hand, `output_dir`/`backup_dir` cleaned, or another
+    installer overwriting the link (ADR-0046's structural scan)."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -88,6 +92,7 @@ class LocalClassification:
     page_path: Path | None
     page_uri: str | None = None
     owning_package: str | None = None
+    drift: bool = False
 
 
 RowSnapshot = tuple[ToolRow, ...]

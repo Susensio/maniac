@@ -9,7 +9,7 @@ reachability, not only a record (ADR-0018 reversing ADR-0016).
 """
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from .. import manifest
@@ -224,6 +224,10 @@ def classify(
         if entries is not None
         else manifest.lookup(candidate.tool, config=cfg)
     )
+    # Independent of every branch below: a manifest entry can drift from disk
+    # (page deleted by hand, a durable dir cleaned, another installer
+    # overwriting the link) whatever `man` currently resolves or doesn't.
+    drift = entry is not None and manifest.link_state(entry) is manifest.Link.BROKEN
     freshness = provider_target_freshness(
         candidate, entry.target if entry is not None else None
     )
@@ -232,17 +236,25 @@ def classify(
     if direct_target and freshness is False:
         assert entry is not None
         return LocalClassification(
-            ActionState.OUTDATED, PageSource.VENDOR, True, entry.path, entry.source_uri
+            ActionState.OUTDATED,
+            PageSource.VENDOR,
+            True,
+            entry.path,
+            entry.source_uri,
+            drift=drift,
         )
     if installed is None:
-        return _unresolved_page_classification(candidate)
-    return _resolved_page_classification(
-        candidate,
-        cfg,
-        installed,
-        _PageEvidence(
-            entry=entry,
-            owned=_owns_resolved_page(entry, installed),
-            provider_target_current=direct_target and freshness is True,
+        return replace(_unresolved_page_classification(candidate), drift=drift)
+    return replace(
+        _resolved_page_classification(
+            candidate,
+            cfg,
+            installed,
+            _PageEvidence(
+                entry=entry,
+                owned=_owns_resolved_page(entry, installed),
+                provider_target_current=direct_target and freshness is True,
+            ),
         ),
+        drift=drift,
     )

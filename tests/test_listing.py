@@ -20,6 +20,7 @@ from maniac.cli import app
 from maniac.cli.listing import (
     _SOURCE_COLUMN_MAX_WIDTH,
     _STATE_COLUMN_WIDTH,
+    _TOOL_COLUMN_MAX_WIDTH,
     _UPSTREAM_COLUMN_MAX_WIDTH,
     _filter_rows,
     _grouped_for_display,
@@ -1800,6 +1801,104 @@ def test_render_list_upstream_column_blank_when_unresolvable() -> None:
     assert "Unknown" not in buf.getvalue()
 
 
+def test_render_list_marks_drift_next_to_the_tool_name() -> None:
+    """A manifest entry whose manpath link the scan found broken gets a
+    marker on Tool -- no new column (docs/BACKLOG.md's width constraint)."""
+    buf = io.StringIO()
+    test_console = Console(file=buf, force_terminal=True, no_color=True)
+
+    _render_list(
+        test_console,
+        [
+            ToolRow(
+                tool="drifted",
+                package="drifted",
+                provider="mise",
+                state=ActionState.MISSING,
+                source=PageSource.NONE,
+                upstream=None,
+                drift=True,
+            ),
+            ToolRow(
+                tool="sound",
+                package="sound",
+                provider="mise",
+                state=ActionState.OK,
+                source=PageSource.MANIAC,
+                upstream=None,
+                drift=False,
+            ),
+        ],
+    )
+
+    output = buf.getvalue()
+    drifted_line = next(line for line in output.splitlines() if "drifted" in line)
+    sound_line = next(line for line in output.splitlines() if "sound" in line)
+    assert "⚠" in drifted_line
+    assert "⚠" not in sound_line
+
+
+def test_render_list_drift_marker_survives_ellipsis_on_a_capped_label() -> None:
+    """The Tool column ellipsizes from the right at its cap -- a marker
+    appended there would be the first thing cut, hiding drift silently."""
+    buf = io.StringIO()
+    test_console = Console(file=buf, force_terminal=True, no_color=True)
+    long_name = "a" * (_TOOL_COLUMN_MAX_WIDTH + 5)
+
+    _render_list(
+        test_console,
+        [
+            ToolRow(
+                tool=long_name,
+                package=long_name,
+                provider="mise",
+                state=ActionState.MISSING,
+                source=PageSource.NONE,
+                upstream=None,
+                drift=True,
+            )
+        ],
+    )
+
+    drifted_line = next(
+        line for line in buf.getvalue().splitlines() if "a" * 10 in line
+    )
+    assert "⚠" in drifted_line
+
+
+def test_render_list_drift_marker_survives_grouping_by_any_sibling() -> None:
+    """Drift is per-tool manifest evidence, outside the grouping key -- a
+    group must not hide one drifted sibling behind its representative."""
+    buf = io.StringIO()
+    test_console = Console(file=buf, force_terminal=True, no_color=True)
+
+    _render_list(
+        test_console,
+        [
+            ToolRow(
+                tool="alpha",
+                package="shared",
+                provider="mise",
+                state=ActionState.OK,
+                source=PageSource.MANIAC,
+                upstream=None,
+                drift=True,
+            ),
+            ToolRow(
+                tool="beta",
+                package="shared",
+                provider="mise",
+                state=ActionState.OK,
+                source=PageSource.MANIAC,
+                upstream=None,
+                drift=False,
+            ),
+        ],
+    )
+
+    assert "⚠" in buf.getvalue()
+
+
 def test_render_list_non_tty_prints_bare_names(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -1830,6 +1929,33 @@ def test_render_list_non_tty_prints_bare_names(
     )
 
     assert capsys.readouterr().out == "gum\ngh\n"
+    assert buf.getvalue() == ""
+
+
+def test_render_list_non_tty_prints_bare_names_even_when_drifted(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The piped path stays bare names regardless of drift (settled exclusion,
+    `docs/BACKLOG.md`): the drift marker is a terminal-table affordance only."""
+    buf = io.StringIO()
+    test_console = Console(file=buf, force_terminal=False)
+
+    _render_list(
+        test_console,
+        [
+            ToolRow(
+                tool="gum",
+                package="gum",
+                provider="mise",
+                state=ActionState.MISSING,
+                source=PageSource.NONE,
+                upstream=None,
+                drift=True,
+            )
+        ],
+    )
+
+    assert capsys.readouterr().out == "gum\n"
     assert buf.getvalue() == ""
 
 

@@ -1938,6 +1938,125 @@ def test_classify_managed_file_present_but_unreachable_by_man_is_not_managed(
     )
 
 
+# -- _classify/compute_rows: manifest drift (ADR-0046's structural link scan) -
+
+
+def test_classify_drift_true_when_manifest_entry_points_to_vanished_target(
+    tmp_path: Path,
+) -> None:
+    """A recorded symlink target that no longer exists is drift, independent
+    of the state `man`'s own resolution produces (MISSING here, per the
+    autouse fixture that keeps `man` from resolving anything)."""
+    cfg = _config(tmp_path)
+    cfg.man_dir.mkdir(parents=True)
+    entry_path = cfg.man_dir / "tool.1"
+    target = tmp_path / "output" / "tool.1"
+    entry_path.symlink_to(target)
+    record_entry(
+        "tool",
+        Entry(
+            path=entry_path,
+            tier=Tier.SYNTHESIS,
+            source="model",
+            checksum="abc123",
+            target=target,
+        ),
+        config=cfg,
+    )
+
+    result = classify(_candidate(None, None, "tool"), cfg)
+
+    assert result.drift is True
+    assert result.state is ActionState.MISSING
+
+
+def test_classify_drift_false_when_link_is_sound(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A recorded symlink still pointing where it should is not drift."""
+    cfg = _config(tmp_path)
+    cfg.man_dir.mkdir(parents=True)
+    target = tmp_path / "output" / "tool.1"
+    target.parent.mkdir(parents=True)
+    target.write_text(".TH TOOL 1\n", encoding="utf-8")
+    entry_path = cfg.man_dir / "tool.1"
+    entry_path.symlink_to(target)
+    record_entry(
+        "tool",
+        Entry(
+            path=entry_path,
+            tier=Tier.SYNTHESIS,
+            source="model",
+            checksum="abc123",
+            target=target,
+        ),
+        config=cfg,
+    )
+    monkeypatch.setattr(
+        "maniac.listing.classification.find_installed_manpage_path",
+        lambda man_bin, tool_name: entry_path,
+    )
+
+    result = classify(_candidate(None, None, "tool"), cfg)
+
+    assert result.drift is False
+    assert result.state is ActionState.OK
+
+
+def test_classify_drift_false_for_pre_target_entry_with_page_present(
+    tmp_path: Path,
+) -> None:
+    """A pre-ADR-0028 entry (no recorded target) with its page still present
+    is `UNVERIFIABLE`, not drift -- there is nothing to prove broken."""
+    cfg = _config(tmp_path)
+    cfg.man_dir.mkdir(parents=True)
+    installed = cfg.man_dir / "tool.1"
+    installed.write_text(".TH TOOL 1\n", encoding="utf-8")
+    record_entry(
+        "tool",
+        Entry(path=installed, tier=Tier.INSTALL_ROOT, source="src", checksum="abc123"),
+        config=cfg,
+    )
+
+    result = classify(_candidate(None, None, "tool"), cfg)
+
+    assert result.drift is False
+
+
+def test_compute_rows_reports_drift_for_a_manifest_entry_with_deleted_page(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """End-to-end: a tool a provider detects, whose manifest entry's symlink
+    target has been deleted from disk (`output_dir` cleaned by hand, say),
+    surfaces as drift on the row `list` actually renders."""
+    cfg = _config(tmp_path)
+    cfg.man_dir.mkdir(parents=True)
+    entry_path = cfg.man_dir / "tool.1"
+    target = tmp_path / "output" / "tool.1"
+    entry_path.symlink_to(target)
+    record_entry(
+        "tool",
+        Entry(
+            path=entry_path,
+            tier=Tier.SYNTHESIS,
+            source="model",
+            checksum="abc123",
+            target=target,
+        ),
+        config=cfg,
+    )
+    provider = _FakeProvider()
+    inst = _installation()
+    monkeypatch.setattr(
+        "maniac.listing.inventory.resolution.enumerate_installations",
+        lambda on_start=None, on_scan=None: [(provider, inst)],
+    )
+
+    row = compute_rows(config=cfg)[0]
+
+    assert row.drift is True
+
+
 # -- _resolve_upstream: calls provider.resolve_source uniformly (mise's
 # registry fallback included) -- ADR-0018 lifted the offline gate, so this
 # now proves resolution still works end-to-end and still degrades to a
