@@ -10,35 +10,12 @@ These are findings the work surfaced and deliberately did not take; they are fir
 
 ### Correctness
 
-- Disambiguate list rows whose grouping renders the same visible label for different binaries or states.
-  Preserve bare-name pipeline output; choose either package-plus-binary labels or a width-capped binary list.
-  Now the common case rather than an edge one: the default unfiltered table groups since
-  2026-09-14, and the live inventory renders `python (7 binaries) | missing` above
-  `python (4 binaries) | unverified` -- two rows no label tells apart.
-  Corrected 2026-09-21: the second row was `python (2 binaries)` when this was first written; it is 4 as of the same live inventory the sort-order item below measured.
-  The Source cell for that row no longer reads `system` either -- see the linking item just below, which the 2026-09-21 owning-package work extended rather than resolved.
-  Design decided 2026-09-21: [ADR-0049](adr/0049-collapse-display-rows-on-proven-target-not-shared-package.md).
-  Unimplemented -- see `docs/STATE.md`.
-- Key a display group on its members' pages, or stop linking Source on a collapsed row.
-  A group's Source hyperlink is the representative's page alone: `page_path` and `page_uri`
-  are not in the group key, unlike state, source and upstream. On the live inventory 5 of 68
-  binaries link somewhere other than the row now standing for them -- `npm`'s own `npm.1`
-  under `node (3 binaries)`, `pandoc-lua.1.gz` under `pandoc (3 binaries)`.
-  Pre-existing and previously reachable only through a filtered view; grouping the default
-  table made it the common case.
-  Widened 2026-09-21: the same representative-only reasoning now also mislabels the owning package the 2026-09-21 Source work (`2f51106`) added.
-  `python (4 binaries) unverified` shows `python3.12-minimal` -- `python`'s own owner -- for the whole row, but the group's other members have different owners `dpkg` genuinely reports: `pydoc3` is owned by `python3.12`, `python3-config` by `libpython3.12-dev:amd64`.
-  One more field now inherited from the representative alone rather than checked for group-wide agreement.
-  [ADR-0049](adr/0049-collapse-display-rows-on-proven-target-not-shared-package.md) (collapse only when members provably share one target, not merely one package) closes this the same way it closes the Source-link case, rather than needing a separate fix.
-  Unimplemented -- see `docs/STATE.md`.
 - Sort the table by the label it renders, not by first-encountered member.
   `_build_inventory` sorts candidates alphabetically by individual binary name (`inventory.py:105`), and `_grouped_for_display`'s `order` list preserves first-encounter position, so a group's row lands wherever its earliest-alphabetical *member* falls, not where its *label* would sort.
   Confirmed live 2026-09-16: the package-`python` binaries alphabetically interleave with every other package's, so `python (7 binaries) missing` and `python (4 binaries) unverified` land apart from each other and from where "python" belongs, with neither row adjacent to the other.
-  Source read `system` for the second row when this was measured; it now reads `python3.12-minimal`, per the item above -- the sort defect itself is unaffected by that change.
-  Distinct from the label-collision and Source-link items above -- this is display order carrying no relationship to the displayed label, not a labeling or linking defect.
-  Sorting after grouping, by the rendered label, is the direct fix.
-  [ADR-0049](adr/0049-collapse-display-rows-on-proven-target-not-shared-package.md) decided how narrow the grouping gets, which changes how many distinct labels there are to sort; implement against it, not against the pre-ADR grouping.
-  Unimplemented -- see `docs/STATE.md`.
+  [ADR-0049](adr/0049-collapse-display-rows-on-proven-target-not-shared-package.md) landed 2026-09-21 (`eeb5e3b`): those two rows no longer exist as such, and the label-collision and Source/owning-package items that stood next to this one are closed. The live inventory now measures exactly the ADR's provisional split -- `idle3 (2 binaries)`, `pip (3 binaries)`, `pydoc3.14`, `python3.14-config` out of the first row; `python (2 binaries)`, `pydoc3`, `python3-config` out of the second -- each correctly linked and owned.
+  Unblocked, not fixed: more distinct labels now exist to sort, still alphabetically interleaved by member rather than by label. Sorting after grouping, by the rendered label, is the direct fix, against this finer grouping.
+  Unimplemented.
 
 - Assert `lifecycle.link_manpath_entry`'s atomic replacement, not just its end state.
   Current tests pin that the manpath entry ends as the right symlink; nothing pins that a pre-existing entry is replaced atomically rather than unlinked and recreated.
