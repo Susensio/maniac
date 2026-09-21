@@ -88,13 +88,11 @@ These are findings the work surfaced and deliberately did not take; they are fir
   The abandoned fact-cache branch neutralized both with an evidence-driven `clear_source_cache()` call, so dropping that branch leaves this unaddressed; a fix here needs its own invalidation boundary rather than that machinery.
 
 ## Refactors and architecture
-- Roll back earlier pages when a grouped reinstall fails partway.
-  Marked `BUG:` in `maniac/orchestration/install.py`; found by Codex review of ADR-0046's work and reproduced.
-  ADR-0046's one-transaction boundary means no page is *recorded* when a later one fails, and ADR-0046's orphan adoption recovers a first-time install's stray symlink and backup -- that half is by design, not a defect.
-  A reinstall is the gap: the entry already exists carrying the old checksum while the durable target now holds the new bytes, so uninstall reports MODIFIED.
-  Adoption only builds entries that are missing; it never corrects one that is present and wrong.
-  Design decided 2026-09-21: [ADR-0050](adr/0050-grouped-install-filesystem-undo.md) -- a cross-page filesystem undo log, extending `_materialize_and_link`'s existing per-call rollback across the loop; checksum re-verification was investigated and rejected, not merely weighed, since the structural link scan gives it no head start (`lstat`/`readlink` only, no byte comparison) and it would need a policy this project has avoided elsewhere.
-  Unimplemented -- see `docs/STATE.md`.
+- Take a backup of a page's own bytes before an ordinary reinstall overwrites them, so a sibling page's later failure in the same release can restore them.
+  [ADR-0050](adr/0050-grouped-install-filesystem-undo.md)/[ADR-0051](adr/0051-grouped-install-undo-restore-fix.md) closed the grouped-reinstall-rollback `BUG:` that stood here for a first-time install and for a reinstall that displaces something *other than this same release's own prior page* -- the common cases.
+  One case is left open, by deliberate choice, not oversight: a version-bump reinstall reusing its own prior target takes no fresh backup at all (`_take_backup` carries the *existing* entry's backup pointer forward rather than copying the about-to-be-overwritten bytes), so if a sibling page then fails, there is nothing to restore the reused target's previous bytes from, and the manifest's old checksum still describes bytes the aborted reinstall already overwrote.
+  Fixing it means copying a page's own current bytes before every ordinary overwrite, on the chance a sibling page fails later in the same loop -- new I/O cost on every successful reinstall, paid for a benefit that only matters on the rare partial-failure path.
+  Worth doing only if MODIFIED reports from this residual case are measured to matter in practice; ADR-0051's Context has the full reasoning.
 - Install every page of a multi-page install-root release, not just the primary.
   `_try_install_root` uses `candidate.final_target` alone and ignores `candidate.pages`, so a tier-1 release ships its primary with no `group` recorded.
   Tier 2 installs the whole bundle as one unit (ADR-0042, ADR-0046); tier 1 does not, and nothing says why.
