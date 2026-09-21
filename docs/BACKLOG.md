@@ -28,10 +28,6 @@ These are findings the work surfaced and deliberately did not take; they are fir
 
 ## Bugs and correctness
 
-- Widen install's unmanaged-destination precheck beyond the default `<tool>.1`.
-  It resolves only `cfg.man_dir / f"{tool}.1"`, which is exactly tier 3's destination, so no LLM call, crawl or context snapshot is ever thrown away -- that is the case it was built for and it covers it.
-  Tier 1 destinations (`<tool>.1.gz`, other sections) and tier-2 companion pages can still miss it and be refused later by `_take_backup`.
-  The wasted work there is resolution and release discovery rather than generation, which is why this is a widening and not a defect.
 - Distinguish a definitive tier-2 absence from a transient repository probe failure.
   The latter must not silently fall through to synthesis, which can conceal a wrong repository or a network, tag, tree, release, or validation failure.
   Report the consulted repository and tier immediately; then decide between interactive confirmation and uniform refusal while preserving ordinary synthesis fallback and the explicit `--no-synthesize` opt-out.
@@ -45,19 +41,9 @@ These are findings the work surfaced and deliberately did not take; they are fir
   Using it is Mise-specific, so decide whether the fallback gets per-provider evidence adapters or stays generic.
   Shim resolution remains unexercised: this machine has no populated shim directory, and `mise which -C $HOME` is cwd-sensitive and needs ADR-0029-style root validation.
 
-- Show manifest drift in the `list` table.
-  The structural link scan runs on every manifest read and `Read` carries a `links` map (ADR-0046), but nothing renders it, so `maniac list` still cannot say the manifest disagrees with the disk.
-  Divergence is the common failure and corruption the rare one: a page deleted by hand, `output_dir` or `backup_dir` cleaned, another user-level installer writing into `~/.local/share/man/man1`.
-  The scan costs ~0.046 ms/entry against an 11.8 s `list` and walks what MANIAC owns, not what is on `$PATH`.
-  Unblocked: this waited on the list fact cache, abandoned in ADR-0045.
-  Needs a column or a marker that does not widen the table -- `docs/BACKLOG.md` already carries two unresolved label and width items for it.
 - Reconstruct tier-1 direct provider links, or accept losing them.
   ADR-0046 refused: "not under `output_dir`" is not evidence of a provider root, and adopting one would let MANIAC replace and later remove a symlink the user owns.
   The cost is that a fully lost manifest loses tier-1 ownership entirely. Real evidence would be a target resolving beneath a live provider install root, which `sources.candidates` can already establish.
-- Prune a release group when its upstream drops a page.
-  `Entry.group` (ADR-0042) records membership at install time and install has no pruning pass, so a member that a later release no longer ships stays recorded.
-  Uninstall then looks for a page that upstream stopped shipping.
-
 - Invalidate the process-local provider memoization that hides a mid-run filesystem change.
   `providers/uv.py`'s `_local_editable_dir` and `_installed_version` are `functools.cache`d by install root, and `providers/pipx.py`'s `find_distribution_metadata` is `functools.cache`d by `(root, package)`, neither with any invalidation.
   Reproduced on 2026-09-15: a uv editable checkout appearing after an earlier lookup still reads `None`, and a `METADATA` version rewritten between two calls for one root still reads the first value.
