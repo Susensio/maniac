@@ -22,6 +22,12 @@ These are findings the work surfaced and deliberately did not take; they are fir
   under `node (3 binaries)`, `pandoc-lua.1.gz` under `pandoc (3 binaries)`.
   Pre-existing and previously reachable only through a filtered view; grouping the default
   table made it the common case.
+- Sort the table by the label it renders, not by first-encountered member.
+  `_build_inventory` sorts candidates alphabetically by individual binary name (`inventory.py:105`), and `_grouped_for_display`'s `order` list preserves first-encounter position, so a group's row lands wherever its earliest-alphabetical *member* falls, not where its *label* would sort.
+  Confirmed live 2026-09-16: the package-`python` binaries alphabetically interleave with every other package's, so `python (7 binaries) missing` and `python (4 binaries) ... system` land apart from each other and from where "python" belongs, with neither row adjacent to the other.
+  Distinct from the label-collision and Source-link items above -- this is display order carrying no relationship to the displayed label, not a labeling or linking defect.
+  Sorting after grouping, by the rendered label, is the direct fix; check it against the existing sibling-vs-alias grouping decision first, since narrowing what collapses changes how many distinct labels there are to sort.
+
 - Assert `lifecycle.link_manpath_entry`'s atomic replacement, not just its end state.
   Current tests pin that the manpath entry ends as the right symlink; nothing pins that a pre-existing entry is replaced atomically rather than unlinked and recreated.
   Needs an interleaving harness the project does not yet have.
