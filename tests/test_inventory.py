@@ -27,7 +27,7 @@ from maniac.listing import (
 )
 from maniac.listing.inventory import _with_target_clusters
 from maniac.listing.upstream import resolve_upstream
-from maniac.manifest import Tier
+from maniac.manifest import Entry, Tier
 from maniac.models import Installation, RepoSource
 from maniac.sources import discovery
 from maniac.sources.packages import ExternalPageFreshness, ExternalPageVerification
@@ -119,7 +119,16 @@ def test_compute_rows_reflects_a_manifest_write_between_invocations(
     )
 
     before = compute_rows(config=cfg)
-    record_entry("tool", installed, Tier.INSTALL_ROOT, "src", "abc123", config=cfg)
+    record_entry(
+        "tool",
+        Entry(
+            path=installed,
+            tier=Tier.INSTALL_ROOT,
+            source="src",
+            checksum="abc123",
+        ),
+        config=cfg,
+    )
     after = compute_rows(config=cfg)
 
     assert before[0].source == PageSource.SYSTEM
@@ -276,11 +285,13 @@ def test_compute_rows_recovers_the_uri_for_an_older_repository_manifest(
     installed.write_text(".TH TOOL 1\n", encoding="utf-8")
     record_entry(
         "tool",
-        installed,
-        Tier.REPOSITORY,
-        "owner/tool",
-        manifest.checksum_of(installed),
-        version="1.2.3",
+        Entry(
+            path=installed,
+            tier=Tier.REPOSITORY,
+            source="owner/tool",
+            checksum=manifest.checksum_of(installed),
+            version="1.2.3",
+        ),
         config=cfg,
     )
     source = RepoSource(name="tool", target="owner/tool", is_local=False)
@@ -988,7 +999,16 @@ def test_classify_source_keeps_vendor_provenance_when_manifest_owns_the_page(
     cfg.man_dir.mkdir(parents=True)
     installed = cfg.man_dir / "tool.1"
     installed.write_text(".TH TOOL 1\n", encoding="utf-8")
-    record_entry("tool", installed, Tier.INSTALL_ROOT, "src", "abc123", config=cfg)
+    record_entry(
+        "tool",
+        Entry(
+            path=installed,
+            tier=Tier.INSTALL_ROOT,
+            source="src",
+            checksum="abc123",
+        ),
+        config=cfg,
+    )
     monkeypatch.setattr(
         "maniac.listing.classification.find_installed_manpage_path",
         lambda man_bin, tool_name: installed,
@@ -1018,7 +1038,16 @@ def test_managed_page_keeps_content_provenance_separate_from_ownership(
     cfg.man_dir.mkdir(parents=True)
     installed = cfg.man_dir / "tool.1"
     installed.write_text(".TH TOOL 1\n", encoding="utf-8")
-    record_entry("tool", installed, tier, "origin", "abc123", config=cfg)
+    record_entry(
+        "tool",
+        Entry(
+            path=installed,
+            tier=tier,
+            source="origin",
+            checksum="abc123",
+        ),
+        config=cfg,
+    )
     monkeypatch.setattr(
         "maniac.listing.classification.find_installed_manpage_path",
         lambda man_bin, tool_name: installed,
@@ -1087,7 +1116,16 @@ def test_classify_managed_page_can_be_compressed(
     entry_dir.mkdir(parents=True)
     entry_path = entry_dir / "tool.1"
     entry_path.write_text(".TH TOOL 1\n", encoding="utf-8")
-    record_entry("tool", entry_path, Tier.INSTALL_ROOT, "src", "abc123", config=cfg)
+    record_entry(
+        "tool",
+        Entry(
+            path=entry_path,
+            tier=Tier.INSTALL_ROOT,
+            source="src",
+            checksum="abc123",
+        ),
+        config=cfg,
+    )
     installed = entry_dir / "tool.1.gz"  # same base page, compressed
     monkeypatch.setattr(
         "maniac.listing.classification.find_installed_manpage_path",
@@ -1109,7 +1147,16 @@ def test_classify_managed_page_matched_through_a_symlink(
     real_dir.mkdir()
     real_page = real_dir / "tool.1"
     real_page.write_text(".TH TOOL 1\n", encoding="utf-8")
-    record_entry("tool", real_page, Tier.INSTALL_ROOT, "src", "abc123", config=cfg)
+    record_entry(
+        "tool",
+        Entry(
+            path=real_page,
+            tier=Tier.INSTALL_ROOT,
+            source="src",
+            checksum="abc123",
+        ),
+        config=cfg,
+    )
 
     link_dir = tmp_path / "man" / "man1"
     link_dir.mkdir(parents=True)
@@ -1138,12 +1185,14 @@ def test_classify_outdated_when_recorded_version_differs_from_installed(
     installed.write_text(".TH TOOL 1\n", encoding="utf-8")
     record_entry(
         "tool",
-        installed,
-        Tier.SYNTHESIS,
-        "model",
-        "abc123",
+        Entry(
+            path=installed,
+            tier=Tier.SYNTHESIS,
+            source="model",
+            checksum="abc123",
+            version="1.0.0",
+        ),
         config=cfg,
-        version="1.0.0",
     )
     monkeypatch.setattr(
         "maniac.listing.classification.find_installed_manpage_path",
@@ -1185,13 +1234,15 @@ def test_classify_outdated_when_mise_latest_alias_drifts(
     installed.symlink_to(alias_page)
     record_entry(
         "tool",
-        installed,
-        Tier.INSTALL_ROOT,
-        str(root),
-        manifest.checksum_of(alias_page),
-        version="1.0.0",
-        target=alias_page,
-        provider_target=True,
+        Entry(
+            path=installed,
+            tier=Tier.INSTALL_ROOT,
+            source=str(root),
+            checksum=manifest.checksum_of(alias_page),
+            version="1.0.0",
+            target=alias_page,
+            provider_target=True,
+        ),
         config=cfg,
     )
     latest.unlink()
@@ -1239,13 +1290,15 @@ def test_classify_outdated_for_an_unaliased_mise_provider_target(
     installed.symlink_to(page)
     record_entry(
         "tool",
-        installed,
-        Tier.INSTALL_ROOT,
-        str(root),
-        manifest.checksum_of(page),
-        version="1.0.0",
-        target=page,
-        provider_target=True,
+        Entry(
+            path=installed,
+            tier=Tier.INSTALL_ROOT,
+            source=str(root),
+            checksum=manifest.checksum_of(page),
+            version="1.0.0",
+            target=page,
+            provider_target=True,
+        ),
         config=cfg,
     )
     monkeypatch.setattr(
@@ -1272,13 +1325,15 @@ def test_classify_ok_for_a_generic_direct_provider_target(
     installed.symlink_to(page)
     record_entry(
         "tool",
-        installed,
-        Tier.INSTALL_ROOT,
-        str(root),
-        manifest.checksum_of(page),
-        version="1.0.0",
-        target=page,
-        provider_target=True,
+        Entry(
+            path=installed,
+            tier=Tier.INSTALL_ROOT,
+            source=str(root),
+            checksum=manifest.checksum_of(page),
+            version="1.0.0",
+            target=page,
+            provider_target=True,
+        ),
         config=cfg,
     )
     monkeypatch.setattr(
@@ -1316,13 +1371,15 @@ def test_classify_ok_when_mise_latest_and_binary_advance_together(
     installed.symlink_to(alias_page)
     record_entry(
         "tool",
-        installed,
-        Tier.INSTALL_ROOT,
-        str(root),
-        manifest.checksum_of(alias_page),
-        version="1.0.0",
-        target=alias_page,
-        provider_target=True,
+        Entry(
+            path=installed,
+            tier=Tier.INSTALL_ROOT,
+            source=str(root),
+            checksum=manifest.checksum_of(alias_page),
+            version="1.0.0",
+            target=alias_page,
+            provider_target=True,
+        ),
         config=cfg,
     )
     replacement_root = root.parent / "2.0.0"
@@ -1357,7 +1414,15 @@ def test_classify_ok_when_entry_records_no_version(
     installed = cfg.man_dir / "tool.1"
     installed.write_text(".TH TOOL 1\n", encoding="utf-8")
     record_entry(
-        "tool", installed, Tier.SYNTHESIS, "model", "abc123", config=cfg, version=None
+        "tool",
+        Entry(
+            path=installed,
+            tier=Tier.SYNTHESIS,
+            source="model",
+            checksum="abc123",
+            version=None,
+        ),
+        config=cfg,
     )
     monkeypatch.setattr(
         "maniac.listing.classification.find_installed_manpage_path",
@@ -1380,12 +1445,14 @@ def test_classify_ok_when_installation_version_is_unknown(
     installed.write_text(".TH TOOL 1\n", encoding="utf-8")
     record_entry(
         "tool",
-        installed,
-        Tier.SYNTHESIS,
-        "model",
-        "abc123",
+        Entry(
+            path=installed,
+            tier=Tier.SYNTHESIS,
+            source="model",
+            checksum="abc123",
+            version="1.0.0",
+        ),
         config=cfg,
-        version="1.0.0",
     )
     monkeypatch.setattr(
         "maniac.listing.classification.find_installed_manpage_path",
@@ -1410,12 +1477,14 @@ def test_classify_outdated_when_unclaimed_binarys_own_version_differs(
     installed.write_text(".TH TOOL 1\n", encoding="utf-8")
     record_entry(
         "tool",
-        installed,
-        Tier.SYNTHESIS,
-        "model",
-        "abc123",
+        Entry(
+            path=installed,
+            tier=Tier.SYNTHESIS,
+            source="model",
+            checksum="abc123",
+            version="1.0.0",
+        ),
         config=cfg,
-        version="1.0.0",
     )
     monkeypatch.setattr(
         "maniac.listing.classification.find_installed_manpage_path",
@@ -1440,12 +1509,14 @@ def test_classify_ok_when_unclaimed_binarys_own_version_matches(
     installed.write_text(".TH TOOL 1\n", encoding="utf-8")
     record_entry(
         "tool",
-        installed,
-        Tier.SYNTHESIS,
-        "model",
-        "abc123",
+        Entry(
+            path=installed,
+            tier=Tier.SYNTHESIS,
+            source="model",
+            checksum="abc123",
+            version="1.0.0",
+        ),
         config=cfg,
-        version="1.0.0",
     )
     monkeypatch.setattr(
         "maniac.listing.classification.find_installed_manpage_path",
@@ -1472,12 +1543,14 @@ def test_classify_ok_when_unclaimed_binarys_version_is_unavailable(
     installed.write_text(".TH TOOL 1\n", encoding="utf-8")
     record_entry(
         "tool",
-        installed,
-        Tier.SYNTHESIS,
-        "model",
-        "abc123",
+        Entry(
+            path=installed,
+            tier=Tier.SYNTHESIS,
+            source="model",
+            checksum="abc123",
+            version="1.0.0",
+        ),
         config=cfg,
-        version="1.0.0",
     )
     monkeypatch.setattr(
         "maniac.listing.classification.find_installed_manpage_path",
@@ -1525,12 +1598,14 @@ def test_classify_no_subprocess_for_unowned_or_versionless_row(
     versionless.write_text(".TH VERSIONLESS 1\n", encoding="utf-8")
     record_entry(
         "versionless",
-        versionless,
-        Tier.SYNTHESIS,
-        "model",
-        "abc123",
+        Entry(
+            path=versionless,
+            tier=Tier.SYNTHESIS,
+            source="model",
+            checksum="abc123",
+            version=None,
+        ),
         config=cfg,
-        version=None,
     )
     monkeypatch.setattr(
         "maniac.listing.classification.find_installed_manpage_path",
@@ -1750,7 +1825,14 @@ def test_classify_manifest_entry_with_vanished_file_and_no_man_hit_is_missing(
     is not enough on its own once `man` is also asked."""
     cfg = _config(tmp_path)
     record_entry(
-        "tool", cfg.man_dir / "tool.1", Tier.SYNTHESIS, "model", "abc123", config=cfg
+        "tool",
+        Entry(
+            path=cfg.man_dir / "tool.1",
+            tier=Tier.SYNTHESIS,
+            source="model",
+            checksum="abc123",
+        ),
+        config=cfg,
     )
 
     assert _classification_pair(None, None, "tool", cfg) == (
@@ -1770,7 +1852,16 @@ def test_classify_managed_file_present_but_unreachable_by_man_is_not_managed(
     cfg.man_dir.mkdir(parents=True)
     entry_path = cfg.man_dir / "tool.1"
     entry_path.write_text(".TH TOOL 1\n", encoding="utf-8")
-    record_entry("tool", entry_path, Tier.INSTALL_ROOT, "src", "abc123", config=cfg)
+    record_entry(
+        "tool",
+        Entry(
+            path=entry_path,
+            tier=Tier.INSTALL_ROOT,
+            source="src",
+            checksum="abc123",
+        ),
+        config=cfg,
+    )
     # find_installed_manpage_path stays patched to None by the autouse fixture:
     # `man` does not resolve this tool at all, despite the manifest entry.
 

@@ -6,7 +6,7 @@ from maniac import manifest as manifest_module
 from maniac.config import Config
 from maniac.generation.compiler import build_provenance_header
 from maniac.installer import draft_entry, install_manpage, uninstall_manpage
-from maniac.manifest import Tier
+from maniac.manifest import Entry, Tier
 
 from .manifest_support import record_entry
 
@@ -415,12 +415,14 @@ def test_uninstall_manpage_and_restore_backup(tmp_path: Path) -> None:
     cfg = Config(man_dir=man_dir, output_dir=output_dir)
     record_entry(
         "tool",
-        installed_file,
-        Tier.SYNTHESIS,
-        "model",
-        manifest_module.checksum_of(target),
-        backup=backup_file,
-        target=target,
+        Entry(
+            path=installed_file,
+            tier=Tier.SYNTHESIS,
+            source="model",
+            checksum=manifest_module.checksum_of(target),
+            backup=backup_file,
+            target=target,
+        ),
         config=cfg,
     )
     result = uninstall_manpage("tool", purge=False, config=cfg)
@@ -454,12 +456,14 @@ def test_uninstall_manpage_compressed_page_restores_backup(tmp_path: Path) -> No
     cfg = Config(man_dir=man_dir, output_dir=output_dir)
     record_entry(
         "pandoc",
-        installed_file,
-        Tier.INSTALL_ROOT,
-        str(man_dir),
-        manifest_module.checksum_of(target),
-        backup=backup_file,
-        target=target,
+        Entry(
+            path=installed_file,
+            tier=Tier.INSTALL_ROOT,
+            source=str(man_dir),
+            checksum=manifest_module.checksum_of(target),
+            backup=backup_file,
+            target=target,
+        ),
         config=cfg,
     )
     result = uninstall_manpage("pandoc", purge=False, config=cfg)
@@ -486,12 +490,14 @@ def test_uninstall_manpage_null_backup_removes_and_restores_nothing(
     cfg = Config(man_dir=man_dir, output_dir=output_dir)
     record_entry(
         "tool",
-        installed_file,
-        Tier.SYNTHESIS,
-        "model",
-        manifest_module.checksum_of(target),
-        backup=None,
-        target=target,
+        Entry(
+            path=installed_file,
+            tier=Tier.SYNTHESIS,
+            source="model",
+            checksum=manifest_module.checksum_of(target),
+            backup=None,
+            target=target,
+        ),
         config=cfg,
     )
     result = uninstall_manpage("tool", purge=False, config=cfg)
@@ -524,12 +530,14 @@ def test_uninstall_manpage_restore_reports_restored_not_empty(tmp_path: Path) ->
     cfg = Config(man_dir=man_dir, output_dir=output_dir, backup_dir=backup_dir)
     record_entry(
         "tool",
-        installed_file,
-        Tier.SYNTHESIS,
-        "model",
-        manifest_module.checksum_of(target),
-        backup=backup_file,
-        target=target,
+        Entry(
+            path=installed_file,
+            tier=Tier.SYNTHESIS,
+            source="model",
+            checksum=manifest_module.checksum_of(target),
+            backup=backup_file,
+            target=target,
+        ),
         config=cfg,
     )
 
@@ -607,11 +615,13 @@ def test_uninstall_manpage_purge(tmp_path: Path) -> None:
     cfg = Config(man_dir=man_dir, output_dir=out_dir, intermediate_dir=inter_dir)
     record_entry(
         "tool",
-        installed_file,
-        Tier.SYNTHESIS,
-        "model",
-        manifest_module.checksum_of(target),
-        target=target,
+        Entry(
+            path=installed_file,
+            tier=Tier.SYNTHESIS,
+            source="model",
+            checksum=manifest_module.checksum_of(target),
+            target=target,
+        ),
         config=cfg,
     )
     result = uninstall_manpage("tool", purge=True, config=cfg)
@@ -666,11 +676,13 @@ def test_uninstall_removes_a_targetless_entry_with_changed_bytes_and_restores_ba
     cfg = Config(man_dir=man_dir, output_dir=tmp_path / "data_manpages")
     record_entry(
         "tool",
-        installed_file,
-        Tier.SYNTHESIS,
-        "model",
-        recorded_checksum,
-        backup=backup_file,
+        Entry(
+            path=installed_file,
+            tier=Tier.SYNTHESIS,
+            source="model",
+            checksum=recorded_checksum,
+            backup=backup_file,
+        ),
         config=cfg,
     )
 
@@ -735,12 +747,14 @@ def test_uninstall_preserves_retargeted_link_and_backup(tmp_path: Path) -> None:
     assert entry is not None and entry.target is not None
     record_entry(
         "tool",
-        installed,
-        entry.tier,
-        entry.source,
-        entry.checksum,
-        backup=backup,
-        target=entry.target,
+        Entry(
+            path=installed,
+            tier=entry.tier,
+            source=entry.source,
+            checksum=entry.checksum,
+            backup=backup,
+            target=entry.target,
+        ),
         config=cfg,
     )
     replacement = tmp_path / "replacement.1"
@@ -798,11 +812,13 @@ def test_uninstall_accepts_a_recorded_relative_link_target(tmp_path: Path) -> No
     )
     record_entry(
         "tool",
-        installed,
-        Tier.SYNTHESIS,
-        "model",
-        manifest_module.checksum_of(target),
-        target=relative_target,
+        Entry(
+            path=installed,
+            tier=Tier.SYNTHESIS,
+            source="model",
+            checksum=manifest_module.checksum_of(target),
+            target=relative_target,
+        ),
         config=cfg,
     )
 
@@ -864,7 +880,14 @@ def test_uninstall_manpage_vanished_entry_is_forgotten(tmp_path: Path) -> None:
     man_dir.mkdir(parents=True)
     cfg = Config(man_dir=man_dir, output_dir=tmp_path / "data_manpages")
     record_entry(
-        "tool", man_dir / "tool.1", Tier.SYNTHESIS, "model", "deadbeef", config=cfg
+        "tool",
+        Entry(
+            path=man_dir / "tool.1",
+            tier=Tier.SYNTHESIS,
+            source="model",
+            checksum="deadbeef",
+        ),
+        config=cfg,
     )
 
     result = uninstall_manpage("tool", purge=False, config=cfg)
@@ -1097,10 +1120,12 @@ def _legacy_targetless_entry(
     )
     record_entry(
         "tool",
-        installed,
-        Tier.SYNTHESIS,
-        "model",
-        checksum,
+        Entry(
+            path=installed,
+            tier=Tier.SYNTHESIS,
+            source="model",
+            checksum=checksum,
+        ),
         config=cfg,
     )
     return cfg, installed
@@ -1330,11 +1355,13 @@ def test_uninstall_keeps_a_durable_target_a_second_entry_still_records(
         links[tool] = man_dir / "page.1"
         record_entry(
             tool,
-            links[tool],
-            Tier.SYNTHESIS,
-            "model",
-            checksum,
-            target=target,
+            Entry(
+                path=links[tool],
+                tier=Tier.SYNTHESIS,
+                source="model",
+                checksum=checksum,
+                target=target,
+            ),
             config=cfg,
         )
     for link in links.values():

@@ -9,7 +9,7 @@ from structlog.testing import capture_logs
 
 from maniac import manifest
 from maniac.config import Config
-from maniac.manifest import Tier
+from maniac.manifest import Entry, Tier
 
 from .manifest_support import forget_entry, record_entry
 
@@ -37,7 +37,14 @@ def test_record_lookup_forget_round_trip(tmp_path: Path) -> None:
     page = tmp_path / "man1" / "tool.1"
 
     record_entry(
-        "tool", page, Tier.INSTALL_ROOT, "install-root-source", "abc123", config=cfg
+        "tool",
+        Entry(
+            path=page,
+            tier=Tier.INSTALL_ROOT,
+            source="install-root-source",
+            checksum="abc123",
+        ),
+        config=cfg,
     )
     entry = manifest.lookup("tool", config=cfg)
     assert entry is not None
@@ -56,12 +63,14 @@ def test_record_lookup_round_trip_preserves_version(tmp_path: Path) -> None:
 
     record_entry(
         "tool",
-        page,
-        Tier.INSTALL_ROOT,
-        "install-root-source",
-        "abc123",
+        Entry(
+            path=page,
+            tier=Tier.INSTALL_ROOT,
+            source="install-root-source",
+            checksum="abc123",
+            version="1.2.3",
+        ),
         config=cfg,
-        version="1.2.3",
     )
     entry = manifest.lookup("tool", config=cfg)
     assert entry is not None
@@ -74,12 +83,14 @@ def test_record_lookup_round_trip_preserves_source_uri(tmp_path: Path) -> None:
 
     record_entry(
         "tool",
-        tmp_path / "man1" / "tool.1",
-        Tier.REPOSITORY,
-        "owner/tool",
-        "abc123",
+        Entry(
+            path=tmp_path / "man1" / "tool.1",
+            tier=Tier.REPOSITORY,
+            source="owner/tool",
+            checksum="abc123",
+            source_uri=uri,
+        ),
         config=cfg,
-        source_uri=uri,
     )
 
     entry = manifest.lookup("tool", config=cfg)
@@ -93,11 +104,13 @@ def test_record_lookup_round_trip_preserves_link_target(tmp_path: Path) -> None:
 
     record_entry(
         "tool",
-        tmp_path / "man1" / "tool.1",
-        Tier.SYNTHESIS,
-        "model",
-        "abc123",
-        target=target,
+        Entry(
+            path=tmp_path / "man1" / "tool.1",
+            tier=Tier.SYNTHESIS,
+            source="model",
+            checksum="abc123",
+            target=target,
+        ),
         config=cfg,
     )
 
@@ -169,7 +182,14 @@ def test_forget_missing_tool_is_a_noop(tmp_path: Path) -> None:
 def test_record_persists_across_loads(tmp_path: Path) -> None:
     cfg = _config(tmp_path)
     record_entry(
-        "tool", tmp_path / "tool.1", Tier.SYNTHESIS, "model", "abc123", config=cfg
+        "tool",
+        Entry(
+            path=tmp_path / "tool.1",
+            tier=Tier.SYNTHESIS,
+            source="model",
+            checksum="abc123",
+        ),
+        config=cfg,
     )
 
     document = json.loads(cfg.manifest_path.read_text(encoding="utf-8"))
@@ -249,7 +269,14 @@ def test_load_does_not_migrate_a_legacy_entry(tmp_path: Path) -> None:
         output_dir=tmp_path / "data",
     )
     record_entry(
-        "tool", page, Tier.SYNTHESIS, "model", manifest.checksum_of(page), config=cfg
+        "tool",
+        Entry(
+            path=page,
+            tier=Tier.SYNTHESIS,
+            source="model",
+            checksum=manifest.checksum_of(page),
+        ),
+        config=cfg,
     )
     before = _tree_state(tmp_path)
 
@@ -279,12 +306,14 @@ def test_record_lookup_round_trip_preserves_group(tmp_path: Path) -> None:
 
     record_entry(
         "eza_colors",
-        tmp_path / "man5" / "eza_colors.5",
-        Tier.REPOSITORY,
-        "eza-community/eza",
-        "abc123",
+        Entry(
+            path=tmp_path / "man5" / "eza_colors.5",
+            tier=Tier.REPOSITORY,
+            source="eza-community/eza",
+            checksum="abc123",
+            group="eza",
+        ),
         config=cfg,
-        group="eza",
     )
 
     entry = manifest.lookup("eza_colors", config=cfg)
@@ -446,8 +475,26 @@ def test_a_write_promotes_the_manifest_it_read_before_mutating_it(
     cfg = _config(tmp_path)
     first = tmp_path / "first.1"
     first.write_text(".TH FIRST 1", encoding="utf-8")
-    record_entry("first", first, Tier.SYNTHESIS, "m", "a", config=cfg)
-    record_entry("second", tmp_path / "sec.1", Tier.SYNTHESIS, "m", "b", config=cfg)
+    record_entry(
+        "first",
+        Entry(
+            path=first,
+            tier=Tier.SYNTHESIS,
+            source="m",
+            checksum="a",
+        ),
+        config=cfg,
+    )
+    record_entry(
+        "second",
+        Entry(
+            path=tmp_path / "sec.1",
+            tier=Tier.SYNTHESIS,
+            source="m",
+            checksum="b",
+        ),
+        config=cfg,
+    )
 
     checkpointed = manifest.read(
         config=Config(manifest_path=manifest.checkpoint_path(cfg))
@@ -555,7 +602,16 @@ def test_a_transaction_writes_once_for_every_mutation_it_holds(
 def test_a_failed_transaction_writes_nothing(tmp_path: Path) -> None:
     """An operation that raises leaves the manifest describing where it started."""
     cfg = _config(tmp_path)
-    record_entry("first", tmp_path / "first.1", Tier.SYNTHESIS, "m", "a", config=cfg)
+    record_entry(
+        "first",
+        Entry(
+            path=tmp_path / "first.1",
+            tier=Tier.SYNTHESIS,
+            source="m",
+            checksum="a",
+        ),
+        config=cfg,
+    )
     before = cfg.manifest_path.read_bytes()
 
     with pytest.raises(RuntimeError), manifest.transaction(config=cfg) as txn:
@@ -604,11 +660,13 @@ def test_a_broken_link_blocks_promotion_of_an_otherwise_intact_manifest(
     link, target = _managed_link(cfg, "tool")
     record_entry(
         "tool",
-        link,
-        Tier.SYNTHESIS,
-        "model",
-        manifest.checksum_of(target),
-        target=target,
+        Entry(
+            path=link,
+            tier=Tier.SYNTHESIS,
+            source="model",
+            checksum=manifest.checksum_of(target),
+            target=target,
+        ),
         config=cfg,
     )
     checkpoint = manifest.checkpoint_path(cfg)
@@ -660,11 +718,13 @@ def test_a_damaged_read_leaves_the_checkpoint_byte_identical(tmp_path: Path) -> 
     link, target = _managed_link(cfg, "tool")
     record_entry(
         "tool",
-        link,
-        Tier.SYNTHESIS,
-        "model",
-        manifest.checksum_of(target),
-        target=target,
+        Entry(
+            path=link,
+            tier=Tier.SYNTHESIS,
+            source="model",
+            checksum=manifest.checksum_of(target),
+            target=target,
+        ),
         config=cfg,
     )
     with manifest.transaction(config=cfg):
@@ -816,7 +876,14 @@ def test_an_unrecorded_link_into_output_dir_is_adopted(tmp_path: Path) -> None:
     """A crash between linking and recording leaves a page MANIAC owns and forgot."""
     cfg = _linked_config(tmp_path)
     record_entry(
-        "other", cfg.man_dir / "other.1", Tier.SYNTHESIS, "model", "abc123", config=cfg
+        "other",
+        Entry(
+            path=cfg.man_dir / "other.1",
+            tier=Tier.SYNTHESIS,
+            source="model",
+            checksum="abc123",
+        ),
+        config=cfg,
     )
     link, target = _managed_link(cfg, "tool")
 
@@ -849,7 +916,14 @@ def test_a_link_outside_output_dir_is_never_adopted(tmp_path: Path) -> None:
     assert manifest.load(config=cfg) == {}
 
     record_entry(
-        "other", cfg.man_dir / "other.1", Tier.SYNTHESIS, "model", "abc123", config=cfg
+        "other",
+        Entry(
+            path=cfg.man_dir / "other.1",
+            tier=Tier.SYNTHESIS,
+            source="model",
+            checksum="abc123",
+        ),
+        config=cfg,
     )
     with manifest.transaction(config=cfg) as txn:
         assert txn.read.health is manifest.Health.INTACT
@@ -921,11 +995,13 @@ def test_a_plain_read_reports_a_broken_link_without_touching_the_tree(
     link, _ = _managed_link(cfg, "tool")
     record_entry(
         "tool",
-        link,
-        Tier.SYNTHESIS,
-        "model",
-        "abc123",
-        target=cfg.output_dir / "tool.1",
+        Entry(
+            path=link,
+            tier=Tier.SYNTHESIS,
+            source="model",
+            checksum="abc123",
+            target=cfg.output_dir / "tool.1",
+        ),
         config=cfg,
     )
     link.unlink()
@@ -943,11 +1019,13 @@ def test_a_read_of_a_sound_installation_reports_it_sound(tmp_path: Path) -> None
     link, target = _managed_link(cfg, "tool")
     record_entry(
         "tool",
-        link,
-        Tier.SYNTHESIS,
-        "model",
-        manifest.checksum_of(target),
-        target=target,
+        Entry(
+            path=link,
+            tier=Tier.SYNTHESIS,
+            source="model",
+            checksum=manifest.checksum_of(target),
+            target=target,
+        ),
         config=cfg,
     )
 
@@ -963,11 +1041,13 @@ def test_the_scan_costs_one_check_per_manifest_entry_whatever_path_holds(
         link, target = _managed_link(cfg, tool)
         record_entry(
             tool,
-            link,
-            Tier.SYNTHESIS,
-            "model",
-            manifest.checksum_of(target),
-            target=target,
+            Entry(
+                path=link,
+                tier=Tier.SYNTHESIS,
+                source="model",
+                checksum=manifest.checksum_of(target),
+                target=target,
+            ),
             config=cfg,
         )
     path_dir = tmp_path / "bin"
