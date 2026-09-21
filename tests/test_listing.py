@@ -19,6 +19,7 @@ import maniac.cli as cli_module
 from maniac.cli import app
 from maniac.cli.listing import (
     _SOURCE_COLUMN_MAX_WIDTH,
+    _STATE_COLUMN_WIDTH,
     _UPSTREAM_COLUMN_MAX_WIDTH,
     _filter_rows,
     _grouped_for_display,
@@ -586,7 +587,7 @@ def test_streaming_table_keeps_column_geometry_for_long_upstreams() -> None:
         for column in resolved_columns
     ]
     assert checking_columns[0].width == len("long-tool-name")
-    assert checking_columns[1].width == len(ActionState.UNVERIFIED.value)
+    assert checking_columns[1].width == _STATE_COLUMN_WIDTH
     assert checking_columns[2].width == _SOURCE_COLUMN_MAX_WIDTH
     assert checking_columns[3].width == _UPSTREAM_COLUMN_MAX_WIDTH
     assert not checking.expand
@@ -612,7 +613,7 @@ def test_streaming_table_renders_unverified_without_truncation() -> None:
     output = io.StringIO()
     Console(file=output, force_terminal=True, no_color=True, width=80).print(table)
 
-    assert table.columns[1].width == len(ActionState.UNVERIFIED.value)
+    assert table.columns[1].width == _STATE_COLUMN_WIDTH
     assert "unverified" in output.getvalue()
     assert "unverifi…" not in output.getvalue()
 
@@ -1205,7 +1206,11 @@ def test_filter_rows_unions_within_the_state_axis() -> None:
     filtered = _filter_rows(
         rows,
         states=_selected_states(
-            outdated=False, unverified=False, available=True, missing=True
+            outdated=False,
+            unverified=False,
+            misattributed=False,
+            available=True,
+            missing=True,
         ),
         managed=False,
     )
@@ -1222,12 +1227,37 @@ def test_filter_rows_selects_unverified_rows() -> None:
     filtered = _filter_rows(
         rows,
         states=_selected_states(
-            outdated=False, unverified=True, available=False, missing=False
+            outdated=False,
+            unverified=True,
+            misattributed=False,
+            available=False,
+            missing=False,
         ),
         managed=False,
     )
 
     assert [row.tool for row in filtered] == ["unproven"]
+
+
+def test_filter_rows_selects_misattributed_rows() -> None:
+    rows = [
+        _row("wrong-owner", ActionState.MISATTRIBUTED, PageSource.SYSTEM),
+        _row("current", ActionState.OK, PageSource.SYSTEM),
+    ]
+
+    filtered = _filter_rows(
+        rows,
+        states=_selected_states(
+            outdated=False,
+            unverified=False,
+            misattributed=True,
+            available=False,
+            missing=False,
+        ),
+        managed=False,
+    )
+
+    assert [row.tool for row in filtered] == ["wrong-owner"]
 
 
 def test_filter_rows_intersects_across_axes() -> None:
@@ -1240,7 +1270,11 @@ def test_filter_rows_intersects_across_axes() -> None:
     filtered = _filter_rows(
         rows,
         states=_selected_states(
-            outdated=True, unverified=False, available=False, missing=False
+            outdated=True,
+            unverified=False,
+            misattributed=False,
+            available=False,
+            missing=False,
         ),
         managed=True,
     )
@@ -1305,6 +1339,37 @@ def test_cli_list_pipe_unverified_emits_exactly_the_filtered_set(
 
     assert res.exit_code == 0
     assert res.output == "tool\n"
+
+
+def test_cli_list_pipe_misattributed_emits_exactly_the_filtered_set(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(
+        cli_module.console, "_instance", Console(force_terminal=False, no_color=True)
+    )
+    monkeypatch.setattr(cli_module, "Config", lambda: _config(tmp_path))
+    page = tmp_path / "usr" / "share" / "man" / "man1" / "python.1"
+    monkeypatch.setattr(
+        "maniac.listing.classification.find_installed_manpage_path",
+        lambda man_bin, tool_name: page,
+    )
+    monkeypatch.setattr(
+        "maniac.listing.classification.verify_external_page",
+        lambda page, **kwargs: ExternalPageVerification(
+            ExternalPageFreshness.WRONG_OWNER, "python3.12-minimal"
+        ),
+    )
+    monkeypatch.setattr(
+        "maniac.listing.inventory.resolution.enumerate_installations",
+        lambda on_start=None, on_scan=None: [
+            (_FakeProvider(), _installation(binary="python"))
+        ],
+    )
+
+    res = runner.invoke(app, ["list", "--misattributed"])
+
+    assert res.exit_code == 0
+    assert res.output == "python\n"
 
 
 def test_cli_list_pipe_available_waits_for_upstream_classification(

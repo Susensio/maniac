@@ -1698,6 +1698,65 @@ def test_classify_surfaces_the_provable_external_owner(
     assert result.owning_package == "python3.12-minimal"
 
 
+def test_classify_misattributed_when_dpkg_proves_a_different_owner(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A provable owner that is not the candidate's own package is a
+    stronger finding than `UNVERIFIED` (ADR-0052) -- the live `python`
+    case, where `dpkg-query -S` names `python3.12-minimal` but the
+    installation is `python`."""
+    cfg = _config(tmp_path)
+    installed = tmp_path / "usr" / "share" / "man" / "man1" / "python.1"
+    monkeypatch.setattr(
+        "maniac.listing.classification.find_installed_manpage_path",
+        lambda man_bin, tool_name: installed,
+    )
+    monkeypatch.setattr(
+        "maniac.listing.classification.verify_external_page",
+        lambda page, **kwargs: ExternalPageVerification(
+            ExternalPageFreshness.WRONG_OWNER, "python3.12-minimal"
+        ),
+    )
+
+    result = classify(_candidate(_FakeProvider(), _installation(), "python"), cfg)
+
+    assert result.state is ActionState.MISATTRIBUTED
+    assert result.source is PageSource.SYSTEM
+    assert result.owning_package == "python3.12-minimal"
+
+
+def test_classify_wrong_owner_skips_the_roff_fallback(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A roff header version match proves the page documents the version it
+    claims, not which package it belongs to, so it cannot rebut a proven
+    wrong owner (ADR-0052) -- the fallback must not even run."""
+    cfg = _config(tmp_path)
+    installed = tmp_path / "usr" / "share" / "man" / "man1" / "python.1"
+    monkeypatch.setattr(
+        "maniac.listing.classification.find_installed_manpage_path",
+        lambda man_bin, tool_name: installed,
+    )
+    monkeypatch.setattr(
+        "maniac.listing.classification.verify_external_page",
+        lambda page, **kwargs: ExternalPageVerification(
+            ExternalPageFreshness.WRONG_OWNER, "python3.12-minimal"
+        ),
+    )
+
+    def _unexpected_roff_call(page: Path, **kwargs: object) -> ExternalPageFreshness:
+        raise AssertionError("roff fallback must not run on a proven wrong owner")
+
+    monkeypatch.setattr(
+        "maniac.listing.classification.verify_page_header", _unexpected_roff_call
+    )
+
+    assert _classification_pair(_FakeProvider(), _installation(), "python", cfg) == (
+        ActionState.MISATTRIBUTED,
+        PageSource.SYSTEM,
+    )
+
+
 @pytest.mark.parametrize(
     ("freshness", "state"),
     [

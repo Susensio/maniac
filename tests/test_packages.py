@@ -60,7 +60,7 @@ def test_verify_external_page_accepts_matching_debian_epoch_and_revision(
     assert result.freshness is packages.ExternalPageFreshness.MATCH
 
 
-def test_verify_external_page_rejects_different_package_without_binary_guessing(
+def test_verify_external_page_proves_wrong_owner_without_binary_guessing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls: list[list[str]] = []
@@ -75,9 +75,25 @@ def test_verify_external_page_rejects_different_package_without_binary_guessing(
         Path("/usr/share/man/man1/tldr.1.gz"), package="tealdeer", version="1.9.0"
     )
 
-    assert result.freshness is packages.ExternalPageFreshness.UNVERIFIED
+    assert result.freshness is packages.ExternalPageFreshness.WRONG_OWNER
     assert result.owner == "other-package:amd64"
     assert len(calls) == 1
+
+
+def test_verify_external_page_stays_unverified_when_no_owner_is_found(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(args, 1, "", "no path found matching\n")
+
+    monkeypatch.setattr(packages.subprocess, "run", run)
+
+    result = packages.verify_external_page(
+        Path("/usr/share/man/man1/tldr.1.gz"), package="tealdeer", version="1.9.0"
+    )
+
+    assert result.freshness is packages.ExternalPageFreshness.UNVERIFIED
+    assert result.owner is None
 
 
 def test_verify_external_page_degrades_when_dpkg_is_unavailable(

@@ -14,6 +14,7 @@ class ExternalPageFreshness(Enum):
     MATCH = "match"
     MISMATCH = "mismatch"
     UNVERIFIED = "unverified"
+    WRONG_OWNER = "wrong_owner"
 
 
 @dataclass(frozen=True, slots=True)
@@ -22,8 +23,8 @@ class ExternalPageVerification:
 
     `owner` is set whenever `_debian_owner` names one, independent of
     `freshness` -- a page can resolve to a provable owner that is not the
-    binary's own package (freshness stays `UNVERIFIED`) just as easily as
-    to no provable owner at all.
+    binary's own package (freshness becomes `WRONG_OWNER`) just as easily
+    as to no provable owner at all (freshness stays `UNVERIFIED`).
     """
 
     freshness: ExternalPageFreshness
@@ -90,8 +91,10 @@ def verify_external_page(
     if version is None:
         return ExternalPageVerification(ExternalPageFreshness.UNVERIFIED, None)
     owner = _debian_owner(str(page))
-    if owner is None or _package_name(owner) != _package_name(package):
-        return ExternalPageVerification(ExternalPageFreshness.UNVERIFIED, owner)
+    if owner is None:
+        return ExternalPageVerification(ExternalPageFreshness.UNVERIFIED, None)
+    if _package_name(owner) != _package_name(package):
+        return ExternalPageVerification(ExternalPageFreshness.WRONG_OWNER, owner)
     package_version = _debian_version(owner)
     if package_version is None:
         return ExternalPageVerification(ExternalPageFreshness.UNVERIFIED, owner)

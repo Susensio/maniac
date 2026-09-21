@@ -118,12 +118,15 @@ def _external_page_state(
 ) -> tuple[ActionState, str | None]:
     """Return the verified state and provable owner for an external page.
 
-    dpkg is tried first; only when it has nothing to say (`UNVERIFIED`, a
-    page it cannot attribute or that is not on a Debian system at all) does
-    the page's own `.TH`/`.Dt` header get a chance to prove freshness
-    instead. The roff path never overrides an actual dpkg `MATCH`/
-    `MISMATCH`, and never sets `owning_package` -- it proves freshness, not
-    ownership.
+    dpkg is tried first; only when it has nothing to say at all
+    (`UNVERIFIED`, no owner found or not on a Debian system) does the
+    page's own `.TH`/`.Dt` header get a chance to prove freshness instead.
+    A proven `WRONG_OWNER` skips the roff fallback (ADR-0052): a header
+    version match proves the page documents the version it claims, not
+    which package it belongs to, so it cannot rebut evidence dpkg already
+    gave the other way. The roff path never overrides an actual dpkg
+    `MATCH`/`MISMATCH`/`WRONG_OWNER`, and never sets `owning_package` -- it
+    proves freshness, not ownership.
     """
     inst = candidate.installation
     assert inst is not None
@@ -139,6 +142,7 @@ def _external_page_state(
         ExternalPageFreshness.MATCH: ActionState.OK,
         ExternalPageFreshness.MISMATCH: ActionState.OUTDATED,
         ExternalPageFreshness.UNVERIFIED: ActionState.UNVERIFIED,
+        ExternalPageFreshness.WRONG_OWNER: ActionState.MISATTRIBUTED,
     }[freshness]
     return state, verification.owner
 

@@ -17,6 +17,7 @@ class ActionState(Enum):
 
     OK = "ok"
     UNVERIFIED = "unverified"
+    MISATTRIBUTED = "misattributed"
     OUTDATED = "outdated"
     AVAILABLE = "available"
     MISSING = "missing"
