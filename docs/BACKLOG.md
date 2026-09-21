@@ -26,11 +26,6 @@ These are findings the work surfaced and deliberately did not take; they are fir
   The cost is that one type now serves two roles, with two fields meaningless in the first.
   Reopening `Entry` touches ADR-0046's manifest boundary, so it is an ADR-level decision, not a mechanical follow-up.
 
-### Coverage
-
-- Split `tests/test_docs.py` to mirror the five modules behind the ADR-0033 facade.
-  It is ~1400 lines against a package whose patch targets are now per-module; the split rehomed the targets but not the file.
-
 ## Bugs and correctness
 
 - Widen install's unmanaged-destination precheck beyond the default `<tool>.1`.
@@ -49,17 +44,6 @@ These are findings the work surfaced and deliberately did not take; they are fir
   `__MISE_ORIG_PATH` records the entire pre-activation `$PATH` and is the plausible evidence source -- a live `mise activate bash` on this machine exports it alongside `MISE_SHELL`, `__MISE_EXE` and `__MISE_DIFF`.
   Using it is Mise-specific, so decide whether the fallback gets per-provider evidence adapters or stays generic.
   Shim resolution remains unexercised: this machine has no populated shim directory, and `mise which -C $HOME` is cwd-sensitive and needs ADR-0029-style root validation.
-- Prove a page documents a different version than the binary it is offered for.
-  Live case found 2026-09-16 and not yet acted on: `man python` serves `/usr/share/man/man1/python3.12.1.gz`, Debian's system page, while `python` on `$PATH` resolves to mise's 3.14.7 and `man python3.14` has no page at all.
-  MANIAC renders that row `unverified`, which is honest but understates it -- the evidence to call it wrong is available on both sides, and this is the failure the tool exists to surface.
-  Corrected 2026-09-16 after checking: the page's roff header carries no version at all -- it is `.TH PYTHON "1"`, name and section only -- so a roff-header verifier cannot reach this case and an earlier revision of this item claiming otherwise was wrong.
-  The evidence that does exist is package ownership: `dpkg-query -S` names `python3.12-minimal` as the page's owner, while the binary's installation record says package `python`, version `3.14.7`.
-  `verify_external_page` already reads exactly that and already returns `UNVERIFIED` here, because ADR-0026 requires proving the page-owning package and the installation are the same package before any version comparison, and these genuinely are not.
-  So the real defect is narrower than a missing verifier: `UNVERIFIED` conflates "no evidence was available" with "positive evidence that another package owns this page".
-  The second is a stronger, actionable statement and the state ladder has no room for it.
-  That pairs with the existing conservative roff-header verifier item: version comparison is the same mechanism, applied to refute a page rather than to establish freshness.
-  Refuting needs a higher bar than confirming -- an unparsed header must stay `unverified`, never become a mismatch claim -- so decide what counts as unambiguous version evidence before wiring it to any state.
-  Do not generalize from a version-suffixed filename alone: `python3.12.1.gz` is legible here but names like `git-log.1` are not versions.
 
 - Show manifest drift in the `list` table.
   The structural link scan runs on every manifest read and `Read` carries a `links` map (ADR-0046), but nothing renders it, so `maniac list` still cannot say the manifest disagrees with the disk.
@@ -70,13 +54,6 @@ These are findings the work surfaced and deliberately did not take; they are fir
 - Reconstruct tier-1 direct provider links, or accept losing them.
   ADR-0046 refused: "not under `output_dir`" is not evidence of a provider root, and adopting one would let MANIAC replace and later remove a symlink the user owns.
   The cost is that a fully lost manifest loses tier-1 ownership entirely. Real evidence would be a target resolving beneath a live provider install root, which `sources.candidates` can already establish.
-- Decide whether uninstalling a companion page removes its whole group.
-  ADR-0042 shipped symmetric removal: uninstalling any member takes the unit, so `maniac uninstall eza_colors` removes `eza.1` too.
-  That is defensible -- they are one installation, and leaving the primary without its companions is the half-installed state grouping exists to prevent -- but it deletes a page the user did not name, which is the surprising half.
-  The asymmetry worth weighing: nobody installs `eza_colors`.
-  It is a manifest key derived from a page filename that arrived with `maniac install eza`, so typing `maniac uninstall eza_colors` is already a confused command, and answering it by silently removing `eza` teaches the wrong model.
-  Candidates: keep symmetric removal; refuse and redirect ("`eza_colors` is part of `eza`'s installation; run `maniac uninstall eza`"), which teaches the grouping; or remove symmetrically but report the full set first and confirm, which is what `apt` does for a dependency.
-  Refusing has a cost worth naming: a user whose primary entry is already gone would have no way to remove an orphaned companion, so whichever wins needs an escape hatch.
 - Prune a release group when its upstream drops a page.
   `Entry.group` (ADR-0042) records membership at install time and install has no pruning pass, so a member that a later release no longer ships stays recorded.
   Uninstall then looks for a page that upstream stopped shipping.
@@ -88,11 +65,6 @@ These are findings the work surfaced and deliberately did not take; they are fir
   The abandoned fact-cache branch neutralized both with an evidence-driven `clear_source_cache()` call, so dropping that branch leaves this unaddressed; a fix here needs its own invalidation boundary rather than that machinery.
 
 ## Refactors and architecture
-- Take a backup of a page's own bytes before an ordinary reinstall overwrites them, so a sibling page's later failure in the same release can restore them.
-  [ADR-0050](adr/0050-grouped-install-filesystem-undo.md)/[ADR-0051](adr/0051-grouped-install-undo-restore-fix.md) closed the grouped-reinstall-rollback `BUG:` that stood here for a first-time install and for a reinstall that displaces something *other than this same release's own prior page* -- the common cases.
-  One case is left open, by deliberate choice, not oversight: a version-bump reinstall reusing its own prior target takes no fresh backup at all (`_take_backup` carries the *existing* entry's backup pointer forward rather than copying the about-to-be-overwritten bytes), so if a sibling page then fails, there is nothing to restore the reused target's previous bytes from, and the manifest's old checksum still describes bytes the aborted reinstall already overwrote.
-  Fixing it means copying a page's own current bytes before every ordinary overwrite, on the chance a sibling page fails later in the same loop -- new I/O cost on every successful reinstall, paid for a benefit that only matters on the rare partial-failure path.
-  Worth doing only if MODIFIED reports from this residual case are measured to matter in practice; ADR-0051's Context has the full reasoning.
 - Install every page of a multi-page install-root release, not just the primary.
   `_try_install_root` uses `candidate.final_target` alone and ignores `candidate.pages`, so a tier-1 release ships its primary with no `group` recorded.
   Tier 2 installs the whole bundle as one unit (ADR-0042, ADR-0046); tier 1 does not, and nothing says why.
