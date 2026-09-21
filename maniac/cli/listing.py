@@ -8,6 +8,7 @@ flags means no filtering. There is no `--ok`, deliberately (ADR-0018): it would
 select exactly the rows needing no action.
 """
 
+from pathlib import Path
 from time import monotonic
 from typing import Annotated, Any
 
@@ -98,53 +99,44 @@ def _bare_names(rows: list[ToolRow]) -> list[str]:
     return list(seen)
 
 
-def _upstream_key(upstream: RepoSource | None) -> str | None:
-    """Hashable identity of a `RepoSource` by what the Upstream column renders.
-
-    `RepoSource.name` is deliberately excluded: it carries the *binary*
-    name, which is never displayed, so including it split groups that
-    render identically. `pandoc`, `pandoc-lua` and `pandoc-server` all
-    resolve to `jgm/pandoc` and showed as three separate rows purely
-    because their `name` fields differed. Two rows may collapse only when
-    every cell a reader can see agrees, so the key is exactly the rendered
-    cell and nothing behind it.
-    """
-    if upstream is None:
-        return None
-    return upstream.identity
-
-
 def _grouped_for_display(rows: list[ToolRow]) -> list[tuple[str, ToolRow]]:
-    """Collapse binaries sharing one (provider, package, state, source, upstream) into one row.
+    """Collapse binaries sharing one proven-identical target into one row (ADR-0049).
 
-    A solo group's label is its one tool's name, unchanged. A group of
-    several is the package name with a count suffix, e.g. `python (12
-    binaries)`, not every sibling's name comma-joined: that joined form is
-    unbounded -- a package can expose a dozen-plus binaries under one state
-    -- and blows up the Tool column's width, breaking the reader's ability
-    to track rows by eye down the table.
+    The key is `(provider, package, state, source, page_path, owning_package,
+    target_cluster)`. `page_path` and `owning_package` join the key because a
+    group can only exist where every member already agrees on both, so the
+    representative's Source link and owning-package label are correct by
+    construction. `target_cluster` (`maniac.listing.inventory`) refines a
+    `(provider, package)` partition further, by proven filesystem identity --
+    a shared `real_path`, or failing that a shared content hash -- so `python`,
+    `pip` and `idle3` no longer collapse merely for sharing a package.
 
-    Package identity is a display grouping only -- `pandoc`, `pandoc-lua`
-    and `pandoc-server` share one install root but are three separate `man`
-    lookups. Source and upstream join provider/package/state in the key so
-    two rows differing in either can never collapse into one that hides the
-    difference; the returned representative row's other fields (state,
-    source, upstream) are shared across the whole group by construction.
-
-    Known defect, left exactly as ADR-0018 found it: a solo group is
-    labelled by tool name and a multi-binary group by package name, so one
-    package split across two states can still render two rows a reader
-    cannot tell apart by label alone (`docs/BACKLOG.md`).
+    A solo group's label is its one tool's name. A group of several is
+    anchored on its shortest member's name, tie-broken alphabetically, with a
+    count suffix, e.g. `pip (3 binaries)` -- not every sibling's name
+    comma-joined: that joined form is unbounded -- a package can expose a
+    dozen-plus binaries under one state -- and blows up the Tool column's
+    width, breaking the reader's ability to track rows by eye down the table.
+    An unsuffixed name persists across an upgrade that bumps a
+    version-suffixed sibling (`python3.14` becomes `python3.15`), and is what
+    a reader actually types.
     """
-    groups: dict[tuple[str, str, ActionState, PageSource, Any], list[ToolRow]] = {}
-    order: list[tuple[str, str, ActionState, PageSource, Any]] = []
+    groups: dict[
+        tuple[str, str, ActionState, PageSource, Path | None, str | None, int | None],
+        list[ToolRow],
+    ] = {}
+    order: list[
+        tuple[str, str, ActionState, PageSource, Path | None, str | None, int | None]
+    ] = []
     for row in rows:
         key = (
             row.provider,
             row.package,
             row.state,
             row.source,
-            _upstream_key(row.upstream),
+            row.page_path,
+            row.owning_package,
+            row.target_cluster,
         )
         if key not in groups:
             order.append(key)
@@ -154,11 +146,13 @@ def _grouped_for_display(rows: list[ToolRow]) -> list[tuple[str, ToolRow]]:
     for key in order:
         group = groups[key]
         representative = group[0]
-        label = (
-            representative.tool
-            if len(group) == 1
-            else f"{representative.package} ({len(group)} binaries)"
-        )
+        if len(group) == 1:
+            label = representative.tool
+        else:
+            anchor = min(
+                (member.tool for member in group), key=lambda name: (len(name), name)
+            )
+            label = f"{anchor} ({len(group)} binaries)"
         rendered.append((label, representative))
     return rendered
 

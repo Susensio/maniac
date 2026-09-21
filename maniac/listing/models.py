@@ -74,6 +74,7 @@ class ToolRow:
     page_path: Path | None = None
     page_uri: str | None = None
     owning_package: str | None = None
+    target_cluster: int | None = None
 
 
 @dataclass(frozen=True, slots=True)

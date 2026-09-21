@@ -25,6 +25,7 @@ from maniac.listing import (
     classify,
     compute_rows,
 )
+from maniac.listing.inventory import _with_target_clusters
 from maniac.listing.upstream import resolve_upstream
 from maniac.manifest import Tier
 from maniac.models import Installation, RepoSource
@@ -93,6 +94,7 @@ def test_compute_rows_no_args_walks_providers_not_the_manpath(
             source=PageSource.VENDOR,
             upstream=None,
             page_path=page,
+            target_cluster=0,
         )
     ]
 
@@ -1868,3 +1870,95 @@ def test_resolve_upstream_mise_registry_failure_degrades_to_none(
 
 def test_resolve_upstream_none_without_provider_or_installation() -> None:
     assert resolve_upstream(_candidate(), config=Config()) is None
+
+
+# -- _with_target_clusters (ADR-0049) ------------------------------------------
+
+
+def _cluster_row(tool: str, package: str = "python") -> ToolRow:
+    return ToolRow(
+        tool=tool,
+        package=package,
+        provider="fake",
+        state=ActionState.OK,
+        source=PageSource.MANIAC,
+        upstream=None,
+    )
+
+
+def _installation_at(
+    binary: str, real_path: Path, package: str = "python"
+) -> Installation:
+    return Installation(
+        binary=binary,
+        bin_path=real_path.parent / binary,
+        real_path=real_path,
+        provider="fake",
+        package=package,
+        version="1.2.3",
+        root=real_path.parent,
+    )
+
+
+def test_target_clusters_unify_a_symlink_alias(tmp_path: Path) -> None:
+    """`python`/`python3` resolving through one symlink layer to the same file
+    share a `target_cluster`, no hashing needed."""
+    real_path = tmp_path / "python3.14"
+    real_path.write_bytes(b"binary")
+    candidates = [
+        _candidate(inst=_installation_at(name, real_path))
+        for name in ("python", "python3")
+    ]
+    rows = [_cluster_row(name) for name in ("python", "python3")]
+
+    clustered = _with_target_clusters(rows, candidates)
+
+    assert clustered[0].target_cluster == clustered[1].target_cluster
+
+
+def test_target_clusters_unify_byte_identical_distinct_files(tmp_path: Path) -> None:
+    """`pip`/`pip3`/`pip3.14` are three separate `console_scripts` files with
+    identical bytes; content hashing proves them one program."""
+    content = b"#!/usr/bin/env python\nfrom pip import main\n"
+    paths = [tmp_path / name for name in ("pip", "pip3", "pip3.14")]
+    for path in paths:
+        path.write_bytes(content)
+    candidates = [_candidate(inst=_installation_at(path.name, path)) for path in paths]
+    rows = [_cluster_row(path.name) for path in paths]
+
+    clustered = _with_target_clusters(rows, candidates)
+
+    assert len({row.target_cluster for row in clustered}) == 1
+
+
+def test_target_clusters_keep_distinct_content_apart(tmp_path: Path) -> None:
+    """Two distinct files with distinct content never merge -- there is no
+    evidence, at either rung, that they are one program."""
+    pydoc_path = tmp_path / "pydoc3.14"
+    pydoc_path.write_bytes(b"pydoc source")
+    config_path = tmp_path / "python3.14-config"
+    config_path.write_bytes(b"config source")
+    candidates = [
+        _candidate(inst=_installation_at(path.name, path))
+        for path in (pydoc_path, config_path)
+    ]
+    rows = [_cluster_row(path.name) for path in (pydoc_path, config_path)]
+
+    clustered = _with_target_clusters(rows, candidates)
+
+    assert clustered[0].target_cluster != clustered[1].target_cluster
+
+
+def test_target_clusters_leave_an_unclaimed_candidate_alone(tmp_path: Path) -> None:
+    """A candidate with no `Installation` (ADR-0020's unclaimed case) never
+    merges with anything via `target_cluster`."""
+    claimed = _candidate(
+        inst=_installation(binary="pip", package="python", root=tmp_path)
+    )
+    unclaimed = _candidate(tool="pip")
+    candidates = [claimed, unclaimed]
+    rows = [_cluster_row("pip"), _cluster_row("pip")]
+
+    clustered = _with_target_clusters(rows, candidates)
+
+    assert clustered[0].target_cluster != clustered[1].target_cluster

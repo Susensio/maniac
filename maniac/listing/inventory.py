@@ -11,9 +11,13 @@ is ready, deduplicated by probe identity so siblings finalize atomically
 (ADR-0025).
 """
 
-from collections.abc import Mapping
+import hashlib
+from collections.abc import Callable, Mapping
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass, field, replace
+from functools import cache
+from itertools import count
+from pathlib import Path
 from time import monotonic
 from types import MappingProxyType
 from typing import Any
@@ -287,6 +291,82 @@ def _complete_probe_futures(
         coordinator.complete_probe(key, future.result())
 
 
+@cache
+def _content_digest(path: Path) -> str | None:
+    """SHA-256 of a resolved file's bytes, or `None` if it cannot be read.
+
+    Only reached when `real_path` fails to unify two candidates already
+    sharing `(provider, package, page_path)` (ADR-0049) -- an ordinary
+    symlink alias never pays for this, and it is never persisted.
+    """
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        return None
+
+
+def _cluster_partition(
+    members: list[tuple[int, Path | None]], next_id: Callable[[], int]
+) -> dict[int, int]:
+    """Assign a target_cluster id to each (row index, real_path) pair in one partition.
+
+    Group by `real_path` first (`python`/`python3`/`python3.14`, one mise
+    symlink layer, unify here for free). A `real_path` that stays a
+    singleton is a proven-distinct *file*, not yet a proven-distinct
+    *program* -- hash it, and singletons sharing a hash merge (`pip`/`pip3`/
+    `pip3.14`: three `console_scripts` files, one program). A candidate with
+    no `Installation` (ADR-0020's unclaimed case) gets its own id untouched;
+    it never needed help distinguishing itself.
+    """
+    by_real_path: dict[Path, list[int]] = {}
+    assignment: dict[int, int] = {}
+    for index, real_path in members:
+        if real_path is None:
+            assignment[index] = next_id()
+            continue
+        by_real_path.setdefault(real_path, []).append(index)
+
+    singletons: list[tuple[Path, int]] = []
+    for real_path, indexes in by_real_path.items():
+        if len(indexes) > 1:
+            cid = next_id()
+            for i in indexes:
+                assignment[i] = cid
+        else:
+            singletons.append((real_path, indexes[0]))
+
+    by_digest: dict[str, int] = {}
+    for real_path, index in singletons:
+        digest = _content_digest(real_path)
+        assignment[index] = (
+            next_id() if digest is None else by_digest.setdefault(digest, next_id())
+        )
+    return assignment
+
+
+def _with_target_clusters(
+    rows: list[ToolRow], candidates: list[Candidate]
+) -> list[ToolRow]:
+    """Attach each row's `target_cluster` (ADR-0049): refine `(provider, package)`
+    groups by proven shared identity, never merge across a `page_path` split
+    (a differing page already proves two different things regardless of what
+    the binaries resolve to).
+    """
+    partitions: dict[tuple[str, str, Path | None], list[tuple[int, Path | None]]] = {}
+    for index, row in enumerate(rows):
+        inst = candidates[index].installation
+        real_path = inst.real_path if inst is not None else None
+        partitions.setdefault((row.provider, row.package, row.page_path), []).append(
+            (index, real_path)
+        )
+
+    next_id = count().__next__
+    assignment: dict[int, int] = {}
+    for members in partitions.values():
+        assignment.update(_cluster_partition(members, next_id))
+    return [replace(row, target_cluster=assignment[i]) for i, row in enumerate(rows)]
+
+
 def compute_rows(
     tools: list[str] | None = None,
     config: Config | None = None,
@@ -378,4 +458,5 @@ def compute_rows(
         ),
         total_seconds=finished_at - started_at,
     )
+    rows = _with_target_clusters(rows, candidates)
     return rows

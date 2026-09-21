@@ -940,10 +940,11 @@ def test_cli_streaming_discards_the_live_frames_for_one_final_render(
     assert [row.tool for row in renders[0]] == ["gum"]
 
 
-def test_cli_streaming_groups_sibling_binaries_once_the_run_completes(
+def test_cli_streaming_keeps_siblings_apart_absent_proven_shared_target(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Unfiltered `list` ends in the same collapsed shape a filtered call has."""
+    """Sharing a package is not enough to collapse (ADR-0049): three distinct,
+    unreadable binaries under one package still render as three rows."""
     output = io.StringIO()
     monkeypatch.setattr(
         cli_module.console,
@@ -965,8 +966,11 @@ def test_cli_streaming_groups_sibling_binaries_once_the_run_completes(
     assert result.exit_code == 0
     final = output.getvalue()
     # Live frames are transient, so only the grouped table survives the run.
-    assert final.rindex("pandoc (3 binaries)") > final.rindex("Manpage Reachability")
-    assert "pandoc-lua" not in final[final.rindex("Manpage Reachability") :]
+    table = final[final.rindex("Manpage Reachability") :]
+    assert "pandoc" in table
+    assert "pandoc-lua" in table
+    assert "pandoc-server" in table
+    assert "pandoc (3 binaries)" not in table
 
 
 def test_cli_verbose_list_disables_streaming(
@@ -1368,7 +1372,26 @@ def test_grouped_for_display_many_siblings_render_as_package_and_count() -> None
 
     grouped = _grouped_for_display(rows)
     assert len(grouped) == 1
-    assert grouped[0][0] == "python (5 binaries)"
+    assert grouped[0][0] == "pip (5 binaries)"
+
+
+def test_grouped_for_display_label_tie_breaks_alphabetically() -> None:
+    """Two members tied on name length anchor the label on the alphabetically first."""
+    rows = [
+        ToolRow(
+            tool=name,
+            package="tool",
+            provider="mise",
+            state=ActionState.OK,
+            source=PageSource.MANIAC,
+            upstream=None,
+        )
+        for name in ("zeta", "alfa")
+    ]
+
+    grouped = _grouped_for_display(rows)
+    assert len(grouped) == 1
+    assert grouped[0][0] == "alfa (2 binaries)"
 
 
 def test_grouped_for_display_key_includes_source_and_upstream() -> None:
@@ -1423,9 +1446,9 @@ def test_grouped_for_display_siblings_collapse_despite_differing_reposource_name
     assert grouped[0][0] == "pandoc (3 binaries)"
 
 
-def test_grouped_for_display_differing_upstream_targets_still_split() -> None:
-    """The collapse above must not go too far: a different rendered target
-    is a visible difference and still separates rows."""
+def test_grouped_for_display_differing_page_path_still_splits(tmp_path: Path) -> None:
+    """A differing page already proves two different things (ADR-0049), even
+    when every other key component agrees."""
     rows = [
         ToolRow(
             tool="pandoc",
@@ -1433,7 +1456,8 @@ def test_grouped_for_display_differing_upstream_targets_still_split() -> None:
             provider="mise",
             state=ActionState.AVAILABLE,
             source=PageSource.VENDOR,
-            upstream=RepoSource(name="pandoc", target="jgm/pandoc", is_local=False),
+            upstream=None,
+            page_path=tmp_path / "pandoc.1",
         ),
         ToolRow(
             tool="pandoc-lua",
@@ -1441,7 +1465,62 @@ def test_grouped_for_display_differing_upstream_targets_still_split() -> None:
             provider="mise",
             state=ActionState.AVAILABLE,
             source=PageSource.VENDOR,
-            upstream=RepoSource(name="pandoc-lua", target="other/fork", is_local=False),
+            upstream=None,
+            page_path=tmp_path / "pandoc-lua.1",
+        ),
+    ]
+
+    assert len(_grouped_for_display(rows)) == 2
+
+
+def test_grouped_for_display_differing_owning_package_still_splits() -> None:
+    """A page's provable owner is part of the key (ADR-0049): two rows
+    disagreeing on it must never render one owning-package label for both."""
+    rows = [
+        ToolRow(
+            tool="pydoc3",
+            package="python",
+            provider="mise",
+            state=ActionState.OK,
+            source=PageSource.SYSTEM,
+            upstream=None,
+            owning_package="python3.12",
+        ),
+        ToolRow(
+            tool="python3-config",
+            package="python",
+            provider="mise",
+            state=ActionState.OK,
+            source=PageSource.SYSTEM,
+            upstream=None,
+            owning_package="libpython3.12-dev:amd64",
+        ),
+    ]
+
+    assert len(_grouped_for_display(rows)) == 2
+
+
+def test_grouped_for_display_differing_target_cluster_still_splits() -> None:
+    """Two proven-distinct programs sharing a package must never collapse,
+    even absent any other distinguishing field (ADR-0049)."""
+    rows = [
+        ToolRow(
+            tool="idle3",
+            package="python",
+            provider="mise",
+            state=ActionState.MISSING,
+            source=PageSource.NONE,
+            upstream=None,
+            target_cluster=1,
+        ),
+        ToolRow(
+            tool="pip",
+            package="python",
+            provider="mise",
+            state=ActionState.MISSING,
+            source=PageSource.NONE,
+            upstream=None,
+            target_cluster=2,
         ),
     ]
 
