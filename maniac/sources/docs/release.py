@@ -92,15 +92,25 @@ def _fetch_and_materialize_release_asset(
     if content is None:
         return _ProbeResult([], definitive)
     if direct:
-        page = pages._materialize_page(
-            probe.cache_dir, probe.source, tag, name, content
-        )
-        pages._record_page_uri(page, url)
-        return (
-            _ProbeResult([page], True)
-            if pages._valid_page(page, probe.binary_name)
-            else _ProbeResult([], False)
-        )
+        return _materialize_direct_asset(name, url, content, probe, tag)
+    return _materialize_archive_asset(content, probe, tag, url)
+
+
+def _materialize_direct_asset(
+    name: str, url: str, content: bytes, probe: _Probe, tag: str
+) -> _ProbeResult:
+    """Materialize a directly-matched manpage asset and wrap the outcome."""
+    page = pages._materialize_page(probe.cache_dir, probe.source, tag, name, content)
+    pages._record_page_uri(page, url)
+    if pages._valid_page(page, probe.binary_name):
+        return _ProbeResult([page], True)
+    return _ProbeResult([], False)
+
+
+def _materialize_archive_asset(
+    content: bytes, probe: _Probe, tag: str, url: str
+) -> _ProbeResult:
+    """Extract and materialize manpages from a release archive asset."""
     try:
         archive_pages = _manpages_from_release_archive(content, probe, tag, url)
     except (OSError, tarfile.TarError):
