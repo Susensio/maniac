@@ -165,14 +165,9 @@ These are findings the work surfaced and deliberately did not take; they are fir
   Its examples are additive; do not substitute it for authoritative option documentation.
 - Consider Arch Wiki integration/configuration prose only after a reliable per-command extraction boundary exists.
   It is additive, but task-oriented articles and redirects make raw retrieval insufficient.
-- Build a roff-header freshness verifier for external pages `dpkg` cannot own.
-  `verify_external_page` (`maniac/sources/packages.py`) only ever proves freshness through Debian package ownership; a page on a non-Debian system, or one `dpkg -S` cannot attribute, stays `unverified` regardless of what its own `.TH` header says.
-  Real headers on this machine carry a version in field 4 when they carry one at all -- `"Git 2\&.43\&.0"`, `"GNU coreutils 9.4"`, `"GitHub CLI 2.100.0"` -- but the format has no fixed standard: some tools omit the field (`.TH PYTHON "1"`, no version at all), quoting and escaping vary, and `grep`'s carries an unexpanded troff string macro (`\*(Dt`) in the date field rather than a literal.
-  Unparsed must stay `unverified`, never become a claim either way; do not attempt macro expansion.
-  Landed 2026-09-21 (`2f51106`): the display half of the older version of this item -- surfacing a page's provable Debian owner in place of bare `system` -- is done and does not wait on this.
-
 - Add external-page freshness adapters for Arch, RPM-family systems, and Homebrew only with a real fixture.
   Unsupported systems must remain `unverified`, never guessed.
+  Narrowed by `maniac/sources/roff.py` (`0518507`, 2026-09-21): a page's own `.TH`/`.Dt` header now proves freshness on any system when it carries a parseable version, no package manager involved, so this item is now specifically about pages whose header carries no version at all and therefore need a native package-manager fact to fall back on -- not about Arch/RPM/Homebrew support in general.
 - Implement an update path for stale MANIAC-managed pages, including whether installation overwrites in place and when a vendor backup is retaken.
   Re-derive pre-version manifest entries by reinstalling rather than stamping current versions; make the repair resumable.
 - Add a dense-table row guide only if it improves tested light and dark terminal output.
