@@ -1218,6 +1218,213 @@ def test_run_install_refuses_a_dangling_output_dir_symlink(
         run_install("tool", config=cfg)
 
 
+def test_run_install_tier1_refuses_a_resolved_destination_beyond_the_default_guess(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Tier 1 can resolve a destination the run-level `<tool>.1` guess never
+    checks -- a compressed page here (`tool.1.gz`) -- so a foreign page
+    there must still refuse before `install_manpage` runs, not just at
+    `_take_backup` deep inside it.
+    """
+    man_dir = tmp_path / "man1"
+    man_dir.mkdir(parents=True)
+    (man_dir / "tool.1.gz").write_bytes(b"vendor's own compressed page")
+    cfg = Config(
+        man_dir=man_dir,
+        cache_dir=tmp_path / "cache",
+        output_dir=tmp_path / "out",
+        intermediate_dir=tmp_path / "intermediate",
+        manifest_path=tmp_path / "state" / "installed.json",
+    )
+    page = tmp_path / "tool.1.gz"
+    page.write_bytes(b"upstream's own compressed page")
+    provider = _FakeProvider(local_docs=[page])
+    inst = _installation()
+    monkeypatch.setattr(
+        "maniac.orchestration.context.resolution.find_installation",
+        lambda name, bin_dir=None: (provider, inst),
+    )
+    monkeypatch.setattr(
+        "maniac.orchestration.install.install_manpage",
+        lambda *args, **kwargs: pytest.fail(
+            "install_manpage reached past the widened precheck"
+        ),
+    )
+
+    with pytest.raises(InstallRefused):
+        run_install("tool", config=cfg, no_synthesize=True)
+
+
+def test_run_install_tier1_force_bypasses_the_widened_precheck(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    man_dir = tmp_path / "man1"
+    man_dir.mkdir(parents=True)
+    (man_dir / "tool.1.gz").write_bytes(b"vendor's own compressed page")
+    cfg = Config(
+        man_dir=man_dir,
+        cache_dir=tmp_path / "cache",
+        output_dir=tmp_path / "out",
+        intermediate_dir=tmp_path / "intermediate",
+        manifest_path=tmp_path / "state" / "installed.json",
+    )
+    page = tmp_path / "tool.1.gz"
+    page.write_bytes(b"upstream's own compressed page")
+    provider = _FakeProvider(local_docs=[page])
+    inst = _installation()
+    monkeypatch.setattr(
+        "maniac.orchestration.context.resolution.find_installation",
+        lambda name, bin_dir=None: (provider, inst),
+    )
+    monkeypatch.setattr(
+        "maniac.orchestration.install.install_manpage",
+        lambda *args, **kwargs: InstallResult(
+            path=man_dir / "tool.1.gz", materialized=None, backup_path=None
+        ),
+    )
+
+    outcome = run_install("tool", config=cfg, no_synthesize=True, force=True)
+
+    assert outcome.tier is Tier.INSTALL_ROOT
+
+
+def test_run_install_tier1_does_not_refuse_an_owned_resolved_destination(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A destination MANIAC already owns at tier 1's resolved name (not the
+    default `<tool>.1` guess) must not trip the widened precheck.
+    """
+    from maniac.installer import draft_entry, install_manpage
+    from maniac.manifest import Tier as ManifestTier
+
+    man_dir = tmp_path / "man1"
+    man_dir.mkdir(parents=True)
+    cfg = Config(
+        man_dir=man_dir,
+        cache_dir=tmp_path / "cache",
+        output_dir=tmp_path / "out",
+        intermediate_dir=tmp_path / "intermediate",
+        manifest_path=tmp_path / "state" / "installed.json",
+    )
+    source = tmp_path / "source" / "tool.1.gz"
+    source.parent.mkdir()
+    source.write_bytes(b"maniac's own compressed page")
+    install_manpage(
+        source,
+        "tool",
+        draft_entry(ManifestTier.INSTALL_ROOT, "/root"),
+        target_dir=man_dir,
+        config=cfg,
+    )
+
+    page = tmp_path / "tool.1.gz"
+    page.write_bytes(b"upstream's own compressed page")
+    provider = _FakeProvider(local_docs=[page])
+    inst = _installation()
+    monkeypatch.setattr(
+        "maniac.orchestration.context.resolution.find_installation",
+        lambda name, bin_dir=None: (provider, inst),
+    )
+
+    outcome = run_install("tool", config=cfg, no_synthesize=True)
+
+    assert outcome.tier is Tier.INSTALL_ROOT
+
+
+def test_run_install_tier2_refuses_a_foreign_companion_destination(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Tier 2 installs a whole bundle (ADR-0042, ADR-0046): a foreign page
+    at a *companion's* resolved destination -- not just the primary's --
+    must refuse the whole group before any page is materialized.
+    """
+    cfg = _release_config(tmp_path)
+    primary = tmp_path / "eza.1"
+    companion = tmp_path / "eza_colors.5"
+    primary.write_text(".TH EZA 1\n", encoding="utf-8")
+    companion.write_text(".TH EZA_COLORS 5\n", encoding="utf-8")
+    vendor_companion = cfg.man_dir.parent / "man5" / companion.name
+    vendor_companion.parent.mkdir(parents=True)
+    vendor_companion.write_text("vendor page\n", encoding="utf-8")
+
+    source = RepoSource(name="eza", target="eza-community/eza", is_local=False)
+    provider = _FakeProvider(local_docs=[], source=source)
+    inst = _installation(version="0.23.5", binary="eza")
+    monkeypatch.setattr(
+        "maniac.orchestration.context.resolution.find_installation",
+        lambda name, bin_dir=None: (provider, inst),
+    )
+    monkeypatch.setattr(
+        "maniac.orchestration.install.discover_repo_manpages",
+        lambda *args, **kwargs: [primary, companion],
+    )
+    monkeypatch.setattr(
+        "maniac.lifecycle.link_manpath_entry",
+        lambda path, target: pytest.fail(
+            "no page should be linked once the precheck refuses the group"
+        ),
+    )
+
+    with pytest.raises(InstallRefused):
+        run_install("eza", no_synthesize=True, config=cfg)
+
+    assert manifest.load(config=cfg) == {}
+    assert vendor_companion.read_text(encoding="utf-8") == "vendor page\n"
+
+
+def test_run_install_tier2_force_bypasses_the_widened_precheck(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`--force` reaches the per-page tier-2 precheck the same way it
+    reaches the run-level one (`test_run_install_installs_all_anchored_release_manpages`
+    already covers the resulting install end to end).
+    """
+    cfg = _release_config(tmp_path)
+    primary = tmp_path / "eza.1"
+    companion = tmp_path / "eza_colors.5"
+    primary.write_text(".TH EZA 1\n", encoding="utf-8")
+    companion.write_text(".TH EZA_COLORS 5\n", encoding="utf-8")
+    vendor_companion = cfg.man_dir.parent / "man5" / companion.name
+    vendor_companion.parent.mkdir(parents=True)
+    vendor_companion.write_text("vendor page\n", encoding="utf-8")
+
+    source = RepoSource(name="eza", target="eza-community/eza", is_local=False)
+    provider = _FakeProvider(local_docs=[], source=source)
+    inst = _installation(version="0.23.5", binary="eza")
+    monkeypatch.setattr(
+        "maniac.orchestration.context.resolution.find_installation",
+        lambda name, bin_dir=None: (provider, inst),
+    )
+    monkeypatch.setattr(
+        "maniac.orchestration.install.discover_repo_manpages",
+        lambda *args, **kwargs: [primary, companion],
+    )
+
+    outcome = run_install("eza", no_synthesize=True, force=True, config=cfg)
+
+    assert outcome.tier is Tier.REPOSITORY
+    assert vendor_companion.read_text(encoding="utf-8") == ".TH EZA_COLORS 5\n"
+
+
+def test_run_install_tier2_does_not_refuse_an_owned_companion_destination(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A companion destination MANIAC already owns from a prior install of
+    the same release must not trip the per-page tier-2 precheck on a
+    reinstall.
+    """
+    cfg = _release_config(tmp_path)
+    pages = _eza_release(tmp_path)
+    _resolve_eza_release(monkeypatch, pages)
+
+    first = run_install("eza", no_synthesize=True, config=cfg)
+    assert first.tier is Tier.REPOSITORY
+
+    second = run_install("eza", no_synthesize=True, config=cfg)
+
+    assert second.tier is Tier.REPOSITORY
+
+
 def test_run_install_dry_run_tier3_writes_nothing(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

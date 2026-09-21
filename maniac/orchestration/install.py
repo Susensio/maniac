@@ -88,7 +88,7 @@ def run_install(
             "where the login shell can reach it first (ADR-0020)."
         )
 
-    _refuse_unmanaged_destination(tool_name, cfg, force=force)
+    _refuse_unmanaged_destination(cfg.man_dir / f"{tool_name}.1", cfg, force=force)
 
     tool = resolve_tool(tool_name, config=cfg, bin_dir=bin_dir)
 
@@ -148,19 +148,22 @@ def run_install(
     )
 
 
-def _refuse_unmanaged_destination(tool_name: str, cfg: Config, *, force: bool) -> None:
-    """Refuse before any tier runs when the default manpath destination is foreign.
+def _refuse_unmanaged_destination(dest_file: Path, cfg: Config, *, force: bool) -> None:
+    """Refuse when `dest_file` already holds a foreign or vendor page.
 
-    A fast, cheap version of `installer._take_backup`'s own check, run before
-    a refused install can crawl `--help`, write a context snapshot or call an
-    LLM for nothing.  It only knows the common destination (`<tool>.1`); a
-    tier that resolves a different one -- a different section, a compressed
-    extension, a page not named after the tool -- still passes here and
-    still meets `_take_backup`, which stays the enforcement point.
+    A fast, cheap version of `installer._take_backup`'s own check -- same
+    ownership rule, run early enough that a refused install never crawls
+    `--help`, writes a context snapshot, calls an LLM, or (tier 2) installs
+    part of a release only to undo it once a later page in the group turns
+    out foreign.  Each call site passes the destination(s) it is actually
+    about to write: the run-level call below still only knows tier 3's
+    default guess (`<tool>.1`, before anything is resolved), while
+    `_try_install_root` and `_try_repository` each call this again against
+    their own candidate's resolved destination(s) once that candidate is
+    built -- `_take_backup` stays the real enforcement point this previews.
     """
     if force:
         return
-    dest_file = cfg.man_dir / f"{tool_name}.1"
     if not (dest_file.exists() or dest_file.is_symlink()):
         return
     entries = manifest.load(cfg)
@@ -195,6 +198,10 @@ def _try_install_root(
     candidate = select_install_root(provider, inst)
     if candidate is None:
         return None
+    cfg = tool.config
+    _refuse_unmanaged_destination(
+        cfg.man_dir / candidate.final_target.name, cfg, force=force
+    )
     detail = "upstream manpage from install root"
     if inst.version:
         detail += f" ({inst.version})"
@@ -260,6 +267,13 @@ def _try_repository(
     )
     if candidate is None:
         return None
+    # Every page of the group installs somewhere (ADR-0042, ADR-0046) --
+    # a companion's own destination refuses the whole group before any of
+    # them is materialized, not only the primary's.
+    for page in candidate.pages:
+        _refuse_unmanaged_destination(
+            _manpage_directory(page.path, cfg) / page.path.name, cfg, force=force
+        )
 
     if dry_run:
         return InstallOutcome(
