@@ -120,6 +120,13 @@ def _grouped_for_display(rows: list[ToolRow]) -> list[tuple[str, ToolRow]]:
     An unsuffixed name persists across an upgrade that bumps a
     version-suffixed sibling (`python3.14` becomes `python3.15`), and is what
     a reader actually types.
+
+    Rows come back sorted by that rendered label, not by whichever member's
+    binary name happens to sort earliest -- `_build_inventory` sorts
+    candidates alphabetically by individual binary name, so without this a
+    group lands wherever its earliest-alphabetical member falls rather than
+    where its own label belongs (`docs/BACKLOG.md`, confirmed live
+    2026-09-16, unblocked by ADR-0049's narrower grouping).
     """
     groups: dict[
         tuple[str, str, ActionState, PageSource, Path | None, str | None, int | None],
@@ -154,6 +161,7 @@ def _grouped_for_display(rows: list[ToolRow]) -> list[tuple[str, ToolRow]]:
             )
             label = f"{anchor} ({len(group)} binaries)"
         rendered.append((label, representative))
+    rendered.sort(key=lambda pair: pair[0])
     return rendered
 
 

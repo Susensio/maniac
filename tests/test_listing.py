@@ -1527,6 +1527,34 @@ def test_grouped_for_display_differing_target_cluster_still_splits() -> None:
     assert len(_grouped_for_display(rows)) == 2
 
 
+def test_grouped_for_display_sorts_by_rendered_label_not_first_encounter() -> None:
+    """`docs/BACKLOG.md`'s sort-order defect: a group must land where its own
+    label sorts, not wherever its earliest-alphabetical member happened to be
+    discovered. `zoxide` is discovered before `alpha`, but must render after it."""
+    rows = [
+        ToolRow(
+            tool="zoxide",
+            package="zoxide",
+            provider="mise",
+            state=ActionState.OK,
+            source=PageSource.VENDOR,
+            upstream=None,
+        ),
+        ToolRow(
+            tool="alpha",
+            package="alpha",
+            provider="mise",
+            state=ActionState.OK,
+            source=PageSource.VENDOR,
+            upstream=None,
+        ),
+    ]
+
+    grouped = _grouped_for_display(rows)
+
+    assert [label for label, _ in grouped] == ["alpha", "zoxide"]
+
+
 # -- Rendering -----------------------------------------------------------------
 
 
