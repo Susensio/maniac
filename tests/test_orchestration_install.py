@@ -783,6 +783,48 @@ def test_try_repository_undo_leaves_an_unrelated_entrys_target_alone(
     assert set(manifest.load(config=cfg)) == {"other"}
 
 
+def test_try_repository_undo_restores_a_displaced_foreign_pages_backup(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """ADR-0051: undoing a page whose own call already succeeded must restore
+    its backup, not discard it.
+
+    `eza.1` displaces a foreign/vendor page under `--force`, so `eza.1`'s
+    `install_manpage` call takes a backup and its own link succeeds cleanly
+    -- `dest_file` is now a live symlink, not the pre-call state
+    `_restore_or_discard_backup`'s `_path_exists` check assumes.  A later
+    page in the same loop (`eza_colors.5`) then fails, and the loop-level
+    undo for `eza.1` must put the foreign page's original bytes back rather
+    than seeing the (dangling, once its target is discarded) symlink as
+    "still occupied" and deleting the one surviving backup -- the regression
+    `e2846dc` introduced and ADR-0051 fixes.
+    """
+    cfg = _release_config(tmp_path)
+    _resolve_eza_release(monkeypatch, _eza_release(tmp_path))
+    foreign_content = "vendor's own eza.1 page\n"
+    foreign_path = cfg.man_dir / "eza.1"
+    foreign_path.parent.mkdir(parents=True, exist_ok=True)
+    foreign_path.write_text(foreign_content, encoding="utf-8")
+
+    real_link = lifecycle.link_manpath_entry
+    linked = Counter()
+
+    def link_once_then_fail(path: Path, target: Path) -> None:
+        linked["calls"] += 1
+        if linked["calls"] > 1:
+            raise OSError("read-only manpath")
+        real_link(path, target)
+
+    monkeypatch.setattr("maniac.lifecycle.link_manpath_entry", link_once_then_fail)
+
+    with pytest.raises(OSError):
+        run_install("eza", no_synthesize=True, force=True, config=cfg)
+
+    assert manifest.load(config=cfg) == {}
+    assert not foreign_path.is_symlink()
+    assert foreign_path.read_text(encoding="utf-8") == foreign_content
+
+
 def test_no_synthesize_never_reaches_the_llm_when_no_tier_1_or_2_page_exists(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

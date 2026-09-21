@@ -22,7 +22,6 @@ from ..exceptions import ManiacError
 from ..installer import (
     InstallResult,
     _discard_materialized_target,
-    _restore_or_discard_backup,
     draft_entry,
     install_manpage,
 )
@@ -313,9 +312,7 @@ def _try_repository(
             # installed, in reverse order, before the transaction's own exit
             # discards the manifest side (ADR-0046).
             for result in reversed(installed):
-                _discard_materialized_target(result.materialized, cfg, baseline_entries)
-                if result.backup_path is not None:
-                    _restore_or_discard_backup(result.backup_path, result.path)
+                _undo_installed_page(result, cfg, baseline_entries)
             raise
     assert installed_path is not None
     detail = f"upstream manpage from repository ({inst.version})   [no synthesis]"
@@ -326,6 +323,26 @@ def _try_repository(
         source_path=candidate.primary.path,
         installed_path=installed_path,
     )
+
+
+def _undo_installed_page(
+    result: InstallResult, cfg: Config, baseline_entries: dict[str, manifest.Entry]
+) -> None:
+    """Undo one page whose own `install_manpage` call already succeeded (ADR-0051).
+
+    Unlike `installer._restore_or_discard_backup`, this never checks whether
+    `result.path` still exists: by construction, only a page whose call
+    returned successfully ever reaches here, so `link_manpath_entry` already
+    completed its atomic replace and `result.path` is definitely the live
+    symlink now being torn down, not a pre-call state to infer.  Checking
+    `_path_exists` here would see the dangling symlink `_discard_materialized_target`
+    is about to create and wrongly discard the one surviving backup instead
+    of restoring it.
+    """
+    _discard_materialized_target(result.materialized, cfg, baseline_entries)
+    result.path.unlink(missing_ok=True)
+    if result.backup_path is not None:
+        shutil.move(result.backup_path, result.path)
 
 
 def _manpage_directory(page: Path, cfg: Config) -> Path:
