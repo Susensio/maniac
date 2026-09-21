@@ -17,6 +17,8 @@ These are findings the work surfaced and deliberately did not take; they are fir
   `python (4 binaries) | unverified` -- two rows no label tells apart.
   Corrected 2026-09-21: the second row was `python (2 binaries)` when this was first written; it is 4 as of the same live inventory the sort-order item below measured.
   The Source cell for that row no longer reads `system` either -- see the linking item just below, which the 2026-09-21 owning-package work extended rather than resolved.
+  Design decided 2026-09-21: [ADR-0049](adr/0049-collapse-display-rows-on-proven-target-not-shared-package.md).
+  Unimplemented -- see `docs/STATE.md`.
 - Key a display group on its members' pages, or stop linking Source on a collapsed row.
   A group's Source hyperlink is the representative's page alone: `page_path` and `page_uri`
   are not in the group key, unlike state, source and upstream. On the live inventory 5 of 68
@@ -26,13 +28,17 @@ These are findings the work surfaced and deliberately did not take; they are fir
   table made it the common case.
   Widened 2026-09-21: the same representative-only reasoning now also mislabels the owning package the 2026-09-21 Source work (`2f51106`) added.
   `python (4 binaries) unverified` shows `python3.12-minimal` -- `python`'s own owner -- for the whole row, but the group's other members have different owners `dpkg` genuinely reports: `pydoc3` is owned by `python3.12`, `python3-config` by `libpython3.12-dev:amd64`.
-  One more field now inherited from the representative alone rather than checked for group-wide agreement; the grouping redesign under discussion this session (collapse only when members provably share one target, not merely one package) closes this the same way it closes the Source-link case, rather than needing a separate fix.
+  One more field now inherited from the representative alone rather than checked for group-wide agreement.
+  [ADR-0049](adr/0049-collapse-display-rows-on-proven-target-not-shared-package.md) (collapse only when members provably share one target, not merely one package) closes this the same way it closes the Source-link case, rather than needing a separate fix.
+  Unimplemented -- see `docs/STATE.md`.
 - Sort the table by the label it renders, not by first-encountered member.
   `_build_inventory` sorts candidates alphabetically by individual binary name (`inventory.py:105`), and `_grouped_for_display`'s `order` list preserves first-encounter position, so a group's row lands wherever its earliest-alphabetical *member* falls, not where its *label* would sort.
   Confirmed live 2026-09-16: the package-`python` binaries alphabetically interleave with every other package's, so `python (7 binaries) missing` and `python (4 binaries) unverified` land apart from each other and from where "python" belongs, with neither row adjacent to the other.
   Source read `system` for the second row when this was measured; it now reads `python3.12-minimal`, per the item above -- the sort defect itself is unaffected by that change.
   Distinct from the label-collision and Source-link items above -- this is display order carrying no relationship to the displayed label, not a labeling or linking defect.
-  Sorting after grouping, by the rendered label, is the direct fix; check it against the existing sibling-vs-alias grouping decision first, since narrowing what collapses changes how many distinct labels there are to sort.
+  Sorting after grouping, by the rendered label, is the direct fix.
+  [ADR-0049](adr/0049-collapse-display-rows-on-proven-target-not-shared-package.md) decided how narrow the grouping gets, which changes how many distinct labels there are to sort; implement against it, not against the pre-ADR grouping.
+  Unimplemented -- see `docs/STATE.md`.
 
 - Assert `lifecycle.link_manpath_entry`'s atomic replacement, not just its end state.
   Current tests pin that the manpath entry ends as the right symlink; nothing pins that a pre-existing entry is replaced atomically rather than unlinked and recreated.

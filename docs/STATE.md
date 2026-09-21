@@ -5,7 +5,10 @@ Landed work lives in `docs/adr/` and the git history; it is removed from here on
 
 ## Unfinished
 
-Nothing outstanding.
+[ADR-0049](adr/0049-collapse-display-rows-on-proven-target-not-shared-package.md) is accepted and unimplemented.
+It changes `_grouped_for_display`'s key (`maniac/cli/listing.py`) to `(provider, package, state, source, page_path, owning_package, target_cluster)`, and needs a new `target_cluster` computation over `Installation.real_path` and, as a fallback within one `(provider, package)` partition, a content hash.
+`docs/BACKLOG.md`'s label-collision, Source-link and owning-package-mismatch items close as a consequence once this lands; the sort-order item is unblocked by it but needs its own separate fix on top.
+Read the ADR before touching `_grouped_for_display` — it has the worked examples (`python`, `pip`, `pandoc`) and the two rejected alternatives, so the design does not get re-derived or re-decided.
 
 ## Live-system facts worth not rediscovering
 
