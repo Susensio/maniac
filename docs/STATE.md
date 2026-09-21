@@ -3,6 +3,15 @@
 Work committed to and not yet finished.
 Landed work lives in `docs/adr/` and the git history; it is removed from here once it lands, so this file stays short enough to read before starting.
 
+## Unfinished
+
+[ADR-0050](adr/0050-grouped-install-filesystem-undo.md) is accepted and unimplemented.
+It changes `install_manpage`'s return type from a bare `Path` to a small record carrying the materialized path plus the internal `Materialized`/backup state, so `orchestration.install._try_repository`'s per-page loop can undo an earlier page's filesystem write when a later page in the same release fails.
+The two other callers (`_try_install_root`, `pipeline.py`) need only a mechanical update to read `.path` off the same record.
+The one correctness trap: the loop must snapshot `entries` before its first `install_manpage` call and check `_discard_materialized_target`'s "still used" question against that snapshot, not against `txn.entries` at undo time -- the live dict already holds the very entries being undone by then.
+Read the ADR before touching `installer.py`'s undo primitives (`_discard_materialized_target`, `_restore_or_discard_backup`) or `_try_repository`'s loop -- it has the full investigation of why the checksum-healing alternative was rejected, so the design does not get re-derived or re-decided.
+Closes the `BUG:` marker at `orchestration/install.py:279` and its `docs/BACKLOG.md` item once it lands.
+
 ## Live-system facts worth not rediscovering
 
 Cross-host redirect stripping cannot be exercised end to end, and this is not a gap to close.
