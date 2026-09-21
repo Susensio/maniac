@@ -1425,6 +1425,79 @@ def test_run_install_tier2_does_not_refuse_an_owned_companion_destination(
     assert second.tier is Tier.REPOSITORY
 
 
+def test_run_install_reinstall_prunes_a_page_the_new_release_no_longer_ships(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A group member absent from a fresh release's pages is pruned (backlog:
+    "Prune a release group when its upstream drops a page").
+
+    `eza` ships three pages once, then a later release of the same tool
+    (discovered through the same primary) drops `eza_colors-explanation`.
+    Reinstalling must forget that page's manifest entry and remove its
+    manpath link, the same cleanup `_uninstall_group` gives a removed
+    member -- through the real reinstall path, not a hand-built manifest.
+    """
+    cfg = _release_config(tmp_path)
+    pages = _eza_release(tmp_path)
+    _resolve_eza_release(monkeypatch, pages)
+
+    run_install("eza", no_synthesize=True, config=cfg)
+    dropped_path = cfg.man_dir.parent / "man5" / "eza_colors-explanation.5"
+    assert dropped_path.exists()
+    assert manifest.lookup("eza_colors-explanation", config=cfg) is not None
+
+    pages.pop()  # upstream's next release drops eza_colors-explanation.5
+    outcome = run_install("eza", no_synthesize=True, config=cfg)
+
+    assert outcome.tier is Tier.REPOSITORY
+    assert manifest.lookup("eza_colors-explanation", config=cfg) is None
+    assert not dropped_path.exists()
+    kept_entries = manifest.load(config=cfg)
+    assert set(kept_entries) == {"eza", "eza_colors"}
+    assert kept_entries["eza"].group == "eza"
+    assert kept_entries["eza_colors"].group == "eza"
+
+
+def test_run_install_reinstall_prunes_a_dropped_page_restoring_its_vendor_backup(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A pruned member that had displaced a vendor page gets that page back,
+    exactly as `_uninstall_group` restores a removed member's backup.
+    """
+    cfg = _release_config(tmp_path)
+    pages = _eza_release(tmp_path)
+    dropped_dest = cfg.man_dir.parent / "man5" / "eza_colors-explanation.5"
+    dropped_dest.parent.mkdir(parents=True)
+    dropped_dest.write_text("vendor page\n", encoding="utf-8")
+    _resolve_eza_release(monkeypatch, pages)
+
+    run_install("eza", no_synthesize=True, force=True, config=cfg)
+    assert manifest.lookup("eza_colors-explanation", config=cfg) is not None
+
+    pages.pop()
+    run_install("eza", no_synthesize=True, config=cfg)
+
+    assert manifest.lookup("eza_colors-explanation", config=cfg) is None
+    assert dropped_dest.read_text(encoding="utf-8") == "vendor page\n"
+
+
+def test_run_install_reinstall_with_the_same_pages_prunes_nothing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A release that still ships everything it shipped before prunes no member."""
+    cfg = _release_config(tmp_path)
+    pages = _eza_release(tmp_path)
+    _resolve_eza_release(monkeypatch, pages)
+
+    run_install("eza", no_synthesize=True, config=cfg)
+    before = manifest.load(config=cfg)
+
+    run_install("eza", no_synthesize=True, config=cfg)
+
+    after = manifest.load(config=cfg)
+    assert set(after) == set(before) == {"eza", "eza_colors", "eza_colors-explanation"}
+
+
 def test_run_install_dry_run_tier3_writes_nothing(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

@@ -22,6 +22,8 @@ from ..exceptions import ManiacError
 from ..installer import (
     InstallResult,
     _discard_materialized_target,
+    _remove_orphaned_roff,
+    _remove_recorded_manpage,
     draft_entry,
     install_manpage,
 )
@@ -335,6 +337,8 @@ def _try_repository(
         for result in installed:
             if result.attempt_backup and result.backup_path is not None:
                 result.backup_path.unlink(missing_ok=True)
+        kept = {manpage_owner(page.path) for page in candidate.pages}
+        _prune_dropped_group_members(group, kept, txn, cfg)
     assert installed_path is not None
     detail = f"upstream manpage from repository ({inst.version})   [no synthesis]"
     return InstallOutcome(
@@ -344,6 +348,45 @@ def _try_repository(
         source_path=candidate.primary.path,
         installed_path=installed_path,
     )
+
+
+def _prune_dropped_group_members(
+    group: str, kept: set[str], txn: manifest.Transaction, cfg: Config
+) -> None:
+    """Forget a group member this reinstall's release no longer ships.
+
+    `group` names the primary just (re)installed by `_try_repository`;
+    `kept` is the manifest key of every page that install actually put
+    down this time. An entry still carrying `group` but missing from
+    `kept` was recorded by an earlier release of the same upstream that
+    shipped a page this one has dropped -- left alone, the manifest would
+    go on naming a page uninstall can never find (docs/BACKLOG.md, "Prune
+    a release group when its upstream drops a page"). Cleaned up through
+    the same `_remove_recorded_manpage`/`_remove_orphaned_roff` pair
+    `_uninstall_group` uses on a removed member, so a retargeted link is
+    left in place exactly as uninstall would leave it (`_is_modified`),
+    and lands with the rest of this reinstall in the one write `txn`
+    commits at exit -- nothing here writes on its own.
+    """
+    dropped = [
+        member
+        for member, entry in txn.entries.items()
+        if entry.group == group and member not in kept
+    ]
+    removed_paths: list[Path] = []
+    changed_paths: list[Path] = []
+    restored_paths: list[Path] = []
+    for member in dropped:
+        entry, _foreign, kept_modified = _remove_recorded_manpage(
+            member,
+            txn,
+            removed_paths=removed_paths,
+            changed_paths=changed_paths,
+            restored_paths=restored_paths,
+        )
+        if kept_modified:
+            continue
+        _remove_orphaned_roff(member, cfg, entry, removed_paths)
 
 
 def _undo_installed_page(
