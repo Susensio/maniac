@@ -25,7 +25,8 @@ from maniac.listing import (
     classify,
     compute_rows,
 )
-from maniac.listing.inventory import _with_target_clusters
+from maniac.listing.classification import provider_target_freshness
+from maniac.listing.inventory import _build_inventory, _with_target_clusters
 from maniac.listing.upstream import resolve_upstream
 from maniac.manifest import Entry, Tier
 from maniac.models import Installation, RepoSource
@@ -2038,6 +2039,147 @@ def test_target_clusters_keep_distinct_content_apart(tmp_path: Path) -> None:
     clustered = _with_target_clusters(rows, candidates)
 
     assert clustered[0].target_cluster != clustered[1].target_cluster
+
+
+# -- provider_target_freshness: a provider-owned target's own verdict -------
+
+
+class _FakeDirectPageProvider(_FakeProvider):
+    """A `DirectPageProvider`-conforming provider with a fixed verdict."""
+
+    def __init__(self, current: bool, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._current = current
+
+    def direct_page_target(self, inst: Installation, page: Path) -> Path | None:
+        return None
+
+    def is_direct_page_target_current(self, inst: Installation, target: Path) -> bool:
+        return self._current
+
+
+def test_provider_target_freshness_with_no_installation_is_none() -> None:
+    candidate = _candidate(provider=_FakeDirectPageProvider(True), inst=None)
+
+    assert provider_target_freshness(candidate, Path("/target")) is None
+
+
+def test_provider_target_freshness_with_no_target_is_none() -> None:
+    candidate = _candidate(provider=_FakeDirectPageProvider(True), inst=_installation())
+
+    assert provider_target_freshness(candidate, None) is None
+
+
+def test_provider_target_freshness_needs_a_direct_page_provider() -> None:
+    """A provider that does not implement `DirectPageProvider` never answers."""
+    candidate = _candidate(provider=_FakeProvider(), inst=_installation())
+
+    assert provider_target_freshness(candidate, Path("/target")) is None
+
+
+def test_provider_target_freshness_delegates_to_the_provider() -> None:
+    fresh = _candidate(provider=_FakeDirectPageProvider(True), inst=_installation())
+    stale = _candidate(provider=_FakeDirectPageProvider(False), inst=_installation())
+
+    assert provider_target_freshness(fresh, Path("/target")) is True
+    assert provider_target_freshness(stale, Path("/target")) is False
+
+
+# -- _build_inventory: named-tools resolution vs. discovery walk ------------
+
+
+def test_build_inventory_with_no_tools_walks_and_sorts_discovery(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider_b = _FakeProvider(name="b")
+    provider_a = _FakeProvider(name="a")
+    inst_b = _installation(binary="bbb")
+    inst_a = _installation(binary="aaa")
+    monkeypatch.setattr(
+        "maniac.listing.inventory.resolution.enumerate_installations",
+        lambda on_start=None, on_scan=None: [
+            (provider_b, inst_b),
+            (provider_a, inst_a),
+        ],
+    )
+    observer = RecordingObserver()
+
+    candidates, discovered = _build_inventory(None, observer)
+
+    assert discovered is True
+    assert [c.tool for c in candidates] == ["aaa", "bbb"]
+    assert candidates[0].provider is provider_a
+    assert candidates[1].provider is provider_b
+
+
+def test_build_inventory_no_tools_reports_discovery_progress(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_enumerate(on_start, on_scan):
+        on_start(1)
+        on_scan()
+        return [(_FakeProvider(), _installation())]
+
+    monkeypatch.setattr(
+        "maniac.listing.inventory.resolution.enumerate_installations", fake_enumerate
+    )
+    observer = RecordingObserver()
+
+    _build_inventory(None, observer)
+
+    assert observer.discovery_totals == [1]
+    assert observer.discovery_scans == 1
+
+
+def test_build_inventory_with_tools_resolves_each_by_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = _FakeProvider()
+    inst = _installation(binary="bash")
+    monkeypatch.setattr(
+        "maniac.listing.inventory.resolution.find_installation",
+        lambda name, bin_dir=None: (provider, inst) if name == "bash" else None,
+    )
+
+    candidates, discovered = _build_inventory(["bash", "unknown"], RecordingObserver())
+
+    assert discovered is False
+    assert [c.tool for c in candidates] == ["bash", "unknown"]
+    assert candidates[0].provider is provider
+    assert candidates[0].installation is inst
+    assert candidates[1].provider is None
+    assert candidates[1].installation is None
+
+
+def test_build_inventory_with_tools_deduplicates_repeats(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "maniac.listing.inventory.resolution.find_installation",
+        lambda name, bin_dir=None: None,
+    )
+
+    candidates, discovered = _build_inventory(["uv", "uv"], RecordingObserver())
+
+    assert discovered is False
+    assert [c.tool for c in candidates] == ["uv"]
+
+
+def test_build_inventory_with_tools_never_walks_discovery(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "maniac.listing.inventory.resolution.find_installation",
+        lambda name, bin_dir=None: None,
+    )
+    monkeypatch.setattr(
+        "maniac.listing.inventory.resolution.enumerate_installations",
+        lambda on_start=None, on_scan=None: pytest.fail(
+            "named tools must not walk discovery"
+        ),
+    )
+
+    _build_inventory(["uv"], RecordingObserver())
 
 
 def test_target_clusters_leave_an_unclaimed_candidate_alone(tmp_path: Path) -> None:

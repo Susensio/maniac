@@ -9,7 +9,13 @@ from maniac import lifecycle, manifest
 from maniac.config import Config
 from maniac.models import DocFile, Installation, RepoSource
 from maniac.orchestration.context import ResolvedTool
-from maniac.orchestration.install import InstallRefused, Tier, run_install
+from maniac.orchestration.install import (
+    InstallRefused,
+    Tier,
+    _try_install_root,
+    _try_repository,
+    run_install,
+)
 from maniac.sources import loginpath
 from maniac.sources.providers.base import Provider, SourceResolver
 from maniac.sources.providers.registry import registry
@@ -254,6 +260,159 @@ def test_run_install_dry_run_tier2_writes_nothing(
     assert not cfg.output_dir.exists()
     assert not cfg.cache_dir.exists()
     assert manifest.load(cfg) == {}
+
+
+# -- _try_install_root: tier 1 in isolation ----------------------------------
+
+
+def _resolved_tool(
+    tmp_path: Path,
+    *,
+    provider: _FakeProvider | None,
+    inst: Installation | None,
+    cfg: Config | None = None,
+) -> ResolvedTool:
+    cfg = cfg or Config(
+        man_dir=tmp_path / "man1",
+        cache_dir=tmp_path / "cache",
+        output_dir=tmp_path / "output",
+        manifest_path=tmp_path / "state" / "installed.json",
+    )
+    return ResolvedTool(
+        tool_name=inst.binary if inst is not None else "tool",
+        config=cfg,
+        cache_dir=cfg.cache_dir,
+        provider=provider,
+        installation=inst,
+    )
+
+
+def test_try_install_root_with_no_provider_is_none(tmp_path: Path) -> None:
+    tool = _resolved_tool(tmp_path, provider=None, inst=None)
+
+    assert _try_install_root(tool, force=False, dry_run=False) is None
+
+
+def test_try_install_root_with_no_candidate_is_none(tmp_path: Path) -> None:
+    provider = _FakeProvider(local_docs=[])
+    tool = _resolved_tool(tmp_path, provider=provider, inst=_installation())
+
+    assert _try_install_root(tool, force=False, dry_run=False) is None
+
+
+def test_try_install_root_dry_run_reports_the_page_without_installing(
+    tmp_path: Path,
+) -> None:
+    page = tmp_path / "tool.1"
+    page.write_text(".TH TOOL 1\n", encoding="utf-8")
+    provider = _FakeProvider(local_docs=[page])
+    tool = _resolved_tool(tmp_path, provider=provider, inst=_installation())
+
+    outcome = _try_install_root(tool, force=False, dry_run=True)
+
+    assert outcome is not None
+    assert outcome.tier is Tier.INSTALL_ROOT
+    assert outcome.installed_path is None
+    assert outcome.source_path == page
+    assert "[dry run, no synthesis]" in outcome.detail
+
+
+def test_try_install_root_installs_the_page(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    page = tmp_path / "tool.1"
+    page.write_text(".TH TOOL 1\n", encoding="utf-8")
+    provider = _FakeProvider(local_docs=[page])
+    tool = _resolved_tool(tmp_path, provider=provider, inst=_installation())
+    monkeypatch.setattr(
+        "maniac.orchestration.install.install_manpage",
+        lambda *args, **kwargs: Path("/installed/tool.1"),
+    )
+
+    outcome = _try_install_root(tool, force=False, dry_run=False)
+
+    assert outcome is not None
+    assert outcome.tier is Tier.INSTALL_ROOT
+    assert outcome.installed_path == Path("/installed/tool.1")
+    assert "[no synthesis]" in outcome.detail
+
+
+# -- _try_repository: tier 2 in isolation ------------------------------------
+
+
+def test_try_repository_without_an_installed_version_is_none(tmp_path: Path) -> None:
+    source = RepoSource(name="tool", target="owner/tool", is_local=False)
+    provider = _FakeProvider(source=source)
+    tool = _resolved_tool(tmp_path, provider=provider, inst=_installation(version=None))
+
+    assert _try_repository(tool, force=False, dry_run=False) is None
+
+
+def test_try_repository_without_a_documentation_source_is_none(tmp_path: Path) -> None:
+    provider = _FakeProvider(source=None)
+    tool = _resolved_tool(tmp_path, provider=provider, inst=_installation())
+
+    assert _try_repository(tool, force=False, dry_run=False) is None
+
+
+def test_try_repository_with_no_candidate_is_none(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    source = RepoSource(name="tool", target="owner/tool", is_local=False)
+    provider = _FakeProvider(source=source)
+    tool = _resolved_tool(tmp_path, provider=provider, inst=_installation())
+    monkeypatch.setattr(
+        "maniac.orchestration.install.discover_repo_manpages",
+        lambda *args, **kwargs: [],
+    )
+
+    assert _try_repository(tool, force=False, dry_run=False) is None
+
+
+def test_try_repository_dry_run_reports_the_page_without_installing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    source = RepoSource(name="tool", target="owner/tool", is_local=False)
+    provider = _FakeProvider(source=source)
+    page = tmp_path / "tool.1"
+    page.write_text(".TH TOOL 1\n", encoding="utf-8")
+    tool = _resolved_tool(tmp_path, provider=provider, inst=_installation())
+    monkeypatch.setattr(
+        "maniac.orchestration.install.discover_repo_manpages",
+        lambda *args, **kwargs: [page],
+    )
+
+    outcome = _try_repository(tool, force=False, dry_run=True)
+
+    assert outcome is not None
+    assert outcome.tier is Tier.REPOSITORY
+    assert outcome.installed_path is None
+    assert outcome.source_path == page
+    assert "[dry run, no synthesis]" in outcome.detail
+
+
+def test_try_repository_installs_the_page(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    source = RepoSource(name="tool", target="owner/tool", is_local=False)
+    provider = _FakeProvider(source=source)
+    page = tmp_path / "tool.1"
+    page.write_text(".TH TOOL 1\n", encoding="utf-8")
+    tool = _resolved_tool(tmp_path, provider=provider, inst=_installation())
+    monkeypatch.setattr(
+        "maniac.orchestration.install.discover_repo_manpages",
+        lambda *args, **kwargs: [page],
+    )
+    monkeypatch.setattr(
+        "maniac.orchestration.install.install_manpage",
+        lambda *args, **kwargs: Path("/installed/tool.1"),
+    )
+
+    outcome = _try_repository(tool, force=False, dry_run=False)
+
+    assert outcome is not None
+    assert outcome.tier is Tier.REPOSITORY
+    assert outcome.installed_path == Path("/installed/tool.1")
 
 
 def test_run_install_uses_the_exact_tmux_documentation_repository(
