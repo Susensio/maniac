@@ -24,10 +24,17 @@ def compile_to_man(
     output_file: str | Path,
     tool_name: str | None = None,
     model: str | None = None,
+    version: str | None = None,
     timeout: int | None = None,
     config: Config | None = None,
 ) -> bool:
-    """Compile Markdown manpage to roff format using pandoc with provenance header."""
+    """Compile Markdown manpage to roff format using pandoc with provenance header.
+
+    `version`, when known at generation time, becomes pandoc's `footer`
+    metadata -- the 4th field of `.TH`, where `git`, `coreutils` and `gh`
+    each put their own version on this machine. Left unset, pandoc leaves
+    the field empty, same as before this parameter existed.
+    """
     cfg = config or Config()
     out_path = Path(output_file)
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -41,6 +48,11 @@ def compile_to_man(
         return False
 
     effective_timeout = timeout if timeout is not None else cfg.timeout_pandoc
+    footer_args = (
+        ["--metadata", f"footer={tool_name or out_path.stem} {version}"]
+        if version
+        else []
+    )
     try:
         res = subprocess.run(
             [
@@ -50,6 +62,7 @@ def compile_to_man(
                 "markdown-smart",
                 "-t",
                 "man",
+                *footer_args,
                 "-o",
                 str(out_path),
             ],

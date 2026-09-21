@@ -53,6 +53,66 @@ def test_compile_to_man_with_pandoc(
     assert "Model: Gemini 3.7 Flash" in content
 
 
+def test_compile_to_man_passes_version_as_footer_metadata(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(shutil, "which", lambda name: "/usr/bin/pandoc")
+
+    def fake_run(*args: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        cmd_args = args[0]
+        assert "--metadata" in cmd_args
+        assert cmd_args[cmd_args.index("--metadata") + 1] == "footer=tool 1.2.3"
+        out_file = Path(cmd_args[cmd_args.index("-o") + 1])
+        out_file.write_text(".TH TOOL 1", encoding="utf-8")
+        return subprocess.CompletedProcess(
+            args=cmd_args, returncode=0, stdout="", stderr=""
+        )
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    out_file = tmp_path / "tool.1"
+    success = compile_to_man(
+        "% TOOL(1)\n# NAME\ntool",
+        out_file,
+        tool_name="tool",
+        version="1.2.3",
+    )
+    assert success
+
+
+def test_compile_to_man_without_version_omits_footer_metadata(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(shutil, "which", lambda name: "/usr/bin/pandoc")
+
+    def fake_run(*args: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        cmd_args = args[0]
+        assert "--metadata" not in cmd_args
+        out_file = Path(cmd_args[cmd_args.index("-o") + 1])
+        out_file.write_text(".TH TOOL 1", encoding="utf-8")
+        return subprocess.CompletedProcess(
+            args=cmd_args, returncode=0, stdout="", stderr=""
+        )
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    out_file = tmp_path / "tool.1"
+    success = compile_to_man("% TOOL(1)\n# NAME\ntool", out_file, tool_name="tool")
+    assert success
+
+
+def test_compile_to_man_stamps_th_footer_field_with_real_pandoc(
+    tmp_path: Path,
+) -> None:
+    if not shutil.which("pandoc"):
+        pytest.skip("pandoc not available in environment")
+
+    out_file = tmp_path / "gum.1"
+    md_text = "% GUM(1) | User Commands\n\n# NAME\ngum - test\n"
+    success = compile_to_man(md_text, out_file, tool_name="gum", version="0.14.5")
+    assert success
+    content = out_file.read_text(encoding="utf-8")
+    assert '.TH "GUM" "1" "" "gum 0.14.5" "User Commands"' in content
+
+
 def test_compile_to_man_preserves_double_hyphens(tmp_path: Path) -> None:
     if not shutil.which("pandoc"):
         pytest.skip("pandoc not available in environment")

@@ -102,11 +102,13 @@ def synthesize(
 
     roff_file = out_dir / f"{tool.tool_name}.1"
     selected_model = cfg.model_for_metadata(model)
+    recorded_version = _recorded_version(tool, matched=version_matched)
     compiled = compile_to_man(
         markdown_content,
         roff_file,
         tool_name=tool.tool_name,
         model=selected_model,
+        version=recorded_version,
         config=cfg,
     )
     actual_roff_path = roff_file if compiled else None
@@ -119,7 +121,7 @@ def synthesize(
             draft_entry(
                 Tier.SYNTHESIS,
                 selected_model or "unknown",
-                version=_recorded_version(tool, matched=version_matched),
+                version=recorded_version,
             ),
             force=force,
             config=cfg,
