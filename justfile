@@ -1,6 +1,7 @@
 # Maniac Developer Workflow Justfile
 
 set shell := ["bash", "-uc"]
+set positional-arguments := true
 
 # Show available developer recipes
 default:
@@ -8,7 +9,9 @@ default:
 
 # Run test suite
 test *args:
-    uv run pytest {{ args }}
+    #!/usr/bin/env bash
+    set -euo pipefail
+    uv run pytest "$@"
 
 # Run ruff linter
 lint:
