@@ -8,17 +8,8 @@ Open work with no single line to mark.
 Yielded by the 2026-09-14 architecture wave (ADR-0033, ADR-0034, ADR-0035).
 These are findings the work surfaced and deliberately did not take; they are first, not filed.
 
-### Correctness
-
-- Assert `lifecycle.link_manpath_entry`'s atomic replacement, not just its end state.
-  Current tests pin that the manpath entry ends as the right symlink; nothing pins that a pre-existing entry is replaced atomically rather than unlinked and recreated.
-  Needs an interleaving harness the project does not yet have.
-
 ### Structure
 
-- Thread probe definitiveness back as a return value instead of `docs.cache`'s module-level `_lookup_state` thread-local.
-  ADR-0033's split made that cross-module channel visible without removing it: `cache` writes it and `repository` reads it.
-  Removing it touches every probe signature, so it was left out of the split deliberately.
 - Decide whether `Entry` splits into a descriptive draft and a written record.
   Surfaced by collapsing `install_manpage`'s parameter list into an `Entry` (`62b6881`, 13 arguments to 8).
   `path` and `checksum` are `Entry` fields no caller can know at call time -- `install_manpage` resolves the destination and hashes the file itself -- so `draft_entry` fills them with inert placeholders (`Path()`, `""`) that `dataclasses.replace` overwrites before anything reads or stores them.
@@ -28,9 +19,6 @@ These are findings the work surfaced and deliberately did not take; they are fir
 
 ## Bugs and correctness
 
-- Distinguish a definitive tier-2 absence from a transient repository probe failure.
-  The latter must not silently fall through to synthesis, which can conceal a wrong repository or a network, tag, tree, release, or validation failure.
-  Report the consulted repository and tier immediately; then decide between interactive confirmation and uniform refusal while preserving ordinary synthesis fallback and the explicit `--no-synthesize` opt-out.
 - Distinguish a wrong documentation repository from one that legitimately has no manpage.
   Flag-inventory overlap and whether the repository contains implementation source are possible evidence, but absence is a normal synthesis fallback and must not be treated as proof of misresolution.
 - Drop Mise-activated `$PATH` entries on a degraded login-path fallback, as venv and conda entries already are.
@@ -40,12 +28,6 @@ These are findings the work surfaced and deliberately did not take; they are fir
   `__MISE_ORIG_PATH` records the entire pre-activation `$PATH` and is the plausible evidence source -- a live `mise activate bash` on this machine exports it alongside `MISE_SHELL`, `__MISE_EXE` and `__MISE_DIFF`.
   Using it is Mise-specific, so decide whether the fallback gets per-provider evidence adapters or stays generic.
   Shim resolution remains unexercised: this machine has no populated shim directory, and `mise which -C $HOME` is cwd-sensitive and needs ADR-0029-style root validation.
-
-- Invalidate the process-local provider memoization that hides a mid-run filesystem change.
-  `providers/uv.py`'s `_local_editable_dir` and `_installed_version` are `functools.cache`d by install root, and `providers/pipx.py`'s `find_distribution_metadata` is `functools.cache`d by `(root, package)`, neither with any invalidation.
-  Reproduced on 2026-09-15: a uv editable checkout appearing after an earlier lookup still reads `None`, and a `METADATA` version rewritten between two calls for one root still reads the first value.
-  Within a single `list` run the inputs rarely change, so this is latent rather than observed in normal use; it matters for a long-lived process and for any caller that installs and then re-reads.
-  The abandoned fact-cache branch neutralized both with an evidence-driven `clear_source_cache()` call, so dropping that branch leaves this unaddressed; a fix here needs its own invalidation boundary rather than that machinery.
 
 ## Refactors and architecture
 - Install every page of a multi-page install-root release, not just the primary.
@@ -103,6 +85,15 @@ These are findings the work surfaced and deliberately did not take; they are fir
   The installation surface does not transfer directly, though: manpages have one convention (`MANPATH`), completions have three, one per shell (`~/.local/share/bash-completion/completions/`, zsh's `fpath`, fish's `~/.config/fish/completions/`), so this is closer in shape to a second product than an extension of `install_manpage`.
 
 ## Settled exclusions
+
+- Do not build an interleaving harness to assert `lifecycle.link_manpath_entry`'s replacement is atomic.
+  Decided 2026-09-22: the only consumer of a mid-swap read is `man <tool>` racing MANIAC's own `install` on this machine, a solo, single-user, non-concurrent installation.
+  Worst case is a transient "no page found," not corruption, and nothing on this machine ever runs the two at once.
+  Revisit only if MANIAC ever runs unattended or concurrently with itself.
+- Do not invalidate the process-local provider memoization in `providers/uv.py` (`_local_editable_dir`, `_installed_version`) or `providers/pipx.py` (`find_distribution_metadata`).
+  Decided 2026-09-22: the item's own rationale was "it matters for a long-lived process and for any caller that installs and then re-reads," and MANIAC is neither -- confirmed by grep that no orchestration path calls a provider lookup, installs, and re-reads within one process.
+  Each `maniac install`/`maniac list` invocation is a fresh process, so the `functools.cache` never outlives the run it was populated in.
+  Revisit only if MANIAC grows a long-lived mode (daemon, watch, server) or a command that installs and re-reads within one invocation.
 
 - Do not reconstruct tier-1 direct provider links.
   ADR-0046 refused: "not under `output_dir`" is not evidence of a provider root, and adopting one would let MANIAC replace and later remove a symlink the user owns.
