@@ -44,7 +44,11 @@ def _package_name(package: str) -> str:
 _SPLIT_PACKAGE_SUFFIXES = ("-minimal", "-dev", "-doc", "-common", "-bin", "-data")
 _LANGUAGE_TEAM_PREFIXES = ("rust-", "node-", "haskell-", "ruby-")
 _GOLANG_GITHUB_PREFIX = re.compile(r"^golang-github-[^-]+-")
-_TRAILING_VERSION = re.compile(r"-?\d[\d.]*$")
+# Only the two shapes ADR-0055 admits: a hyphen-separated trailing version
+# (`gcc-13`, `-13.2`) and a dotted trailing version with no hyphen
+# (`python3.12`). A bare trailing digit run with neither is a project's own
+# name (`bzip2`, `libxml2`, `lz4`), not Debian versioning.
+_TRAILING_VERSION = re.compile(r"-\d[\d.]*$|\d\.[\d.]*\d$")
 
 
 def _normalize_debian_name(name: str) -> str:

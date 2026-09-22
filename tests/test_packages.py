@@ -220,3 +220,18 @@ def test_normalize_debian_name_applies_exactly_the_adr_0055_rewrites(
 
 def test_normalize_debian_name_leaves_unmatched_names_alone() -> None:
     assert packages._normalize_debian_name("ripgrep") == "ripgrep"
+
+
+def test_normalize_debian_name_leaves_bzip2_alone() -> None:
+    """`2` is part of bzip2's own name, not a Debian version suffix."""
+    assert packages._normalize_debian_name("bzip2") == "bzip2"
+
+
+def test_normalize_debian_name_leaves_libxml2_alone() -> None:
+    """`2` is part of libxml2's own name, not a Debian version suffix."""
+    assert packages._normalize_debian_name("libxml2") == "libxml2"
+
+
+def test_normalize_debian_name_leaves_lz4_alone() -> None:
+    """`4` is part of lz4's own name, not a Debian version suffix."""
+    assert packages._normalize_debian_name("lz4") == "lz4"
