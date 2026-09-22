@@ -37,9 +37,6 @@ These are findings the work surfaced and deliberately did not take; they are fir
 
 ### Maintainability
 
-- Fix `just test`'s `*args` splitting a quoted `-k` expression on spaces.
-  `just test -k "a or b"` fails with `ERROR: file or directory not found: or` under fish; `uv run pytest -k "a or b"` directly works fine.
-  Surfaced 2026-09-22 verifying ADR-0054's two new tests; worked around by calling `pytest` directly, not yet fixed in the `justfile` recipe.
 - Decide whether `Config` binds XDG paths per instance or intentionally at import time, then make discovery consistent.
   Current frozen module globals make ordinary environment monkeypatches ineffective after import; this is a configuration-lifecycle decision deserving an ADR.
 - Record losing provider claims for a binary after first-PATH-entry selection.
