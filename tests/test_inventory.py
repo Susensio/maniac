@@ -1712,9 +1712,11 @@ def test_classify_misattributed_when_dpkg_proves_a_different_owner(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """A provable owner that is not the candidate's own package is a
-    stronger finding than `UNVERIFIED` (ADR-0052) -- the live `python`
-    case, where `dpkg-query -S` names `python3.12-minimal` but the
-    installation is `python`."""
+    stronger finding than `UNVERIFIED` (ADR-0052), reachable once ADR-0055
+    phase 2 founds `WRONG_OWNER` on canonical repository identity --
+    `tmux`'s page cannot belong to a `python` installation under any
+    normalization, unlike `python3.12-minimal`/`python`, which ADR-0055
+    proved to be the same software."""
     cfg = _config(tmp_path)
     installed = tmp_path / "usr" / "share" / "man" / "man1" / "python.1"
     monkeypatch.setattr(
@@ -1724,7 +1726,7 @@ def test_classify_misattributed_when_dpkg_proves_a_different_owner(
     monkeypatch.setattr(
         "maniac.listing.classification.verify_external_page",
         lambda page, **kwargs: ExternalPageVerification(
-            ExternalPageFreshness.WRONG_OWNER, "python3.12-minimal"
+            ExternalPageFreshness.WRONG_OWNER, "tmux"
         ),
     )
 
@@ -1732,7 +1734,7 @@ def test_classify_misattributed_when_dpkg_proves_a_different_owner(
 
     assert result.state is ActionState.MISATTRIBUTED
     assert result.source is PageSource.SYSTEM
-    assert result.owning_package == "python3.12-minimal"
+    assert result.owning_package == "tmux"
 
 
 def test_classify_wrong_owner_skips_the_roff_fallback(
@@ -1750,7 +1752,7 @@ def test_classify_wrong_owner_skips_the_roff_fallback(
     monkeypatch.setattr(
         "maniac.listing.classification.verify_external_page",
         lambda page, **kwargs: ExternalPageVerification(
-            ExternalPageFreshness.WRONG_OWNER, "python3.12-minimal"
+            ExternalPageFreshness.WRONG_OWNER, "tmux"
         ),
     )
 

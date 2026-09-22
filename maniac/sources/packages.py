@@ -22,9 +22,11 @@ class ExternalPageVerification:
     """Freshness verdict alongside the Debian package proven to own the page.
 
     `owner` is set whenever `_debian_owner` names one, independent of
-    `freshness` -- a page can resolve to a provable owner that is not the
-    binary's own package (freshness becomes `WRONG_OWNER`) just as easily
-    as to no provable owner at all (freshness stays `UNVERIFIED`).
+    `freshness` -- a page can resolve to an owner `_same_software` cannot
+    tie to the binary's own package (freshness stays `UNVERIFIED`, `owner`
+    still set) just as easily as to no provable owner at all (`UNVERIFIED`,
+    `owner` `None`). `WRONG_OWNER` is unreachable from this module until
+    ADR-0055 phase 2 re-founds it on canonical repository identity.
     """
 
     freshness: ExternalPageFreshness
@@ -37,6 +39,33 @@ def _package_name(package: str) -> str:
     if separator and re.fullmatch(r"[a-z0-9][a-z0-9-]*", architecture):
         return name
     return package
+
+
+_SPLIT_PACKAGE_SUFFIXES = ("-minimal", "-dev", "-doc", "-common", "-bin", "-data")
+_LANGUAGE_TEAM_PREFIXES = ("rust-", "node-", "haskell-", "ruby-")
+_GOLANG_GITHUB_PREFIX = re.compile(r"^golang-github-[^-]+-")
+_TRAILING_VERSION = re.compile(r"-?\d[\d.]*$")
+
+
+def _normalize_debian_name(name: str) -> str:
+    """Debian's mechanical naming, reversed toward the upstream project name.
+
+    Exactly the rewrites ADR-0055 admits as evidence: a split-package
+    suffix, a trailing interpreter/compiler version, and a language-team
+    prefix. Nothing else -- this is not open-ended name manipulation.
+    """
+    for suffix in _SPLIT_PACKAGE_SUFFIXES:
+        if name.endswith(suffix):
+            name = name[: -len(suffix)]
+            break
+    name = _TRAILING_VERSION.sub("", name) or name
+    golang_match = _GOLANG_GITHUB_PREFIX.match(name)
+    if golang_match:
+        return name[golang_match.end() :]
+    for prefix in _LANGUAGE_TEAM_PREFIXES:
+        if name.startswith(prefix):
+            return name[len(prefix) :]
+    return name
 
 
 def _debian_upstream_version(version: str) -> str:
@@ -84,6 +113,39 @@ def _debian_version(package: str) -> str | None:
     return version if result.returncode == 0 and version else None
 
 
+@cache
+def _debian_source(package: str) -> str | None:
+    """Debian source package for `package`, or `package` itself when the
+    field is blank -- a package that is its own source leaves it empty."""
+    try:
+        result = subprocess.run(
+            ["dpkg-query", "-W", "-f=${Source}", package],
+            capture_output=True,
+            check=False,
+            text=True,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0:
+        return None
+    source = result.stdout.strip()
+    return source or package
+
+
+def _same_software(owner: str, package: str) -> bool:
+    """Whether Debian's `owner` and the provider's `package` name the same
+    software: exact match first, then `${Source}` normalized toward
+    Debian's mechanical naming (ADR-0055)."""
+    owner_name = _package_name(owner)
+    package_name = _package_name(package)
+    if owner_name == package_name:
+        return True
+    source = _debian_source(owner_name)
+    if source is None:
+        return False
+    return _normalize_debian_name(source) == package_name
+
+
 def verify_external_page(
     page: Path, *, package: str, version: str | None
 ) -> ExternalPageVerification:
@@ -93,8 +155,10 @@ def verify_external_page(
     owner = _debian_owner(str(page))
     if owner is None:
         return ExternalPageVerification(ExternalPageFreshness.UNVERIFIED, None)
-    if _package_name(owner) != _package_name(package):
-        return ExternalPageVerification(ExternalPageFreshness.WRONG_OWNER, owner)
+    if not _same_software(owner, package):
+        # TODO: phase 2 of ADR-0055 re-founds WRONG_OWNER on canonical
+        # repository identity; until then, unproven sameness is UNVERIFIED.
+        return ExternalPageVerification(ExternalPageFreshness.UNVERIFIED, owner)
     package_version = _debian_version(owner)
     if package_version is None:
         return ExternalPageVerification(ExternalPageFreshness.UNVERIFIED, owner)

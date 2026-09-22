@@ -119,14 +119,20 @@ def _external_page_state(
     """Return the verified state and provable owner for an external page.
 
     dpkg is tried first; only when it has nothing to say at all
-    (`UNVERIFIED`, no owner found or not on a Debian system) does the
-    page's own `.TH`/`.Dt` header get a chance to prove freshness instead.
-    A proven `WRONG_OWNER` skips the roff fallback (ADR-0052): a header
-    version match proves the page documents the version it claims, not
-    which package it belongs to, so it cannot rebut evidence dpkg already
-    gave the other way. The roff path never overrides an actual dpkg
-    `MATCH`/`MISMATCH`/`WRONG_OWNER`, and never sets `owning_package` -- it
-    proves freshness, not ownership.
+    (`UNVERIFIED` -- no owner found, an owner found but not provably the
+    same software, or not on a Debian system) does the page's own
+    `.TH`/`.Dt` header get a chance to prove freshness instead. As of
+    ADR-0055, `verify_external_page` cannot itself produce `WRONG_OWNER`
+    -- proving sameness through normalized `${Source}` still yields
+    `MATCH`/`MISMATCH`, and failing to prove it yields `UNVERIFIED`, so
+    the roff fallback runs there too. `WRONG_OWNER` is kept reachable
+    here for when ADR-0055 phase 2 re-founds it on canonical repository
+    identity: a proven `WRONG_OWNER` still skips the roff fallback
+    (ADR-0052), since a header version match proves the page documents
+    the version it claims, not which package it belongs to, and cannot
+    rebut evidence dpkg already gave the other way. The roff path never
+    overrides an actual dpkg `MATCH`/`MISMATCH`/`WRONG_OWNER`, and never
+    sets `owning_package` -- it proves freshness, not ownership.
     """
     inst = candidate.installation
     assert inst is not None

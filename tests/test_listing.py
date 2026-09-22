@@ -1357,7 +1357,7 @@ def test_cli_list_pipe_misattributed_emits_exactly_the_filtered_set(
     monkeypatch.setattr(
         "maniac.listing.classification.verify_external_page",
         lambda page, **kwargs: ExternalPageVerification(
-            ExternalPageFreshness.WRONG_OWNER, "python3.12-minimal"
+            ExternalPageFreshness.WRONG_OWNER, "tmux"
         ),
     )
     monkeypatch.setattr(
