@@ -23,10 +23,10 @@ def test_discovery_resolves_a_tag_once_before_tree_and_release_probes(
 ) -> None:
     lookups = 0
 
-    def find_tag(*args: object) -> str:
+    def find_tag(*args: object) -> tuple[str, bool]:
         nonlocal lookups
         lookups += 1
-        return "v1.2.3"
+        return "v1.2.3", True
 
     monkeypatch.setattr(repository, "_find_matching_tag", find_tag)
     monkeypatch.setattr(
@@ -52,7 +52,9 @@ def test_versioned_probe_cache_skips_network_for_positive_and_negative_results(
     page = tmp_path / "manpages" / "key" / "tool.1"
     page.parent.mkdir(parents=True)
     page.write_text(".TH TOOL 1\n", encoding="utf-8")
-    monkeypatch.setattr(repository, "_find_matching_tag", lambda *args: "v1.2.3")
+    monkeypatch.setattr(
+        repository, "_find_matching_tag", lambda *args: ("v1.2.3", True)
+    )
     monkeypatch.setattr(
         repository,
         "_discover_remote_manpage_result",
@@ -102,7 +104,9 @@ def test_definitive_versioned_probe_miss_skips_tree_and_release_on_second_call(
         release_calls += 1
         return pages._ProbeResult([], True)
 
-    monkeypatch.setattr(repository, "_find_matching_tag", lambda *args: "v1.2.3")
+    monkeypatch.setattr(
+        repository, "_find_matching_tag", lambda *args: ("v1.2.3", True)
+    )
     monkeypatch.setattr(repository, "_discover_remote_manpage_result", tree)
     monkeypatch.setattr(
         release, "_discover_github_release_manpages_result", release_probe
@@ -136,7 +140,9 @@ def test_expired_definitive_probe_miss_refreshes(
         return pages._ProbeResult([], True)
 
     monkeypatch.setattr(cache.time, "time", lambda: now)
-    monkeypatch.setattr(repository, "_find_matching_tag", lambda *args: "v1.2.3")
+    monkeypatch.setattr(
+        repository, "_find_matching_tag", lambda *args: ("v1.2.3", True)
+    )
     monkeypatch.setattr(repository, "_discover_remote_manpage_result", tree)
     monkeypatch.setattr(
         release,
@@ -161,7 +167,9 @@ def test_transient_probe_failure_is_not_cached(
         tree_calls += 1
         return pages._ProbeResult([], False)
 
-    monkeypatch.setattr(repository, "_find_matching_tag", lambda *args: "v1.2.3")
+    monkeypatch.setattr(
+        repository, "_find_matching_tag", lambda *args: ("v1.2.3", True)
+    )
     monkeypatch.setattr(repository, "_discover_remote_manpage_result", tree)
     monkeypatch.setattr(
         release,
@@ -191,7 +199,9 @@ def test_tree_failure_does_not_cache_a_definitive_release_miss(
         release_calls += 1
         return pages._ProbeResult([], True)
 
-    monkeypatch.setattr(repository, "_find_matching_tag", lambda *args: "v1.2.3")
+    monkeypatch.setattr(
+        repository, "_find_matching_tag", lambda *args: ("v1.2.3", True)
+    )
     monkeypatch.setattr(repository, "_discover_remote_manpage_result", tree)
     monkeypatch.setattr(
         release, "_discover_github_release_manpages_result", release_probe
@@ -213,9 +223,11 @@ def test_malformed_release_metadata_does_not_cache_the_probe(
         tree_calls += 1
         return pages._ProbeResult([], True)
 
-    monkeypatch.setattr(repository, "_find_matching_tag", lambda *args: "v1.2.3")
+    monkeypatch.setattr(
+        repository, "_find_matching_tag", lambda *args: ("v1.2.3", True)
+    )
     monkeypatch.setattr(repository, "_discover_remote_manpage_result", tree)
-    monkeypatch.setattr(cache, "_download", lambda *args: b"[]")
+    monkeypatch.setattr(cache, "_download", lambda *args: (b"[]", True))
     source = RepoSource(name="tool", target="owner/tool", is_local=False)
 
     assert discover_repo_manpages(source, "tool", tmp_path, version="1.2.3") == []
@@ -242,7 +254,9 @@ def test_concurrent_definitive_probe_misses_are_single_flight(
         assert release_tree.wait(timeout=2)
         return pages._ProbeResult([], True)
 
-    monkeypatch.setattr(repository, "_find_matching_tag", lambda *args: "v1.2.3")
+    monkeypatch.setattr(
+        repository, "_find_matching_tag", lambda *args: ("v1.2.3", True)
+    )
     monkeypatch.setattr(repository, "_discover_remote_manpage_result", tree)
     monkeypatch.setattr(
         release,
@@ -277,15 +291,15 @@ def test_concurrent_binaries_share_tag_and_release_metadata(
     tag_lookups = 0
     downloads = 0
 
-    def find_tag(*args: object) -> str:
+    def find_tag(*args: object) -> tuple[str, bool]:
         nonlocal tag_lookups
         tag_lookups += 1
-        return "v1.2.3"
+        return "v1.2.3", True
 
-    def download(*args: object) -> bytes:
+    def download(*args: object) -> tuple[bytes, bool]:
         nonlocal downloads
         downloads += 1
-        return b'{"assets": []}'
+        return b'{"assets": []}', True
 
     monkeypatch.setattr(repository, "_find_matching_tag", find_tag)
     monkeypatch.setattr(
@@ -321,7 +335,7 @@ def test_malformed_upstream_cache_is_replaced(
     )
     path.parent.mkdir(parents=True)
     path.write_text("not json", encoding="utf-8")
-    monkeypatch.setattr(repository, "_find_matching_tag", lambda *args: None)
+    monkeypatch.setattr(repository, "_find_matching_tag", lambda *args: (None, False))
 
     assert discover_repo_manpages(source, "tool", tmp_path, version="1.2.3") == []
     assert not path.exists()

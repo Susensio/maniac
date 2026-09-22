@@ -58,12 +58,15 @@ def test_github_release_assets_accept_only_actual_matching_manpage(
                 tar.addfile(info, io.BytesIO(content))
         return output.getvalue()
 
-    def fake_download(url: str, cfg: object) -> bytes:
+    def fake_download(url: str, cfg: object) -> tuple[bytes, bool]:
         if url.startswith("https://api.github.com/"):
-            return b'{"assets": [{"name": "completions-0.23.5.tar.gz", "size": 5, "browser_download_url": "https://example.test/completions-0.23.5.tar.gz"}, {"name": "man-0.23.5.tar.gz", "size": 5, "browser_download_url": "https://example.test/man-0.23.5.tar.gz"}]}'
+            return (
+                b'{"assets": [{"name": "completions-0.23.5.tar.gz", "size": 5, "browser_download_url": "https://example.test/completions-0.23.5.tar.gz"}, {"name": "man-0.23.5.tar.gz", "size": 5, "browser_download_url": "https://example.test/man-0.23.5.tar.gz"}]}',
+                True,
+            )
         if "completions" in url:
-            return archive({"completions/eza.fish": b"complete -c eza"})
-        return archive({"man/eza.1": b".TH EZA 1\n"})
+            return archive({"completions/eza.fish": b"complete -c eza"}), True
+        return archive({"man/eza.1": b".TH EZA 1\n"}), True
 
     monkeypatch.setattr(cache, "_download", fake_download)
     monkeypatch.setattr(
@@ -71,7 +74,9 @@ def test_github_release_assets_accept_only_actual_matching_manpage(
         "_discover_remote_manpage_result",
         lambda *args: pages._ProbeResult([], True),
     )
-    monkeypatch.setattr(repository, "_find_matching_tag", lambda *args: "v0.23.5")
+    monkeypatch.setattr(
+        repository, "_find_matching_tag", lambda *args: ("v0.23.5", True)
+    )
     source = RepoSource(name="eza", target="eza-community/eza", is_local=False)
 
     page = discover_repo_manpage(source, "eza", cache_dir=tmp_path, version="0.23.5")
@@ -99,10 +104,13 @@ def test_github_release_archive_keeps_valid_companion_manpages(
             info.size = len(content)
             tar.addfile(info, io.BytesIO(content))
 
-    def fake_download(url: str, cfg: object) -> bytes:
+    def fake_download(url: str, cfg: object) -> tuple[bytes, bool]:
         if url.startswith("https://api.github.com/"):
-            return b'{"assets": [{"name": "eza-manpages.tar.gz", "size": 5, "browser_download_url": "https://example.test/eza-manpages.tar.gz"}]}'
-        return output.getvalue()
+            return (
+                b'{"assets": [{"name": "eza-manpages.tar.gz", "size": 5, "browser_download_url": "https://example.test/eza-manpages.tar.gz"}]}',
+                True,
+            )
+        return output.getvalue(), True
 
     monkeypatch.setattr(cache, "_download", fake_download)
     monkeypatch.setattr(
@@ -110,7 +118,9 @@ def test_github_release_archive_keeps_valid_companion_manpages(
         "_discover_remote_manpage_result",
         lambda *args: pages._ProbeResult([], True),
     )
-    monkeypatch.setattr(repository, "_find_matching_tag", lambda *args: "v0.23.5")
+    monkeypatch.setattr(
+        repository, "_find_matching_tag", lambda *args: ("v0.23.5", True)
+    )
     source = RepoSource(name="eza", target="eza-community/eza", is_local=False)
 
     found = discover_repo_manpages(source, "eza", cache_dir=tmp_path, version="0.23.5")
@@ -132,11 +142,14 @@ def test_release_probe_skips_large_non_man_archives(
 ) -> None:
     requested: list[str] = []
 
-    def fake_download(url: str, cfg: object) -> bytes:
+    def fake_download(url: str, cfg: object) -> tuple[bytes, bool]:
         requested.append(url)
         if url.startswith("https://api.github.com/"):
-            return b'{"assets": [{"name": "eza_x86_64.tar.gz", "size": 780000, "browser_download_url": "https://example.test/linux"}, {"name": "eza.zip", "size": 1500000, "browser_download_url": "https://example.test/zip"}, {"name": "man-0.23.5.tar.gz", "size": 10500, "browser_download_url": "https://example.test/man"}]}'
-        return b"not a tar archive"
+            return (
+                b'{"assets": [{"name": "eza_x86_64.tar.gz", "size": 780000, "browser_download_url": "https://example.test/linux"}, {"name": "eza.zip", "size": 1500000, "browser_download_url": "https://example.test/zip"}, {"name": "man-0.23.5.tar.gz", "size": 10500, "browser_download_url": "https://example.test/man"}]}',
+                True,
+            )
+        return b"not a tar archive", True
 
     monkeypatch.setattr(cache, "_download", fake_download)
     monkeypatch.setattr(
@@ -144,7 +157,9 @@ def test_release_probe_skips_large_non_man_archives(
         "_discover_remote_manpage_result",
         lambda *args: pages._ProbeResult([], True),
     )
-    monkeypatch.setattr(repository, "_find_matching_tag", lambda *args: "v0.23.5")
+    monkeypatch.setattr(
+        repository, "_find_matching_tag", lambda *args: ("v0.23.5", True)
+    )
     source = RepoSource(name="eza", target="eza-community/eza", is_local=False)
 
     assert (
@@ -160,13 +175,13 @@ def test_release_probe_skips_large_non_man_archives(
 def test_malformed_release_asset_degrades_to_missing(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    monkeypatch.setattr(cache, "_download", lambda *args: b"not a tar archive")
+    monkeypatch.setattr(cache, "_download", lambda *args: (b"not a tar archive", True))
     monkeypatch.setattr(
         repository,
         "_discover_remote_manpage_result",
         lambda *args: pages._ProbeResult([], True),
     )
-    monkeypatch.setattr(repository, "_find_matching_tag", lambda *args: "v1.0")
+    monkeypatch.setattr(repository, "_find_matching_tag", lambda *args: ("v1.0", True))
     source = RepoSource(name="tool", target="owner/tool", is_local=False)
     assert (
         discover_repo_manpage(source, "tool", cache_dir=tmp_path, version="1.0") is None
@@ -176,13 +191,13 @@ def test_malformed_release_asset_degrades_to_missing(
 def test_non_object_release_metadata_degrades_to_missing(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    monkeypatch.setattr(cache, "_download", lambda *args: b"[]")
+    monkeypatch.setattr(cache, "_download", lambda *args: (b"[]", True))
     monkeypatch.setattr(
         repository,
         "_discover_remote_manpage_result",
         lambda *args: pages._ProbeResult([], True),
     )
-    monkeypatch.setattr(repository, "_find_matching_tag", lambda *args: "v1.0")
+    monkeypatch.setattr(repository, "_find_matching_tag", lambda *args: ("v1.0", True))
     source = RepoSource(name="tool", target="owner/tool", is_local=False)
 
     assert (

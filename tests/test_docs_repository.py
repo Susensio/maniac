@@ -146,8 +146,9 @@ def test_find_matching_tag_prefers_v_prefixed(monkeypatch: pytest.MonkeyPatch) -
         return subprocess.CompletedProcess(cmd, 0, stdout=stdout, stderr="")
 
     monkeypatch.setattr(subprocess, "run", fake_run)
-    tag = _find_matching_tag("https://github.com/cli/cli.git", "2.90.0", 10)
+    tag, definitive = _find_matching_tag("https://github.com/cli/cli.git", "2.90.0", 10)
     assert tag == "v2.90.0"
+    assert definitive is True
 
 
 def test_find_matching_tag_bare_version(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -162,8 +163,11 @@ def test_find_matching_tag_bare_version(monkeypatch: pytest.MonkeyPatch) -> None
         )
 
     monkeypatch.setattr(subprocess, "run", fake_run)
-    tag = _find_matching_tag("https://github.com/jgm/pandoc.git", "3.10.2", 10)
+    tag, definitive = _find_matching_tag(
+        "https://github.com/jgm/pandoc.git", "3.10.2", 10
+    )
     assert tag == "3.10.2"
+    assert definitive is True
 
 
 def test_find_matching_tag_no_match_returns_none(
@@ -179,7 +183,11 @@ def test_find_matching_tag_no_match_returns_none(
         )
 
     monkeypatch.setattr(subprocess, "run", fake_run)
-    assert _find_matching_tag("https://github.com/owner/tool.git", "9.9.9", 10) is None
+    tag, definitive = _find_matching_tag(
+        "https://github.com/owner/tool.git", "9.9.9", 10
+    )
+    assert tag is None
+    assert definitive is True
 
 
 def test_expired_negative_tag_cache_refreshes(
@@ -191,9 +199,10 @@ def test_expired_negative_tag_cache_refreshes(
     def fake_time() -> float:
         return now
 
-    def find_tag(*args: object) -> None:
+    def find_tag(*args: object) -> tuple[None, bool]:
         nonlocal lookups
         lookups += 1
+        return None, True
 
     monkeypatch.setattr(cache.time, "time", fake_time)
     monkeypatch.setattr(repository, "_find_matching_tag", find_tag)
@@ -244,7 +253,7 @@ def test_resolve_repo_dir_with_version_clones_the_matching_tag(
     from maniac.config import Config
 
     monkeypatch.setattr(
-        repository, "_find_matching_tag", lambda url, version, timeout: "v1.2.3"
+        repository, "_find_matching_tag", lambda url, version, timeout: ("v1.2.3", True)
     )
     observed_refs: list[object] = []
 
@@ -272,7 +281,7 @@ def test_resolve_repo_dir_with_version_no_matching_tag_returns_none(
     from maniac.config import Config
 
     monkeypatch.setattr(
-        repository, "_find_matching_tag", lambda url, version, timeout: None
+        repository, "_find_matching_tag", lambda url, version, timeout: (None, True)
     )
     source = RepoSource(name="tool", target="owner/tool", is_local=False)
 
@@ -284,7 +293,7 @@ def test_fetch_and_extract_docs_with_version_matched_tag(
 ) -> None:
     """ADR-0019: a matching upstream tag makes the docs version-matched."""
     monkeypatch.setattr(
-        repository, "_find_matching_tag", lambda url, version, timeout: "v1.2.3"
+        repository, "_find_matching_tag", lambda url, version, timeout: ("v1.2.3", True)
     )
 
     def fake_clone(
@@ -316,7 +325,7 @@ def test_fetch_and_extract_docs_with_version_falls_back_when_unmatched(
     checked.
     """
     monkeypatch.setattr(
-        repository, "_find_matching_tag", lambda url, version, timeout: None
+        repository, "_find_matching_tag", lambda url, version, timeout: (None, True)
     )
 
     def fake_clone(
@@ -343,7 +352,7 @@ def test_discover_repo_manpage_with_version_fetches_the_exact_tag(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     monkeypatch.setattr(
-        repository, "_find_matching_tag", lambda url, version, timeout: "v1.2.3"
+        repository, "_find_matching_tag", lambda url, version, timeout: ("v1.2.3", True)
     )
 
     fetched: list[list[str]] = []
@@ -422,7 +431,7 @@ def test_resolve_repo_dir_discards_a_malformed_versioned_cache(
     malformed_dir.mkdir()
     (malformed_dir / "stray").write_text("not a checkout", encoding="utf-8")
     source = RepoSource(name="tool", target="owner/tool", is_local=False)
-    monkeypatch.setattr(repository, "_find_matching_tag", lambda *args: "1.2.3")
+    monkeypatch.setattr(repository, "_find_matching_tag", lambda *args: ("1.2.3", True))
 
     def fake_clone(
         clone_url: str, dest_dir: Path, cfg: object, **kwargs: object
@@ -447,7 +456,9 @@ def test_resolve_repo_dir_rejects_cache_from_a_different_repository(
     cached_dir = tmp_path / "tool@v1.2.3"
     _init_cached_repo(cached_dir, "https://github.com/old/tool.git")
     source = RepoSource(name="tool", target="new/tool", is_local=False)
-    monkeypatch.setattr(repository, "_find_matching_tag", lambda *args: "v1.2.3")
+    monkeypatch.setattr(
+        repository, "_find_matching_tag", lambda *args: ("v1.2.3", True)
+    )
 
     def fake_clone(
         clone_url: str, dest_dir: Path, cfg: object, **kwargs: object

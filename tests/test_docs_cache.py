@@ -19,10 +19,10 @@ def test_release_metadata_revalidates_after_positive_window_expires(
     now = 1000.0
     calls = 0
 
-    def download(url: str, cfg: object) -> bytes:
+    def download(url: str, cfg: object) -> tuple[bytes, bool]:
         nonlocal calls
         calls += 1
-        return b"first" if calls == 1 else b"second"
+        return (b"first" if calls == 1 else b"second"), True
 
     monkeypatch.setattr(cache.time, "time", lambda: now)
     monkeypatch.setattr(cache, "_download", download)
@@ -146,7 +146,7 @@ def test_auth_and_rate_limit_failures_are_not_definitive(
     monkeypatch.setattr(cache, "_open", denied)
     cfg = Config(cache_dir=tmp_path)
 
-    content, definitive = cache._download_result("https://api.github.com/release", cfg)
+    content, definitive = cache._download("https://api.github.com/release", cfg)
 
     assert content is None
     assert definitive is False
@@ -265,4 +265,4 @@ def test_download_degrades_on_invalid_request_url(
 ) -> None:
     monkeypatch.setattr(cache, "_open", lambda *args, **kwargs: None)
 
-    assert cache._download("\x00", Config()) is None
+    assert cache._download("\x00", Config()) == (None, False)

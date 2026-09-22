@@ -29,7 +29,6 @@ _RELEASE_METADATA_REVALIDATION_TTL = 24 * 60 * 60
 _CACHE_MAX_BYTES = 8 * 1024
 _cache_locks: dict[Path, threading.Lock] = {}
 _cache_locks_guard = threading.Lock()
-_lookup_state = threading.local()
 
 # Every GitHub request goes here, never api.github.com's asset host or
 # anything else derived from repository metadata or a registry entry.
@@ -160,12 +159,11 @@ def _download_cached_result(
             and time.time() - created < _DEFINITIVE_ABSENCE_TTL
         ):
             return None, True
-        _lookup_state.definitive = False
-        content = _download(url, cfg)
+        content, definitive = _download(url, cfg)
         if content is None or len(content) > _RELEASE_ARCHIVE_LIMIT:
-            if _lookup_state.definitive:
+            if definitive:
                 _write_json_cache(negative_path, {"created": time.time()})
-            return None, _lookup_state.definitive
+            return None, definitive
         destination.parent.mkdir(parents=True, exist_ok=True)
         with tempfile.NamedTemporaryFile(dir=destination.parent, delete=False) as file:
             temporary = Path(file.name)
@@ -176,14 +174,7 @@ def _download_cached_result(
         return content, True
 
 
-def _download(url: str, cfg: Config) -> bytes | None:
-    """Download bytes, recording whether a missing response was definitive."""
-    content, definitive = _download_result(url, cfg)
-    _lookup_state.definitive = definitive
-    return content
-
-
-def _download_result(url: str, cfg: Config) -> tuple[bytes | None, bool]:
+def _download(url: str, cfg: Config) -> tuple[bytes | None, bool]:
     headers = _github_headers(url)
     try:
         with _open(Request(url, headers=headers), timeout=cfg.timeout_git) as response:

@@ -13,7 +13,7 @@ from ...config import Config
 from ...logging import logger
 from ...models import DocFile, LocalRepoSource, RepoSource
 from . import cache, extraction, pages
-from .cache import _DEFINITIVE_ABSENCE_TTL, _lookup_state
+from .cache import _DEFINITIVE_ABSENCE_TTL
 from .extraction import DOC_DIRS
 from .pages import _Probe, _ProbeResult
 
@@ -54,7 +54,7 @@ def resolve_repo_dir(
             if cached_dir.exists():
                 shutil.rmtree(cached_dir, ignore_errors=True)
 
-        ref = _find_matching_tag(clone_url, version, cfg.timeout_git)
+        ref, _ = _find_matching_tag(clone_url, version, cfg.timeout_git)
         if ref is None:
             logger.debug(
                 "No matching upstream tag for installed version",
@@ -123,15 +123,16 @@ def _find_matching_tag_cached_result(
                 and time.time() - created < _DEFINITIVE_ABSENCE_TTL
             ):
                 return None, True
-        _lookup_state.definitive = False
-        tag = _find_matching_tag(clone_url, version, cfg.timeout_git)
-        if tag is not None or _lookup_state.definitive:
+        tag, definitive = _find_matching_tag(clone_url, version, cfg.timeout_git)
+        if tag is not None or definitive:
             cache._write_json_cache(path, {"tag": tag, "created": time.time()})
-        return tag, tag is not None or _lookup_state.definitive
+        return tag, tag is not None or definitive
 
 
-def _find_matching_tag(clone_url: str, version: str, timeout: int) -> str | None:
-    """Return the git tag naming `version`, or None if none does.
+def _find_matching_tag(
+    clone_url: str, version: str, timeout: int
+) -> tuple[str | None, bool]:
+    """Return the git tag naming `version` alongside whether absence is definitive.
 
     Tries the two conventional spellings, `v<version>` then a bare
     `<version>`, against the remote's tag list via `git ls-remote` -- no
@@ -150,11 +151,9 @@ def _find_matching_tag(clone_url: str, version: str, timeout: int) -> str | None
         )
     except (OSError, subprocess.SubprocessError) as e:
         logger.debug("Error listing remote tags", url=clone_url, error=str(e))
-        _lookup_state.definitive = False
-        return None
+        return None, False
     if result.returncode != 0:
-        _lookup_state.definitive = False
-        return None
+        return None, False
 
     tags: set[str] = set()
     for line in result.stdout.splitlines():
@@ -164,10 +163,8 @@ def _find_matching_tag(clone_url: str, version: str, timeout: int) -> str | None
 
     for candidate in _tag_candidates(version):
         if candidate in tags:
-            _lookup_state.definitive = True
-            return candidate
-    _lookup_state.definitive = True
-    return None
+            return candidate, True
+    return None, True
 
 
 def _discover_remote_manpage_result(probe: _Probe) -> _ProbeResult:
