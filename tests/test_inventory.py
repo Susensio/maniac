@@ -267,7 +267,7 @@ def test_compute_rows_resolves_upstream_for_an_unresolved_row(
     )
     monkeypatch.setattr(
         "maniac.listing.upstream.discover_repo_manpage",
-        lambda *args, **kwargs: None,
+        lambda *args, **kwargs: (None, True),
     )
 
     row = compute_rows(config=_config(tmp_path))[0]
@@ -309,7 +309,8 @@ def test_compute_rows_recovers_the_uri_for_an_older_repository_manifest(
         lambda command, tool: installed,
     )
     monkeypatch.setattr(
-        "maniac.listing.upstream.discover_repo_manpage", lambda *args, **kwargs: cached
+        "maniac.listing.upstream.discover_repo_manpage",
+        lambda *args, **kwargs: (cached, True),
     )
     monkeypatch.setattr(
         "maniac.listing.upstream.discovered_manpage_uri", lambda page: uri
@@ -429,7 +430,8 @@ def test_compute_rows_upgrades_a_versioned_cached_repository_page(
         lambda on_start=None, on_scan=None: [(provider, inst)],
     )
     monkeypatch.setattr(
-        "maniac.listing.upstream.discover_repo_manpage", lambda *args, **kwargs: page
+        "maniac.listing.upstream.discover_repo_manpage",
+        lambda *args, **kwargs: (page, True),
     )
 
     rows = compute_rows(config=cfg)
@@ -459,7 +461,8 @@ def test_local_repository_page_links_to_its_source_file(
         lambda on_start=None, on_scan=None: [(provider, inst)],
     )
     monkeypatch.setattr(
-        "maniac.listing.upstream.discover_repo_manpage", lambda *args, **kwargs: page
+        "maniac.listing.upstream.discover_repo_manpage",
+        lambda *args, **kwargs: (page, True),
     )
 
     row = compute_rows(config=_config(tmp_path))[0]
@@ -482,8 +485,11 @@ def test_compute_rows_uses_the_exact_tmux_documentation_repository(
     )
     observed: list[RepoSource] = []
 
-    def discover(source: RepoSource, *args: object, **kwargs: object) -> None:
+    def discover(
+        source: RepoSource, *args: object, **kwargs: object
+    ) -> tuple[None, bool]:
         observed.append(source)
+        return None, True
 
     monkeypatch.setattr("maniac.listing.upstream.discover_repo_manpage", discover)
 
@@ -504,7 +510,8 @@ def test_compute_rows_keeps_an_offline_upstream_row_missing(
         lambda on_start=None, on_scan=None: [(provider, inst)],
     )
     monkeypatch.setattr(
-        "maniac.listing.upstream.discover_repo_manpage", lambda *args, **kwargs: None
+        "maniac.listing.upstream.discover_repo_manpage",
+        lambda *args, **kwargs: (None, True),
     )
 
     rows = compute_rows(config=_config(tmp_path))
@@ -525,7 +532,7 @@ def test_compute_rows_keeps_a_single_failed_upstream_probe_missing(
         lambda on_start=None, on_scan=None: [(provider, inst)],
     )
 
-    def fail_probe(*args: object, **kwargs: object) -> Path:
+    def fail_probe(*args: object, **kwargs: object) -> tuple[Path, bool]:
         raise OSError("cache unavailable")
 
     monkeypatch.setattr("maniac.listing.upstream.discover_repo_manpage", fail_probe)
@@ -580,7 +587,9 @@ def test_compute_rows_bounds_upstream_probes_and_keeps_row_order(
     max_active = 0
     lock = threading.Lock()
 
-    def fake_discover(source: RepoSource, *args: object, **kwargs: object) -> Path:
+    def fake_discover(
+        source: RepoSource, *args: object, **kwargs: object
+    ) -> tuple[Path, bool]:
         nonlocal active, max_active
         with lock:
             active += 1
@@ -590,7 +599,7 @@ def test_compute_rows_bounds_upstream_probes_and_keeps_row_order(
             active -= 1
         if source.name == "tool0":
             raise OSError("network unreachable")
-        return Path("/page")
+        return Path("/page"), True
 
     monkeypatch.setattr("maniac.listing.upstream.discover_repo_manpage", fake_discover)
     observer = RecordingObserver()
@@ -698,9 +707,9 @@ def test_compute_rows_starts_upstream_before_slow_local_work_finishes(
             source,
         )
 
-    def probe(*args: object, **kwargs: object) -> Path:
+    def probe(*args: object, **kwargs: object) -> tuple[Path, bool]:
         probe_started.set()
-        return Path("/page")
+        return Path("/page"), True
 
     monkeypatch.setattr("maniac.listing.inventory._classify_and_resolve", blocking)
     monkeypatch.setattr("maniac.listing.upstream.discover_repo_manpage", probe)
@@ -753,7 +762,7 @@ def test_compute_rows_ticks_while_a_slow_future_leaves_a_quiet_gap(
     monkeypatch.setattr("maniac.listing.inventory._classify_and_resolve", blocking)
     monkeypatch.setattr(
         "maniac.listing.upstream.discover_repo_manpage",
-        lambda *args, **kwargs: Path("/page"),
+        lambda *args, **kwargs: (Path("/page"), True),
     )
     worker = threading.Thread(
         target=lambda: compute_rows(config=_config(tmp_path), observer=_Idle())
@@ -780,10 +789,10 @@ def test_compute_rows_deduplicates_identical_upstream_binary_probes(
     )
     probes = 0
 
-    def discover(*args: object, **kwargs: object) -> Path:
+    def discover(*args: object, **kwargs: object) -> tuple[Path, bool]:
         nonlocal probes
         probes += 1
-        return Path("/page")
+        return Path("/page"), True
 
     monkeypatch.setattr("maniac.listing.upstream.discover_repo_manpage", discover)
 
@@ -806,7 +815,7 @@ def test_deduplicated_probe_publishes_all_siblings_atomically(
     )
     monkeypatch.setattr(
         "maniac.listing.upstream.discover_repo_manpage",
-        lambda *args, **kwargs: Path("/page"),
+        lambda *args, **kwargs: (Path("/page"), True),
     )
     observer = RecordingObserver()
 
@@ -892,7 +901,8 @@ def test_compute_rows_streaming_local_callbacks_handle_multiple_partial_rows(
         enumerate_installations,
     )
     monkeypatch.setattr(
-        "maniac.listing.upstream.discover_repo_manpage", lambda *args, **kwargs: None
+        "maniac.listing.upstream.discover_repo_manpage",
+        lambda *args, **kwargs: (None, True),
     )
     observer = RecordingObserver()
 
@@ -916,7 +926,7 @@ def test_compute_rows_callbacks_receive_snapshots_after_initial_and_each_probe(
     )
     monkeypatch.setattr(
         "maniac.listing.upstream.discover_repo_manpage",
-        lambda *args, **kwargs: Path("/page"),
+        lambda *args, **kwargs: (Path("/page"), True),
     )
     observer = RecordingObserver()
 

@@ -76,22 +76,26 @@ def discover_repo_manpage(
     cache_dir: str | Path | None = None,
     config: Config | None = None,
     version: str | None = None,
-) -> Path | None:
+) -> tuple[Path | None, bool]:
     """Return a hand-authored page discovered for ``binary_name`` from ``source``.
+
+    Alongside whether that answer is definitive -- a repository genuinely
+    checked and found (or confirmed lacking) the page, as opposed to a probe
+    (network, git) that failed to complete and left the question open.
 
     Remote repository checks use cached bare, filtered Git objects and materialize
     only the selected page; GitHub sources also inspect bounded release artifacts.
     With `version`, the Git tree and release tag must name that exact version
     (ADR-0016 tier 2), rather than the default branch.
     """
-    found = discover_repo_manpages(
+    found, definitive = discover_repo_manpages(
         source,
         binary_name,
         cache_dir=cache_dir,
         config=config,
         version=version,
     )
-    return found[0] if found else None
+    return (found[0] if found else None), definitive
 
 
 def discover_repo_manpages(
@@ -100,8 +104,10 @@ def discover_repo_manpages(
     cache_dir: str | Path | None = None,
     config: Config | None = None,
     version: str | None = None,
-) -> list[Path]:
+) -> tuple[list[Path], bool]:
     """Return all safe manpages in a release bundle anchored to ``binary_name``.
+
+    Alongside whether that answer is definitive; see `discover_repo_manpage`.
 
     Repository trees remain primary-page-only: unlike a release archive, a
     checkout can contain unrelated documentation trees.  A release bundle is
@@ -111,33 +117,36 @@ def discover_repo_manpages(
     cache_dir_path = Path(cache_dir) if cache_dir is not None else cfg.cache_dir
     if isinstance(source, LocalRepoSource):
         page = find_repo_manpage(source.path, binary_name)
-        return (
+        found = (
             [page] if page is not None and pages._valid_page(page, binary_name) else []
         )
+        return found, True
 
     clone_url = source.clone_url
     if clone_url is None:
-        return []
+        return [], True
 
     probe = _Probe(source, binary_name, cache_dir_path, cfg, version)
     # Versioned upstream results are immutable once published.  Holding this
     # lock across a cold probe makes concurrent list rows share one network trip.
     if version is None:
-        return _discover_remote_then_release(probe).pages
+        result = _discover_remote_then_release(probe)
+        return result.pages, result.definitive
     probe_path = cache._upstream_cache_path(
         cache_dir_path, "probes", "source-uri-v1", clone_url, version, binary_name
     )
     with cache._cache_lock(probe_path):
         cached = pages._read_probe_cache(probe_path, cache_dir_path, binary_name)
         if cached is not None:
-            return cached
+            return cached, True
         tag, tag_definitive = repository._find_matching_tag_cached_result(
             cache_dir_path, clone_url, version, cfg
         )
         result = _discover_remote_then_release(replace(probe, tag=tag))
-        if result.pages or (tag_definitive and result.definitive):
+        definitive = bool(result.pages) or (tag_definitive and result.definitive)
+        if definitive:
             pages._write_probe_cache(probe_path, result.pages)
-        return result.pages
+        return result.pages, definitive
 
 
 def _discover_remote_then_release(probe: _Probe) -> _ProbeResult:

@@ -41,7 +41,7 @@ def test_discovery_resolves_a_tag_once_before_tree_and_release_probes(
     )
     source = RepoSource(name="tool", target="owner/tool", is_local=False)
 
-    assert discover_repo_manpages(source, "tool", tmp_path, version="1.2.3") == []
+    assert discover_repo_manpages(source, "tool", tmp_path, version="1.2.3")[0] == []
     assert lookups == 1
 
 
@@ -60,7 +60,9 @@ def test_versioned_probe_cache_skips_network_for_positive_and_negative_results(
         "_discover_remote_manpage_result",
         lambda *args: pages._ProbeResult([page], True),
     )
-    assert discover_repo_manpages(source, "tool", tmp_path, version="1.2.3") == [page]
+    assert discover_repo_manpages(source, "tool", tmp_path, version="1.2.3")[0] == [
+        page
+    ]
 
     monkeypatch.setattr(
         repository, "_find_matching_tag", lambda *args: pytest.fail("network used")
@@ -70,7 +72,9 @@ def test_versioned_probe_cache_skips_network_for_positive_and_negative_results(
         "_discover_remote_manpage_result",
         lambda *args: pytest.fail("network used"),
     )
-    assert discover_repo_manpages(source, "tool", tmp_path, version="1.2.3") == [page]
+    assert discover_repo_manpages(source, "tool", tmp_path, version="1.2.3")[0] == [
+        page
+    ]
 
     missing = RepoSource(name="missing", target="owner/missing", is_local=False)
     monkeypatch.setattr(
@@ -78,13 +82,17 @@ def test_versioned_probe_cache_skips_network_for_positive_and_negative_results(
         "_find_matching_tag_cached_result",
         lambda *args: (None, True),
     )
-    assert discover_repo_manpages(missing, "missing", tmp_path, version="1.2.3") == []
+    assert (
+        discover_repo_manpages(missing, "missing", tmp_path, version="1.2.3")[0] == []
+    )
     monkeypatch.setattr(
         repository,
         "_find_matching_tag_cached_result",
         lambda *args: pytest.fail("network used"),
     )
-    assert discover_repo_manpages(missing, "missing", tmp_path, version="1.2.3") == []
+    assert (
+        discover_repo_manpages(missing, "missing", tmp_path, version="1.2.3")[0] == []
+    )
 
 
 def test_definitive_versioned_probe_miss_skips_tree_and_release_on_second_call(
@@ -112,7 +120,7 @@ def test_definitive_versioned_probe_miss_skips_tree_and_release_on_second_call(
         release, "_discover_github_release_manpages_result", release_probe
     )
 
-    assert discover_repo_manpages(source, "tool", tmp_path, version="1.2.3") == []
+    assert discover_repo_manpages(source, "tool", tmp_path, version="1.2.3")[0] == []
     assert (tree_calls, release_calls) == (1, 1)
 
     monkeypatch.setattr(
@@ -125,7 +133,7 @@ def test_definitive_versioned_probe_miss_skips_tree_and_release_on_second_call(
         "_discover_github_release_manpages_result",
         lambda *args: pytest.fail("release used"),
     )
-    assert discover_repo_manpages(source, "tool", tmp_path, version="1.2.3") == []
+    assert discover_repo_manpages(source, "tool", tmp_path, version="1.2.3")[0] == []
 
 
 def test_expired_definitive_probe_miss_refreshes(
@@ -151,9 +159,9 @@ def test_expired_definitive_probe_miss_refreshes(
     )
     source = RepoSource(name="tool", target="owner/tool", is_local=False)
 
-    assert discover_repo_manpages(source, "tool", tmp_path, version="1.2.3") == []
+    assert discover_repo_manpages(source, "tool", tmp_path, version="1.2.3")[0] == []
     now += cache._DEFINITIVE_ABSENCE_TTL + 1
-    assert discover_repo_manpages(source, "tool", tmp_path, version="1.2.3") == []
+    assert discover_repo_manpages(source, "tool", tmp_path, version="1.2.3")[0] == []
     assert calls == 2
 
 
@@ -178,8 +186,8 @@ def test_transient_probe_failure_is_not_cached(
     )
     source = RepoSource(name="tool", target="owner/tool", is_local=False)
 
-    assert discover_repo_manpages(source, "tool", tmp_path, version="1.2.3") == []
-    assert discover_repo_manpages(source, "tool", tmp_path, version="1.2.3") == []
+    assert discover_repo_manpages(source, "tool", tmp_path, version="1.2.3")[0] == []
+    assert discover_repo_manpages(source, "tool", tmp_path, version="1.2.3")[0] == []
     assert tree_calls == 2
 
 
@@ -208,8 +216,8 @@ def test_tree_failure_does_not_cache_a_definitive_release_miss(
     )
     source = RepoSource(name="tool", target="owner/tool", is_local=False)
 
-    assert discover_repo_manpages(source, "tool", tmp_path, version="1.2.3") == []
-    assert discover_repo_manpages(source, "tool", tmp_path, version="1.2.3") == []
+    assert discover_repo_manpages(source, "tool", tmp_path, version="1.2.3")[0] == []
+    assert discover_repo_manpages(source, "tool", tmp_path, version="1.2.3")[0] == []
     assert (tree_calls, release_calls) == (2, 2)
 
 
@@ -230,8 +238,8 @@ def test_malformed_release_metadata_does_not_cache_the_probe(
     monkeypatch.setattr(cache, "_download", lambda *args: (b"[]", True))
     source = RepoSource(name="tool", target="owner/tool", is_local=False)
 
-    assert discover_repo_manpages(source, "tool", tmp_path, version="1.2.3") == []
-    assert discover_repo_manpages(source, "tool", tmp_path, version="1.2.3") == []
+    assert discover_repo_manpages(source, "tool", tmp_path, version="1.2.3")[0] == []
+    assert discover_repo_manpages(source, "tool", tmp_path, version="1.2.3")[0] == []
     assert tree_calls == 2
 
 
@@ -277,8 +285,8 @@ def test_concurrent_definitive_probe_misses_are_single_flight(
             for _ in range(3)
         ]
         release_tree.set()
-        assert first.result() == []
-        assert [future.result() for future in rest] == [[], [], []]
+        assert first.result()[0] == []
+        assert [future.result()[0] for future in rest] == [[], [], []]
 
     assert calls == 1
 
@@ -315,7 +323,7 @@ def test_concurrent_binaries_share_tag_and_release_metadata(
             executor.map(
                 lambda binary: discover_repo_manpages(
                     source, binary, tmp_path, version="1.2.3"
-                ),
+                )[0],
                 ["tool", "tool-a", "tool-b", "tool-c"],
             )
         )
@@ -337,5 +345,5 @@ def test_malformed_upstream_cache_is_replaced(
     path.write_text("not json", encoding="utf-8")
     monkeypatch.setattr(repository, "_find_matching_tag", lambda *args: (None, False))
 
-    assert discover_repo_manpages(source, "tool", tmp_path, version="1.2.3") == []
+    assert discover_repo_manpages(source, "tool", tmp_path, version="1.2.3")[0] == []
     assert not path.exists()

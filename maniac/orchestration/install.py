@@ -94,9 +94,10 @@ def run_install(
 
     tool = resolve_tool(tool_name, config=cfg, bin_dir=bin_dir)
 
-    outcome = _try_install_root(tool, force=force, dry_run=dry_run) or _try_repository(
-        tool, force=force, dry_run=dry_run
-    )
+    outcome = _try_install_root(tool, force=force, dry_run=dry_run)
+    if outcome is not None:
+        return outcome
+    outcome, repository_definitive = _try_repository(tool, force=force, dry_run=dry_run)
     if outcome is not None:
         return outcome
     if no_synthesize:
@@ -107,6 +108,16 @@ def run_install(
                 "no install-root or repository page found "
                 "(tried tiers 1-2 only; rerun without --no-synthesize to synthesize)"
             ),
+        )
+    if not repository_definitive:
+        source = tool.documentation_source
+        detail = source.identity if source is not None else "the upstream repository"
+        raise InstallRefused(
+            f"Could not confirm whether {detail} has a manpage for '{tool_name}' -- "
+            "the tier-2 repository check failed rather than returning a "
+            "definitive answer, so synthesizing over it could silently paper "
+            "over a network or git failure. Rerun once the check can complete, "
+            "or pass --no-synthesize to accept tiers 1-2 only."
         )
 
     from .pipeline import synthesize  # deferred: tier 3 only, never on --no-synthesize
@@ -241,7 +252,7 @@ def _try_install_root(
 
 def _try_repository(
     tool: ResolvedTool, *, force: bool, dry_run: bool
-) -> InstallOutcome | None:
+) -> tuple[InstallOutcome | None, bool]:
     """Tier 2: a hand-authored page fetched from the resolved repository at the matching tag.
 
     Refuses rather than guesses in two cases ADR-0016 calls out: no
@@ -250,16 +261,21 @@ def _try_repository(
     (`discover_repo_manpage`'s `version=` argument -> `resolve_repo_dir`).
     A page that clears both is still checked against the binary it claims
     to document (`manpage_documents`) before being trusted verbatim.
+
+    The `bool` alongside the outcome is whether a `None` outcome is a
+    definitive tier-2 miss (nothing to install, safe to fall through) or a
+    probe that failed to complete (`run_install` refuses synthesis rather
+    than treat that the same as a definitive absence).
     """
     inst = tool.installation
     if inst is None or inst.version is None:
-        return None
+        return None, True
     source = tool.documentation_source
     if source is None:
-        return None
+        return None, True
     cfg = tool.config
 
-    candidate = select_repository(
+    candidate, definitive = select_repository(
         source,
         inst.binary,
         cache_dir=tool.cache_dir,
@@ -268,7 +284,7 @@ def _try_repository(
         discover=discover_repo_manpages,
     )
     if candidate is None:
-        return None
+        return None, definitive
     # Every page of the group installs somewhere (ADR-0042, ADR-0046) --
     # a companion's own destination refuses the whole group before any of
     # them is materialized, not only the primary's.
@@ -278,13 +294,16 @@ def _try_repository(
         )
 
     if dry_run:
-        return InstallOutcome(
-            tool=inst.binary,
-            tier=Tier.REPOSITORY,
-            detail=f"upstream manpage from repository ({inst.version})"
-            "   [dry run, no synthesis]",
-            source_path=candidate.primary.path,
-            installed_path=None,
+        return (
+            InstallOutcome(
+                tool=inst.binary,
+                tier=Tier.REPOSITORY,
+                detail=f"upstream manpage from repository ({inst.version})"
+                "   [dry run, no synthesis]",
+                source_path=candidate.primary.path,
+                installed_path=None,
+            ),
+            True,
         )
 
     installed_path: Path | None = None
@@ -341,12 +360,15 @@ def _try_repository(
         _prune_dropped_group_members(group, kept, txn, cfg)
     assert installed_path is not None
     detail = f"upstream manpage from repository ({inst.version})   [no synthesis]"
-    return InstallOutcome(
-        tool=inst.binary,
-        tier=Tier.REPOSITORY,
-        detail=detail,
-        source_path=candidate.primary.path,
-        installed_path=installed_path,
+    return (
+        InstallOutcome(
+            tool=inst.binary,
+            tier=Tier.REPOSITORY,
+            detail=detail,
+            source_path=candidate.primary.path,
+            installed_path=installed_path,
+        ),
+        True,
     )
 
 

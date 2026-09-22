@@ -213,7 +213,10 @@ def test_run_install_falls_through_to_repository_when_no_install_root_page(
     page.write_text(".TH TOOL 1\n", encoding="utf-8")
     monkeypatch.setattr(
         "maniac.orchestration.install.discover_repo_manpages",
-        lambda source, binary, cache_dir=None, config=None, version=None: [page],
+        lambda source, binary, cache_dir=None, config=None, version=None: (
+            [page],
+            True,
+        ),
     )
     monkeypatch.setattr(
         "maniac.orchestration.install.install_manpage",
@@ -246,7 +249,10 @@ def test_run_install_dry_run_tier2_writes_nothing(
     page.write_text(".TH TOOL 1\n", encoding="utf-8")
     monkeypatch.setattr(
         "maniac.orchestration.install.discover_repo_manpages",
-        lambda source, binary, cache_dir=None, config=None, version=None: [page],
+        lambda source, binary, cache_dir=None, config=None, version=None: (
+            [page],
+            True,
+        ),
     )
     monkeypatch.setattr(
         "maniac.orchestration.install.install_manpage",
@@ -355,14 +361,14 @@ def test_try_repository_without_an_installed_version_is_none(tmp_path: Path) -> 
     provider = _FakeProvider(source=source)
     tool = _resolved_tool(tmp_path, provider=provider, inst=_installation(version=None))
 
-    assert _try_repository(tool, force=False, dry_run=False) is None
+    assert _try_repository(tool, force=False, dry_run=False) == (None, True)
 
 
 def test_try_repository_without_a_documentation_source_is_none(tmp_path: Path) -> None:
     provider = _FakeProvider(source=None)
     tool = _resolved_tool(tmp_path, provider=provider, inst=_installation())
 
-    assert _try_repository(tool, force=False, dry_run=False) is None
+    assert _try_repository(tool, force=False, dry_run=False) == (None, True)
 
 
 def test_try_repository_with_no_candidate_is_none(
@@ -373,10 +379,10 @@ def test_try_repository_with_no_candidate_is_none(
     tool = _resolved_tool(tmp_path, provider=provider, inst=_installation())
     monkeypatch.setattr(
         "maniac.orchestration.install.discover_repo_manpages",
-        lambda *args, **kwargs: [],
+        lambda *args, **kwargs: ([], True),
     )
 
-    assert _try_repository(tool, force=False, dry_run=False) is None
+    assert _try_repository(tool, force=False, dry_run=False) == (None, True)
 
 
 def test_try_repository_dry_run_reports_the_page_without_installing(
@@ -389,12 +395,13 @@ def test_try_repository_dry_run_reports_the_page_without_installing(
     tool = _resolved_tool(tmp_path, provider=provider, inst=_installation())
     monkeypatch.setattr(
         "maniac.orchestration.install.discover_repo_manpages",
-        lambda *args, **kwargs: [page],
+        lambda *args, **kwargs: ([page], True),
     )
 
-    outcome = _try_repository(tool, force=False, dry_run=True)
+    outcome, definitive = _try_repository(tool, force=False, dry_run=True)
 
     assert outcome is not None
+    assert definitive is True
     assert outcome.tier is Tier.REPOSITORY
     assert outcome.installed_path is None
     assert outcome.source_path == page
@@ -411,7 +418,7 @@ def test_try_repository_installs_the_page(
     tool = _resolved_tool(tmp_path, provider=provider, inst=_installation())
     monkeypatch.setattr(
         "maniac.orchestration.install.discover_repo_manpages",
-        lambda *args, **kwargs: [page],
+        lambda *args, **kwargs: ([page], True),
     )
     monkeypatch.setattr(
         "maniac.orchestration.install.install_manpage",
@@ -420,9 +427,10 @@ def test_try_repository_installs_the_page(
         ),
     )
 
-    outcome = _try_repository(tool, force=False, dry_run=False)
+    outcome, definitive = _try_repository(tool, force=False, dry_run=False)
 
     assert outcome is not None
+    assert definitive is True
     assert outcome.tier is Tier.REPOSITORY
     assert outcome.installed_path == Path("/installed/tool.1")
 
@@ -442,9 +450,11 @@ def test_run_install_uses_the_exact_tmux_documentation_repository(
     )
     observed: list[RepoSource] = []
 
-    def discover(source: RepoSource, *args: object, **kwargs: object) -> list[Path]:
+    def discover(
+        source: RepoSource, *args: object, **kwargs: object
+    ) -> tuple[list[Path], bool]:
         observed.append(source)
-        return [page]
+        return [page], True
 
     monkeypatch.setattr("maniac.orchestration.install.discover_repo_manpages", discover)
     monkeypatch.setattr(
@@ -475,7 +485,10 @@ def test_run_install_tier2_rejects_a_page_naming_a_different_binary(
     page.write_text(".TH SOMETHINGELSE 1\n", encoding="utf-8")
     monkeypatch.setattr(
         "maniac.orchestration.install.discover_repo_manpages",
-        lambda source, binary, cache_dir=None, config=None, version=None: [page],
+        lambda source, binary, cache_dir=None, config=None, version=None: (
+            [page],
+            True,
+        ),
     )
 
     from maniac.models import PipelineResult
@@ -544,7 +557,9 @@ def test_run_install_tier2_skipped_without_an_installed_version(
     )
     called = False
 
-    def _discover_repo_manpages(*args: object, **kwargs: object) -> list[Path]:
+    def _discover_repo_manpages(
+        *args: object, **kwargs: object
+    ) -> tuple[list[Path], bool]:
         nonlocal called
         called = True
         raise AssertionError("tier 2 must not run without an installed version")
@@ -586,7 +601,7 @@ def test_run_install_installs_all_anchored_release_manpages(
     )
     monkeypatch.setattr(
         "maniac.orchestration.install.discover_repo_manpages",
-        lambda *args, **kwargs: [primary, companion],
+        lambda *args, **kwargs: ([primary, companion], True),
     )
 
     outcome = run_install("eza", no_synthesize=True, force=True, config=cfg)
@@ -642,7 +657,7 @@ def _resolve_eza_release(monkeypatch: pytest.MonkeyPatch, pages: list[Path]) -> 
     )
     monkeypatch.setattr(
         "maniac.orchestration.install.discover_repo_manpages",
-        lambda *args, **kwargs: list(pages),
+        lambda *args, **kwargs: (list(pages), True),
     )
 
 
@@ -992,6 +1007,63 @@ def test_run_install_refusal_runs_no_tier(
 
     with pytest.raises(InstallRefused):
         run_install("tool")
+
+
+def test_run_install_refuses_synthesis_after_a_non_definitive_repository_probe(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A tier-2 probe that fails to complete (network or git error) is not a
+    definitive absence: `run_install` must refuse to synthesize over it
+    rather than treat the failure the same as a repository genuinely
+    checked and found lacking.
+    """
+    source = RepoSource(name="tool", target="owner/tool", is_local=False)
+    provider = _FakeProvider(local_docs=[], source=source)
+    inst = _installation()
+    monkeypatch.setattr(
+        "maniac.orchestration.context.resolution.find_installation",
+        lambda name, bin_dir=None: (provider, inst),
+    )
+    monkeypatch.setattr(
+        "maniac.orchestration.install.discover_repo_manpages",
+        lambda *args, **kwargs: ([], False),
+    )
+    monkeypatch.setattr(
+        "maniac.orchestration.pipeline.find_subcommands",
+        lambda cmd, **kwargs: pytest.fail("synthesis must not run"),
+    )
+
+    with pytest.raises(InstallRefused) as excinfo:
+        run_install("tool")
+
+    message = str(excinfo.value)
+    assert "owner/tool" in message
+    assert "tier-2" in message
+
+
+def test_run_install_no_synthesize_still_works_on_a_non_definitive_probe(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`--no-synthesize` never reaches synthesis anyway, so a non-definitive
+    tier-2 probe does not change its (already refusal-free) behavior --
+    only the path that would otherwise reach `synthesize` gains a refusal.
+    """
+    source = RepoSource(name="tool", target="owner/tool", is_local=False)
+    provider = _FakeProvider(local_docs=[], source=source)
+    inst = _installation()
+    monkeypatch.setattr(
+        "maniac.orchestration.context.resolution.find_installation",
+        lambda name, bin_dir=None: (provider, inst),
+    )
+    monkeypatch.setattr(
+        "maniac.orchestration.install.discover_repo_manpages",
+        lambda *args, **kwargs: ([], False),
+    )
+
+    outcome = run_install("tool", no_synthesize=True)
+
+    assert outcome.tier is None
+    assert "tiers 1-2 only" in outcome.detail
 
 
 def test_run_install_explicit_bin_dir_bypasses_the_refusal(
@@ -1356,7 +1428,7 @@ def test_run_install_tier2_refuses_a_foreign_companion_destination(
     )
     monkeypatch.setattr(
         "maniac.orchestration.install.discover_repo_manpages",
-        lambda *args, **kwargs: [primary, companion],
+        lambda *args, **kwargs: ([primary, companion], True),
     )
     monkeypatch.setattr(
         "maniac.lifecycle.link_manpath_entry",
@@ -1397,7 +1469,7 @@ def test_run_install_tier2_force_bypasses_the_widened_precheck(
     )
     monkeypatch.setattr(
         "maniac.orchestration.install.discover_repo_manpages",
-        lambda *args, **kwargs: [primary, companion],
+        lambda *args, **kwargs: ([primary, companion], True),
     )
 
     outcome = run_install("eza", no_synthesize=True, force=True, config=cfg)
@@ -1515,7 +1587,7 @@ def test_run_install_dry_run_tier3_writes_nothing(
     )
     monkeypatch.setattr(
         "maniac.orchestration.install.discover_repo_manpages",
-        lambda *args, **kwargs: [],
+        lambda *args, **kwargs: ([], True),
     )
     monkeypatch.setattr(
         "maniac.orchestration.pipeline.find_subcommands",
@@ -1566,7 +1638,7 @@ def test_run_install_dry_run_tier3_without_pandoc_reports_no_page(
     )
     monkeypatch.setattr(
         "maniac.orchestration.install.discover_repo_manpages",
-        lambda *args, **kwargs: [],
+        lambda *args, **kwargs: ([], True),
     )
     monkeypatch.setattr(
         "maniac.orchestration.pipeline.find_subcommands",
@@ -1633,7 +1705,7 @@ def test_install_reaching_tier_3_resolves_the_tool_once_not_twice(
     # falls through to a real (dry-run) tier-3 synthesis.
     monkeypatch.setattr(
         "maniac.orchestration.install.discover_repo_manpages",
-        lambda *args, **kwargs: [],
+        lambda *args, **kwargs: ([], True),
     )
     monkeypatch.setattr(
         "maniac.orchestration.pipeline.find_subcommands",

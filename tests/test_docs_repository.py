@@ -122,8 +122,9 @@ def test_discover_repo_manpage_uses_a_bare_cache_without_clone_or_checkout(
     monkeypatch.setattr(subprocess, "run", fake_run)
     source = RepoSource(name="tool", target="owner/tool", is_local=False)
 
-    manpage = discover_repo_manpage(source, "tool", cache_dir=tmp_path)
+    manpage, definitive = discover_repo_manpage(source, "tool", cache_dir=tmp_path)
     assert manpage is not None
+    assert definitive is True
     assert manpage.read_text(encoding="utf-8") == ".TH TOOL 1\n"
     assert discovered_manpage_uri(manpage) == (
         "https://github.com/owner/tool/blob/HEAD/man/tool.1"
@@ -368,9 +369,12 @@ def test_discover_repo_manpage_with_version_fetches_the_exact_tag(
     monkeypatch.setattr(repository, "_git_bytes", lambda *args: b".TH TOOL 1\n")
     source = RepoSource(name="tool", target="owner/tool", is_local=False)
 
-    manpage = discover_repo_manpage(source, "tool", cache_dir=tmp_path, version="1.2.3")
+    manpage, definitive = discover_repo_manpage(
+        source, "tool", cache_dir=tmp_path, version="1.2.3"
+    )
 
     assert manpage is not None
+    assert definitive is True
     assert fetched == [["v1.2.3", "refs/tags/v1.2.3"]]
     assert discovered_manpage_uri(manpage) == (
         "https://github.com/owner/tool/blob/v1.2.3/tool.1"

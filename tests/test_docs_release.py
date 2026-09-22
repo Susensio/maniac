@@ -79,8 +79,11 @@ def test_github_release_assets_accept_only_actual_matching_manpage(
     )
     source = RepoSource(name="eza", target="eza-community/eza", is_local=False)
 
-    page = discover_repo_manpage(source, "eza", cache_dir=tmp_path, version="0.23.5")
+    page, definitive = discover_repo_manpage(
+        source, "eza", cache_dir=tmp_path, version="0.23.5"
+    )
     assert page is not None
+    assert definitive is True
     assert page.read_text(encoding="utf-8") == ".TH EZA 1\n"
 
 
@@ -123,7 +126,9 @@ def test_github_release_archive_keeps_valid_companion_manpages(
     )
     source = RepoSource(name="eza", target="eza-community/eza", is_local=False)
 
-    found = discover_repo_manpages(source, "eza", cache_dir=tmp_path, version="0.23.5")
+    found, _ = discover_repo_manpages(
+        source, "eza", cache_dir=tmp_path, version="0.23.5"
+    )
 
     assert [page.name for page in found] == [
         "eza.1",
@@ -163,7 +168,7 @@ def test_release_probe_skips_large_non_man_archives(
     source = RepoSource(name="eza", target="eza-community/eza", is_local=False)
 
     assert (
-        discover_repo_manpages(source, "eza", cache_dir=tmp_path, version="0.23.5")
+        discover_repo_manpages(source, "eza", cache_dir=tmp_path, version="0.23.5")[0]
         == []
     )
     assert requested == [
@@ -184,7 +189,8 @@ def test_malformed_release_asset_degrades_to_missing(
     monkeypatch.setattr(repository, "_find_matching_tag", lambda *args: ("v1.0", True))
     source = RepoSource(name="tool", target="owner/tool", is_local=False)
     assert (
-        discover_repo_manpage(source, "tool", cache_dir=tmp_path, version="1.0") is None
+        discover_repo_manpage(source, "tool", cache_dir=tmp_path, version="1.0")[0]
+        is None
     )
 
 
@@ -201,7 +207,8 @@ def test_non_object_release_metadata_degrades_to_missing(
     source = RepoSource(name="tool", target="owner/tool", is_local=False)
 
     assert (
-        discover_repo_manpages(source, "tool", cache_dir=tmp_path, version="1.0") == []
+        discover_repo_manpages(source, "tool", cache_dir=tmp_path, version="1.0")[0]
+        == []
     )
 
 

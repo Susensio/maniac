@@ -68,7 +68,7 @@ def probe_upstream(
 ) -> ProbePage | None:
     """Return tier 2's version-matched manpage for one unresolved row."""
     try:
-        candidate = select_repository(
+        candidate, definitive = select_repository(
             source,
             inst.binary,
             cache_dir=cfg.cache_dir,
@@ -78,6 +78,15 @@ def probe_upstream(
             page_uri=discovered_manpage_uri,
         )
         if candidate is None:
+            if not definitive:
+                # A listing row is advisory, not a refusal point (ADR-0016's
+                # refuse-on-non-definitive applies to install's synthesis
+                # fallback, not this display) -- note it and move on.
+                logger.debug(
+                    "Tier-2 repository check did not complete",
+                    tool=inst.binary,
+                    source=source.identity,
+                )
             return None
         return candidate.primary.path, candidate.primary.uri
     except (OSError, UnicodeError) as error:

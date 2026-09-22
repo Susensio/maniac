@@ -85,26 +85,32 @@ def select_repository(
     cache_dir: str | Path | None = None,
     config: Config | None = None,
     version: str | None = None,
-    discover: Callable[..., list[Path] | Path | None] | None = None,
+    discover: Callable[..., tuple[list[Path] | Path | None, bool]] | None = None,
     page_uri: Callable[[Path], str | None] | None = None,
-) -> RepositoryCandidate | None:
-    """Probe a repository explicitly, requiring positive remote version evidence."""
+) -> tuple[RepositoryCandidate | None, bool]:
+    """Probe a repository explicitly, requiring positive remote version evidence.
+
+    The `bool` alongside the candidate is whether the probe was definitive --
+    see `docs.discover_repo_manpage`. `None` candidate with `definitive=False`
+    means the probe itself failed, not that the repository was checked and
+    found lacking.
+    """
     if not isinstance(source, LocalRepoSource) and version is None:
-        return None
+        return None, True
     discover = discover or discover_repo_manpages
     page_uri = page_uri or discovered_manpage_uri
-    result = discover(
+    result, definitive = discover(
         source, binary, cache_dir=cache_dir, config=config, version=version
     )
     found = [result] if isinstance(result, Path) else result or []
     if not found:
-        return None
+        return None, definitive
     # Discovery normally validated this already; retain the boundary check for
     # a materialized page supplied by another adapter.
     if found[0].exists() and not manpage_documents(
         read_manpage_source(found[0]), binary
     ):
-        return None
+        return None, definitive
     pages = tuple(
         CandidatePage(
             page,
@@ -114,9 +120,12 @@ def select_repository(
         )
         for page in found
     )
-    return RepositoryCandidate(
-        source=source,
-        pages=pages,
-        primary=pages[0],
-        version_matched=None if isinstance(source, LocalRepoSource) else True,
+    return (
+        RepositoryCandidate(
+            source=source,
+            pages=pages,
+            primary=pages[0],
+            version_matched=None if isinstance(source, LocalRepoSource) else True,
+        ),
+        definitive,
     )

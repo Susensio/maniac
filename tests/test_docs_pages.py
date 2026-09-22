@@ -13,7 +13,7 @@ def test_discover_repo_manpage_local(tmp_path: Path) -> None:
         name="tool", target=f"LOCAL:{tmp_path}", is_local=True, local_path=tmp_path
     )
 
-    assert discover_repo_manpage(source, "tool") == manpage
+    assert discover_repo_manpage(source, "tool") == (manpage, True)
 
 
 def test_discover_repo_manpage_rejects_a_page_naming_a_different_binary(
@@ -26,7 +26,7 @@ def test_discover_repo_manpage_rejects_a_page_naming_a_different_binary(
         name="tool", target=f"LOCAL:{tmp_path}", is_local=True, local_path=tmp_path
     )
 
-    assert discover_repo_manpage(source, "tool") is None
+    assert discover_repo_manpage(source, "tool") == (None, True)
 
 
 def test_discover_repo_manpage_no_match_returns_none(tmp_path: Path) -> None:
@@ -34,7 +34,7 @@ def test_discover_repo_manpage_no_match_returns_none(tmp_path: Path) -> None:
         name="tool", target=f"LOCAL:{tmp_path}", is_local=True, local_path=tmp_path
     )
 
-    assert discover_repo_manpage(source, "tool") is None
+    assert discover_repo_manpage(source, "tool") == (None, True)
 
 
 def test_materialize_page_replaces_an_interrupted_write(tmp_path: Path) -> None:

@@ -65,7 +65,9 @@ def test_repository_candidate_requires_a_version_for_remote_and_keeps_page_uris(
     remote = RemoteRepoSource.from_identifier("tool", "owner/tool")
     local = LocalRepoSource("tool", tmp_path)
     monkeypatch.setattr(
-        candidates, "discover_repo_manpages", lambda *args, **kwargs: [first, second]
+        candidates,
+        "discover_repo_manpages",
+        lambda *args, **kwargs: ([first, second], True),
     )
     monkeypatch.setattr(
         candidates,
@@ -73,12 +75,13 @@ def test_repository_candidate_requires_a_version_for_remote_and_keeps_page_uris(
         lambda page: f"https://example.test/{page.name}",
     )
 
-    assert candidates.select_repository(remote, "tool") is None
-    evidence = candidates.select_repository(remote, "tool", version="1.0")
+    assert candidates.select_repository(remote, "tool") == (None, True)
+    evidence, definitive = candidates.select_repository(remote, "tool", version="1.0")
     assert evidence is not None
+    assert definitive is True
     assert evidence.version_matched is True
     assert [page.uri for page in evidence.pages] == [
         "https://example.test/tool.1",
         "https://example.test/tool-extra.1",
     ]
-    assert candidates.select_repository(local, "tool") is not None
+    assert candidates.select_repository(local, "tool")[0] is not None

@@ -65,10 +65,10 @@ def test_streaming_list_renders_checking_before_a_blocked_probe_finishes(
     probe_started = threading.Event()
     release_probe = threading.Event()
 
-    def blocked_probe(*args: object, **kwargs: object) -> Path:
+    def blocked_probe(*args: object, **kwargs: object) -> tuple[Path, bool]:
         probe_started.set()
         assert release_probe.wait(timeout=2)
-        return Path("/page")
+        return Path("/page"), True
 
     monkeypatch.setattr("maniac.listing.upstream.discover_repo_manpage", blocked_probe)
 
@@ -1393,7 +1393,7 @@ def test_cli_list_pipe_available_waits_for_upstream_classification(
     )
     monkeypatch.setattr(
         "maniac.listing.upstream.discover_repo_manpage",
-        lambda *args, **kwargs: Path("/fzf.1"),
+        lambda *args, **kwargs: (Path("/fzf.1"), True),
     )
 
     res = runner.invoke(app, ["list", "--available"])
