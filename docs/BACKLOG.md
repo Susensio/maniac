@@ -19,6 +19,13 @@ These are findings the work surfaced and deliberately did not take; they are fir
 
 ## Bugs and correctness
 
+- `misattributed` false-positives on a Debian package family that embeds its version into the package name itself.
+  `verify_external_page` (`maniac/sources/packages.py`) compares `_package_name(owner)` (dpkg's answer) against `_package_name(package)`, where `package` is `inst.package` -- the *provider's own* namespace, not Debian's.
+  Mise sets it to the installs-path `tool_id` segment (`maniac/sources/providers/mise.py`): `tealdeer` for `tldr`, `python` for `python`.
+  For tealdeer this happens to equal the apt package name too, so a real version lag correctly resolves to `outdated`.
+  Debian's own Python packaging embeds the minor version into the package name (`python3.12-minimal`, `python3.13`, ...), so mise's tool_id `python` never string-matches it, and the row reads `misattributed` on this machine (`python`, `pydoc3`, `python3-config`) even though `python3.12-minimal` genuinely is Python, just version-suffixed by Debian's own convention -- the same relationship tealdeer has to its apt package, expressed differently.
+  Found 2026-09-22 comparing the `tldr`/`python` rows in `maniac list`.
+  Telling "different software" from "same software, Debian's version-suffixed naming" needs evidence beyond string equality -- e.g. a known-prefix rule (`python3\.\d+`, `ruby\d+\.\d+`) or reading the package's source/`Provides:` field, not a guess.
 - Distinguish a wrong documentation repository from one that legitimately has no manpage.
   Flag-inventory overlap and whether the repository contains implementation source are possible evidence, but absence is a normal synthesis fallback and must not be treated as proof of misresolution.
 - Drop Mise-activated `$PATH` entries on a degraded login-path fallback, as venv and conda entries already are.
