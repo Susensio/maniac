@@ -24,6 +24,16 @@ Twelve names in that bin directory are five distinct programs.
 
 The system python is not shadowed away entirely: `/usr/bin/python` and `/usr/bin/python3` lose to `~/.local/bin`, but `python3.12` has no mise counterpart and resolves to `/usr/bin/python3.12` on its own.
 
+Provider package names and Debian package names are different namespaces, and any agreement between them is coincidence.
+Every provider sets `inst.package` from its own naming -- mise the installs-path segment, cargo the crate name, npm the `node_modules` segment.
+`tealdeer` matching apt's `tealdeer` was luck, not design, and `python` never matching `python3.12-minimal` was the same luck running out (ADR-0055).
+What rescues it is `${Source}`, which collapses split packages to one name -- `python3.12-minimal` and `libpython3.12-dev` both give `python3.12`, and `tealdeer` gives `rust-tealdeer`, confirmed live on this machine.
+Normalizing that through Debian's mechanical naming reaches the provider's name; normalizing the binary package name does not, because the `lib` prefix survives (`libpython3.12-dev` would reach `libpython`).
+
+After ADR-0055 phase 1 (`9302dff`), `python`, `pydoc3`, `python3-config` and `tldr` all read `outdated`, and no row reads `misattributed` -- `verify_external_page` cannot produce `WRONG_OWNER` at all until phase 2 lands.
+A green suite says nothing about that: the states are only visible by running `maniac list` in a real terminal, because piped output degrades to bare names (ADR-0018's accepted accident) and the Live view truncates rows below roughly 220 columns.
+Verifying a state change means a wide tmux pane, not a pipe.
+
 The 2026-09-21 owning-package work (`2f51106`) exposed three different real owners inside that one `python (4 binaries) unverified` group, confirmed live: `python`/`python3` are owned by `python3.12-minimal`, `pydoc3` by plain `python3.12`, `python3-config` by `libpython3.12-dev:amd64` (dpkg's raw output, architecture qualifier included -- `_package_name()` strips it only for the comparison, not for display).
 The collapsed row shows only one, per whichever member is representative; see `docs/BACKLOG.md`'s Source-link item.
 
