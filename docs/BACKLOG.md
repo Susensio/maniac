@@ -41,9 +41,6 @@ These are findings the work surfaced and deliberately did not take; they are fir
   Using it is Mise-specific, so decide whether the fallback gets per-provider evidence adapters or stays generic.
   Shim resolution remains unexercised: this machine has no populated shim directory, and `mise which -C $HOME` is cwd-sensitive and needs ADR-0029-style root validation.
 
-- Reconstruct tier-1 direct provider links, or accept losing them.
-  ADR-0046 refused: "not under `output_dir`" is not evidence of a provider root, and adopting one would let MANIAC replace and later remove a symlink the user owns.
-  The cost is that a fully lost manifest loses tier-1 ownership entirely. Real evidence would be a target resolving beneath a live provider install root, which `sources.candidates` can already establish.
 - Invalidate the process-local provider memoization that hides a mid-run filesystem change.
   `providers/uv.py`'s `_local_editable_dir` and `_installed_version` are `functools.cache`d by install root, and `providers/pipx.py`'s `find_distribution_metadata` is `functools.cache`d by `(root, package)`, neither with any invalidation.
   Reproduced on 2026-09-15: a uv editable checkout appearing after an earlier lookup still reads `None`, and a `METADATA` version rewritten between two calls for one root still reads the first value.
@@ -56,24 +53,10 @@ These are findings the work surfaced and deliberately did not take; they are fir
   Tier 2 installs the whole bundle as one unit (ADR-0042, ADR-0046); tier 1 does not, and nothing says why.
   A gap rather than a regression -- it predates the grouping work.
 
-### List performance
-
-- Do not reattempt a `maniac list` fact cache without reading ADR-0045 first.
-  Measured slower than no cache and abandoned; the implementation is archived unmerged at `feature/list-fact-cache` (`604581d`, measurements at `328c93c`).
-  Three of its findings are reasons a whole class of fact cannot be cached at all, not incidental details of that attempt.
-  ADR-0041 selected DiskCache for a store that no longer exists; ADR-0045 supersedes it.
-  `--no-cache` was deferred behind a contract that was never settled and is now moot.
-
 ### Maintainability
 
 - Decide whether `Config` binds XDG paths per instance or intentionally at import time, then make discovery consistent.
   Current frozen module globals make ordinary environment monkeypatches ineffective after import; this is a configuration-lifecycle decision deserving an ADR.
-- Resolve non-GitHub upstreams, or say plainly that they are unsupported.
-  `npm`, `pipx`, `uv`, `go`, `homebrew` and `cargo` all discard a repository URL that `discovery._clean_git_url` leaves unchanged, so a GitLab or Codeberg project resolves to nothing even when its metadata declares the URL outright.
-  This is one cross-provider policy, not six provider bugs; it pairs with the existing Source-link item, which already refuses to guess a browser-file URL for an unsupported host.
-  Supersedes "extend installation-derived package metadata fallback beyond npm": that gap is closed.
-  `uv` resolves via `Project-URL` and `direct_url.json`, `pipx` via `find_distribution_metadata`, `go` via module path, `homebrew` via `brew info`, and `cargo` now via the unpacked registry source's declared `repository`.
-  Never infer a repository from a bare executable name: prior collisions include `fmt` -> `nushell/nufmt`, `od` -> `todotxt/todo.txt-cli`, and GNU `envsubst` -> `a8m/envsubst`.
 - Record losing provider claims for a binary after first-PATH-entry selection.
   The visible winner is correct, but discarded competing claims prevent diagnostics when PATH hides a better-documented installation.
 - Tell transparent wrappers from genuinely different shadowing binaries only with evidence: compare `--version` for the first and later PATH occurrences.
@@ -84,14 +67,10 @@ These are findings the work surfaced and deliberately did not take; they are fir
 
 ## Features and discovery
 
-- Admit bounded documentation roots in monorepos, with OpenCode's versioned English `packages/web/src/content/docs` as the fixture.
-  Exclude dependency, build, translation, and unrelated workspace trees.
 - Add package-provenance discovery for system candidates, beginning with batched Debian `dpkg-query` ownership plus source/homepage/copyright evidence.
   Keep downstream package VCS distinct from upstream identity, and defer other package-manager adapters until real installations exist.
 - Extract bounded documentation from installed package roots and system packages: recognized local docs, Info pages, package metadata as supplementary context, and absolute-path help.
   Preserve each source's provenance.
-- Feed an installed manpage into synthesis as authoritative reference material for flags, defaults, exits, and structure.
-  Label it as reference evidence rather than a presentation model, so a poor page cannot anchor the generated result; validate the effect with `maniac compare`.
 - Add tldr-pages as an examples source, preferring an installed tealdeer cache before its release zip and recording provenance in generated output.
   Its examples are additive; do not substitute it for authoritative option documentation.
 - Consider Arch Wiki integration/configuration prose only after a reliable per-command extraction boundary exists.
@@ -101,8 +80,6 @@ These are findings the work surfaced and deliberately did not take; they are fir
   Narrowed by `maniac/sources/roff.py` (`0518507`, 2026-09-21): a page's own `.TH`/`.Dt` header now proves freshness on any system when it carries a parseable version, no package manager involved, so this item is now specifically about pages whose header carries no version at all and therefore need a native package-manager fact to fall back on -- not about Arch/RPM/Homebrew support in general.
 - Implement an update path for stale MANIAC-managed pages, including whether installation overwrites in place and when a vendor backup is retaken.
   Re-derive pre-version manifest entries by reinstalling rather than stamping current versions; make the repair resumable.
-- Add a dense-table row guide only if it improves tested light and dark terminal output.
-  A theme-safe alternating row style is the leading candidate.
 
 ## Verification and research
 
@@ -126,6 +103,27 @@ These are findings the work surfaced and deliberately did not take; they are fir
   The installation surface does not transfer directly, though: manpages have one convention (`MANPATH`), completions have three, one per shell (`~/.local/share/bash-completion/completions/`, zsh's `fpath`, fish's `~/.config/fish/completions/`), so this is closer in shape to a second product than an extension of `install_manpage`.
 
 ## Settled exclusions
+
+- Do not reconstruct tier-1 direct provider links.
+  ADR-0046 refused: "not under `output_dir`" is not evidence of a provider root, and adopting one would let MANIAC replace and later remove a symlink the user owns.
+  A fully lost manifest loses tier-1 ownership entirely as the accepted cost; real evidence would be a target resolving beneath a live provider install root, which `sources.candidates` can already establish, should that ever change.
+
+- Do not reattempt a `maniac list` fact cache without reading ADR-0045 first.
+  Measured slower than no cache and abandoned; the implementation is archived unmerged at `feature/list-fact-cache` (`604581d`, measurements at `328c93c`).
+  Three of its findings are reasons a whole class of fact cannot be cached at all, not incidental details of that attempt.
+  ADR-0041 selected DiskCache for a store that no longer exists; ADR-0045 supersedes it.
+  `--no-cache` was deferred behind a contract that was never settled and is now moot.
+
+- Do not resolve non-GitHub upstreams (GitLab, Codeberg) for now.
+  `npm`, `pipx`, `uv`, `go`, `homebrew` and `cargo` all discard a repository URL that `discovery._clean_git_url` leaves unchanged, so such a project resolves to nothing even when its metadata declares the URL outright.
+  Decided 2026-09-22: cut rather than deprioritized -- this machine's manifest has no tool that needs it (both entries are tier=synthesis), so the gap has zero real impact today.
+  Revisit if a real installed tool ever resolves to a non-GitHub host; it would be one cross-provider policy change, not six provider bugs, and it pairs with the Source-link exclusions below.
+  Never infer a repository from a bare executable name if this is revisited: prior collisions include `fmt` -> `nushell/nufmt`, `od` -> `todotxt/todo.txt-cli`, and GNU `envsubst` -> `a8m/envsubst`.
+
+- Do not admit bounded documentation roots in monorepos, feed an installed manpage into synthesis as reference material, or add a dense-table row guide.
+  Decided 2026-09-22 backlog triage: all three are speculative breadth beyond this solo installation's two real, both-synthesis-tier tools -- no current tool exercises a monorepo doc root or benefits from reference-anchored synthesis, and no one has asked for themed row striping.
+  Re-add if a real tool or a real complaint makes one of these concrete.
+
 - Do not thread `dry_run` into the discovery layer to stop `install --dry-run` writing to the repository cache.
   Decided 2026-09-16: the cache is disposable repository storage, so a preview populating it is not a mutation worth preventing.
   What dry-run must not touch is the manpath, the manifest, `output_dir` and `intermediate_dir`, and it does not -- it opens no manifest transaction either.
