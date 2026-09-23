@@ -19,14 +19,12 @@ These are findings the work surfaced and deliberately did not take; they are fir
 
 ## Bugs and correctness
 
-- Re-found `WRONG_OWNER` on canonical repository identity -- ADR-0055 phase 2.
-  Phase 1 landed (`9302dff`) and narrowed the state: unproven sameness now yields `UNVERIFIED`, so nothing in `verify_external_page` can produce `WRONG_OWNER` at all.
-  `ExternalPageFreshness.WRONG_OWNER`, `ActionState.MISATTRIBUTED`, the yellow band and `--misattributed` all remain wired up and working, reachable only once this lands; the dead branch carries a `TODO:` naming it.
-  The mechanism: read the owning package's `${Homepage}`, resolve both it and MANIAC's own upstream to GitHub's canonical numeric repository ID by following the API redirect, and treat two distinct IDs as positive disproof.
-  Verified live that this is what distinguishes a rename from a difference -- `api.github.com/repos/dbrgn/tealdeer` 301s to `/repositories/48739367`, the same repository mise's registry names `tealdeer-rs/tealdeer`.
-  Needs `${Homepage}` on the dpkg side, the resolved `RepoSource` threaded into `_external_page_state` (it and `resolve_upstream` are unconnected siblings in `_classify_and_resolve` today), a per-process cache, and graceful degradation to `UNVERIFIED` offline.
-  No row on this machine exercises it: phase 1 decides every real row, `${Homepage}` is empty on all three Python owners, and mise resolves no upstream at all for `core:` backends.
-  So it ships verifiable only by unit test against recorded redirects -- which is why it was not folded into phase 1.
+- Decide what a fork should mean to `verify_external_page`.
+  ADR-0055 phase 2 (`1e35eb3`) treats two distinct canonical GitHub repository IDs as positive disproof, without qualification.
+  A fork has its own ID, so where Debian's `${Homepage}` names the canonical upstream and a provider registry names an actively maintained fork of the same tool, the IDs diverge and the row reads `misattributed`.
+  That is within the decision as written rather than a deviation from it, but it is the most plausible real-world false positive, and it points the damaging way -- proving difference wrongly rather than failing to prove sameness.
+  No row on this machine is fork-shaped, so this is unobserved rather than reproduced; raised by the phase-2 audit.
+  Evidence that would separate a fork from different software is the question, and GitHub's API does expose `fork` and `parent` on the repository object.
 - Distinguish a wrong documentation repository from one that legitimately has no manpage.
   Flag-inventory overlap and whether the repository contains implementation source are possible evidence, but absence is a normal synthesis fallback and must not be treated as proof of misresolution.
 - Drop Mise-activated `$PATH` entries on a degraded login-path fallback, as venv and conda entries already are.

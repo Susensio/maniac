@@ -99,6 +99,12 @@ It now requires an owning package with a populated `${Homepage}`, a resolved ups
 No installation on this machine meets that, so the disproof path ships correct by construction and unexercised by any real row, covered only by unit tests against recorded redirect responses.
 That is a known gap, accepted because the alternative is leaving the state founded on an inference ADR-0026 rules out.
 
+A fork counts as positive disproof, which this decision accepts without qualifying it.
+A fork has its own repository ID, so where Debian's `${Homepage}` names the canonical upstream and a provider registry names an actively maintained fork of the same tool, the two IDs diverge and the row reads `misattributed`.
+That follows from "two distinct IDs prove difference" as written, and it points the damaging way: proving difference wrongly rather than failing to prove sameness.
+It is recorded here as a known edge of the rule rather than a defect in it, because no installation on this machine is fork-shaped and the alternative -- reading GitHub's `fork` and `parent` fields -- adds a second inference to a decision whose whole point was to stop inferring.
+`docs/BACKLOG.md` carries it for the day a fork-shaped row appears.
+
 The rewrite list is a maintenance surface that will grow as Debian's ecosystems do, and each addition is a small amendment to this ADR's warrant rather than a free change.
 A rewrite that proves wrong will misattribute rather than merely fail to attribute, which is the more damaging direction, so additions want a real package behind them and a test.
 

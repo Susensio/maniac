@@ -30,7 +30,10 @@ Every provider sets `inst.package` from its own naming -- mise the installs-path
 What rescues it is `${Source}`, which collapses split packages to one name -- `python3.12-minimal` and `libpython3.12-dev` both give `python3.12`, and `tealdeer` gives `rust-tealdeer`, confirmed live on this machine.
 Normalizing that through Debian's mechanical naming reaches the provider's name; normalizing the binary package name does not, because the `lib` prefix survives (`libpython3.12-dev` would reach `libpython`).
 
-After ADR-0055 phase 1 (`9302dff`), `python`, `pydoc3`, `python3-config` and `tldr` all read `outdated`, and no row reads `misattributed` -- `verify_external_page` cannot produce `WRONG_OWNER` at all until phase 2 lands.
+After ADR-0055 phase 1 (`9302dff`), `python`, `pydoc3`, `python3-config` and `tldr` all read `outdated`, and no row reads `misattributed`.
+Phase 2 (`1e35eb3`) re-founded `WRONG_OWNER` on canonical GitHub repository identity, so the state is reachable again -- but nothing on this machine reaches it, and that is structural rather than incidental.
+Phase 1 decides every real row before the question arises, `${Homepage}` is empty on all three Python owners, and mise resolves no upstream at all for `core:` backends.
+The disproof path is therefore held up by unit tests alone, which is why it was audited rather than merely run.
 A green suite says nothing about that: the states are only visible by running `maniac list` in a real terminal, because piped output degrades to bare names (ADR-0018's accepted accident) and the Live view truncates rows below roughly 220 columns.
 Verifying a state change means a wide tmux pane, not a pipe.
 
