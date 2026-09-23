@@ -155,10 +155,13 @@ def _classify_and_resolve(
 ) -> _LocalResult:
     """One row's local classification paired with its repository identity.
 
-    Identity is resolved for every row; only the remote page probe that
-    follows it stays gated on local evidence (`is_upstream_eligible`).
+    Identity is resolved first, and passed into `classify` so a Debian
+    `WRONG_OWNER` verdict can be checked against it (ADR-0055 phase 2); only
+    the remote page probe that follows stays gated on local evidence
+    (`is_upstream_eligible`).
     """
-    return classify(candidate, cfg, entries), resolve_upstream(candidate, config=cfg)
+    upstream = resolve_upstream(candidate, config=cfg)
+    return classify(candidate, cfg, entries, upstream=upstream), upstream
 
 
 def _with_probe_result(row: ToolRow, page: ProbePage | None) -> ToolRow:

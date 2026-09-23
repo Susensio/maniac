@@ -64,7 +64,7 @@ def _classification_pair(
     cfg: Config,
     entries: Any = None,
 ) -> tuple[ActionState, PageSource]:
-    result = classify(_candidate(provider, inst, tool), cfg, entries)
+    result = classify(_candidate(provider, inst, tool), cfg, entries, upstream=None)
     return result.state, result.source
 
 
@@ -1064,7 +1064,7 @@ def test_managed_page_keeps_content_provenance_separate_from_ownership(
         lambda man_bin, tool_name: installed,
     )
 
-    actual = classify(_candidate(None, None, "tool"), cfg)
+    actual = classify(_candidate(None, None, "tool"), cfg, upstream=None)
 
     assert actual.source is source
     assert actual.managed
@@ -1701,7 +1701,9 @@ def test_classify_surfaces_the_provable_external_owner(
         ),
     )
 
-    result = classify(_candidate(_FakeProvider(), _installation(), "python"), cfg)
+    result = classify(
+        _candidate(_FakeProvider(), _installation(), "python"), cfg, upstream=None
+    )
 
     assert result.state is ActionState.UNVERIFIED
     assert result.source is PageSource.SYSTEM
@@ -1712,11 +1714,11 @@ def test_classify_misattributed_when_dpkg_proves_a_different_owner(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """A provable owner that is not the candidate's own package is a
-    stronger finding than `UNVERIFIED` (ADR-0052), reachable once ADR-0055
-    phase 2 founds `WRONG_OWNER` on canonical repository identity --
-    `tmux`'s page cannot belong to a `python` installation under any
-    normalization, unlike `python3.12-minimal`/`python`, which ADR-0055
-    proved to be the same software."""
+    stronger finding than `UNVERIFIED` (ADR-0052), founded on canonical
+    repository identity since ADR-0055 phase 2 -- `tmux`'s page cannot
+    belong to a `python` installation under any normalization, unlike
+    `python3.12-minimal`/`python`, which ADR-0055 proved to be the same
+    software."""
     cfg = _config(tmp_path)
     installed = tmp_path / "usr" / "share" / "man" / "man1" / "python.1"
     monkeypatch.setattr(
@@ -1730,7 +1732,9 @@ def test_classify_misattributed_when_dpkg_proves_a_different_owner(
         ),
     )
 
-    result = classify(_candidate(_FakeProvider(), _installation(), "python"), cfg)
+    result = classify(
+        _candidate(_FakeProvider(), _installation(), "python"), cfg, upstream=None
+    )
 
     assert result.state is ActionState.MISATTRIBUTED
     assert result.source is PageSource.SYSTEM
@@ -1830,7 +1834,9 @@ def test_classify_roff_fallback_never_sets_owning_package(
         lambda page, **kwargs: ExternalPageFreshness.MATCH,
     )
 
-    result = classify(_candidate(_FakeProvider(), _installation(), "tool"), cfg)
+    result = classify(
+        _candidate(_FakeProvider(), _installation(), "tool"), cfg, upstream=None
+    )
 
     assert result.state is ActionState.OK
     assert result.owning_package is None
@@ -1976,7 +1982,7 @@ def test_classify_drift_true_when_manifest_entry_points_to_vanished_target(
         config=cfg,
     )
 
-    result = classify(_candidate(None, None, "tool"), cfg)
+    result = classify(_candidate(None, None, "tool"), cfg, upstream=None)
 
     assert result.drift is True
     assert result.state is ActionState.MISSING
@@ -2009,7 +2015,7 @@ def test_classify_drift_false_when_link_is_sound(
         lambda man_bin, tool_name: entry_path,
     )
 
-    result = classify(_candidate(None, None, "tool"), cfg)
+    result = classify(_candidate(None, None, "tool"), cfg, upstream=None)
 
     assert result.drift is False
     assert result.state is ActionState.OK
@@ -2030,7 +2036,7 @@ def test_classify_drift_false_for_pre_target_entry_with_page_present(
         config=cfg,
     )
 
-    result = classify(_candidate(None, None, "tool"), cfg)
+    result = classify(_candidate(None, None, "tool"), cfg, upstream=None)
 
     assert result.drift is False
 

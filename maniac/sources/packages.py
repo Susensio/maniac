@@ -7,6 +7,17 @@ from enum import Enum
 from functools import cache
 from pathlib import Path
 
+from ..models import RepoSource
+from .docs.cache import canonical_github_repository_id
+
+_GITHUB_URL = re.compile(r"^https?://github\.com/([\w.-]+/[\w.-]+?)(?:\.git)?/?$")
+
+
+def _github_identity(url: str) -> str | None:
+    """`owner/repo` from a GitHub repository URL, or `None`."""
+    match = _GITHUB_URL.match(url)
+    return match.group(1) if match else None
+
 
 class ExternalPageFreshness(Enum):
     """Package-backed conclusion for a reachable page outside an install root."""
@@ -25,8 +36,10 @@ class ExternalPageVerification:
     `freshness` -- a page can resolve to an owner `_same_software` cannot
     tie to the binary's own package (freshness stays `UNVERIFIED`, `owner`
     still set) just as easily as to no provable owner at all (`UNVERIFIED`,
-    `owner` `None`). `WRONG_OWNER` is unreachable from this module until
-    ADR-0055 phase 2 re-founds it on canonical repository identity.
+    `owner` `None`). `WRONG_OWNER` fires only once `${Homepage}` and the
+    resolved upstream resolve to two distinct canonical GitHub repository
+    IDs (ADR-0055 phase 2); absent evidence on either side, or a lookup
+    failure, still yields `UNVERIFIED`.
     """
 
     freshness: ExternalPageFreshness
@@ -136,6 +149,24 @@ def _debian_source(package: str) -> str | None:
     return source or package
 
 
+@cache
+def _debian_homepage(package: str) -> str | None:
+    """Debian `${Homepage}` for `package`, or `None` if blank or unreadable."""
+    try:
+        result = subprocess.run(
+            ["dpkg-query", "-W", "-f=${Homepage}", package],
+            capture_output=True,
+            check=False,
+            text=True,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0:
+        return None
+    homepage = result.stdout.strip()
+    return homepage or None
+
+
 def _same_software(owner: str, package: str) -> bool:
     """Whether Debian's `owner` and the provider's `package` name the same
     software: exact match first, then `${Source}` normalized toward
@@ -150,8 +181,39 @@ def _same_software(owner: str, package: str) -> bool:
     return _normalize_debian_name(source) == package_name
 
 
+def _wrong_owner_disproof(owner: str, upstream: RepoSource | None) -> bool | None:
+    """Whether `owner` and `upstream` prove different GitHub repositories.
+
+    `None` when sameness cannot be decided either way: no upstream, no
+    GitHub identity on either side, or a lookup failure (never fails a row
+    on an unreachable network). `False` when both resolve to the same
+    canonical ID, proving sameness. `True` only when both resolve and
+    disagree -- the sole path to `WRONG_OWNER` (ADR-0055 phase 2).
+    """
+    if upstream is None or upstream.clone_url is None:
+        return None
+    upstream_identity = _github_identity(upstream.clone_url)
+    if upstream_identity is None:
+        return None
+    homepage = _debian_homepage(owner)
+    if homepage is None:
+        return None
+    owner_identity = _github_identity(homepage)
+    if owner_identity is None:
+        return None
+    owner_id = canonical_github_repository_id(owner_identity)
+    upstream_id = canonical_github_repository_id(upstream_identity)
+    if owner_id is None or upstream_id is None:
+        return None
+    return owner_id != upstream_id
+
+
 def verify_external_page(
-    page: Path, *, package: str, version: str | None
+    page: Path,
+    *,
+    package: str,
+    version: str | None,
+    upstream: RepoSource | None = None,
 ) -> ExternalPageVerification:
     """Return Debian-backed freshness, alongside the owner it was checked against."""
     if version is None:
@@ -160,9 +222,11 @@ def verify_external_page(
     if owner is None:
         return ExternalPageVerification(ExternalPageFreshness.UNVERIFIED, None)
     if not _same_software(owner, package):
-        # TODO: phase 2 of ADR-0055 re-founds WRONG_OWNER on canonical
-        # repository identity; until then, unproven sameness is UNVERIFIED.
-        return ExternalPageVerification(ExternalPageFreshness.UNVERIFIED, owner)
+        disproof = _wrong_owner_disproof(owner, upstream)
+        if disproof is None:
+            return ExternalPageVerification(ExternalPageFreshness.UNVERIFIED, owner)
+        if disproof:
+            return ExternalPageVerification(ExternalPageFreshness.WRONG_OWNER, owner)
     package_version = _debian_version(owner)
     if package_version is None:
         return ExternalPageVerification(ExternalPageFreshness.UNVERIFIED, owner)
