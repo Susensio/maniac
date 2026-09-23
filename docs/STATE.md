@@ -30,10 +30,14 @@ Every provider sets `inst.package` from its own naming -- mise the installs-path
 What rescues it is `${Source}`, which collapses split packages to one name -- `python3.12-minimal` and `libpython3.12-dev` both give `python3.12`, and `tealdeer` gives `rust-tealdeer`, confirmed live on this machine.
 Normalizing that through Debian's mechanical naming reaches the provider's name; normalizing the binary package name does not, because the `lib` prefix survives (`libpython3.12-dev` would reach `libpython`).
 
-After ADR-0055 phase 1 (`9302dff`), `python`, `pydoc3`, `python3-config` and `tldr` all read `outdated`, and no row reads `misattributed`.
-Phase 2 (`1e35eb3`) re-founded `WRONG_OWNER` on canonical GitHub repository identity, so the state is reachable again -- but nothing on this machine reaches it, and that is structural rather than incidental.
-Phase 1 decides every real row before the question arises, `${Homepage}` is empty on all three Python owners, and mise resolves no upstream at all for `core:` backends.
-The disproof path is therefore held up by unit tests alone, which is why it was audited rather than merely run.
+After ADR-0055 phase 1 (`9302dff`), `python`, `pydoc3`, `python3-config` and `tldr` all read `outdated`.
+The `misattributed` state is gone entirely (ADR-0056, `454b861`), and an owner that cannot be tied to the installation reads `unverified` with the owning package still shown beside it.
+
+The measurement that killed it is worth not retaking.
+Of 601 installed packages owning something under `/usr/share/man`, 516 carry a `${Homepage}` and only 82 -- 15.9% -- name a `github.com` URL; the rest are metacpan (56), gnu.org (33), freedesktop.org (24), wiki.gnome.org (23), kernel.org (13).
+Of 80 `maniac list` rows here, five have a Debian-owned page at all, and all five normalize to a match under phase 1 before any identity check is reached.
+Mise's 1008-entry registry crossed against those packages yields exactly one genuine same-name-different-software collision: Debian's `coreutils` is GNU, mise's resolves to `aqua:uutils/coreutils`.
+It is invisible to a GitHub-identity test because Debian's homepage for it is `gnu.org` -- the evidence source was blind to its own motivating example, which is the fact that settled the question.
 A green suite says nothing about that: the states are only visible by running `maniac list` in a real terminal, because piped output degrades to bare names (ADR-0018's accepted accident) and the Live view truncates rows below roughly 220 columns.
 Verifying a state change means a wide tmux pane, not a pipe.
 
