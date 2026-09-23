@@ -41,12 +41,20 @@ It is invisible to a GitHub-identity test because Debian's homepage for it is `g
 A green suite says nothing about that: the states are only visible by running `maniac list` in a real terminal, because piped output degrades to bare names (ADR-0018's accepted accident) and the Live view truncates rows below roughly 220 columns.
 Verifying a state change means a wide tmux pane, not a pipe.
 
-The 2026-09-21 owning-package work (`2f51106`) exposed three different real owners inside that one `python (4 binaries) unverified` group, confirmed live: `python`/`python3` are owned by `python3.12-minimal`, `pydoc3` by plain `python3.12`, `python3-config` by `libpython3.12-dev:amd64` (dpkg's raw output, architecture qualifier included -- `_package_name()` strips it only for the comparison, not for display).
-The collapsed row shows only one, per whichever member is representative; see `docs/BACKLOG.md`'s Source-link item.
+`man` under the agent sandbox reads a different manpath than the user's shell, so `maniac list` verified there is not the table the user sees.
+`~/.local/share/man` lists fine but cannot be opened -- `man --debug -w python3` reports "can't open directory ... Permission denied" and falls through to `/usr/share/man` without saying so.
+Sandboxed, `man -w python3` answers `/usr/share/man/man1/python3.12.1.gz` and `python3` groups with `python` as one `outdated` row; unsandboxed it answers mise's `python3.14.1` and `python3` groups with `python3.14` as `ok`/`vendor`.
+Both were reproduced from the same commit on 2026-09-23, which is how a grouping defect was diagnosed that did not exist.
+Any `maniac list` claim about reachability has to come from an unsandboxed run, and a verification that silently loses a manpath entry is indistinguishable from a classification change.
 
-`python3.14` -- despite resolving to the identical file `python`/`python3` do via `readlink -f` -- is not one of the four `unverified` rows above; it is its own `ok`/`vendor` row.
-`man -w python3.14` finds nothing on this machine (no distro page is registered under that exact name), but MANIAC's own managed manpath makes it reachable anyway.
-Executable identity does not imply the same reachability answer, let alone the same page: a would-be identity-based grouping rule needs to check the resolved answer agrees, not only that the binaries do.
+The 2026-09-21 owning-package work (`2f51106`) exposed three different real owners inside that one `python (4 binaries) unverified` group, confirmed live: `python`/`python3` are owned by `python3.12-minimal`, `pydoc3` by plain `python3.12`, `python3-config` by `libpython3.12-dev:amd64` (dpkg's raw output, architecture qualifier included -- `_package_name()` strips it only for the comparison, not for display).
+That group no longer exists: after ADR-0055 those four are `outdated` and the display splits them, because the grouping key is a 7-tuple including `page_path`, `state`, `source` and `owning_package` (`maniac/cli/listing.py:141-149`), so a group cannot render a state or owner a member lacks.
+The four grouped rows today are `idle3` (2), `pip` (3), `python3` (2) and `tree-sitter` (2), and every member of each agrees on all four fields -- audited member-by-member on 2026-09-23.
+What is rendered from the representative alone and is *not* in the key is `upstream` and `page_uri`; no group's members disagree on those today, so it is theoretical.
+
+`python3` and `python3.14` group together and read `ok`/`vendor` because both resolve to mise's own page, `~/.local/share/man/man1/python3.14.1`.
+`python` is not with them, and the reason is the useful one: there is no `python.1` in MANIAC's managed manpath, so the bare name falls through to Debian's `python3.12.1.gz` and reads `outdated` on its own evidence.
+Executable identity does not imply the same reachability answer, let alone the same page -- `python`, `python3` and `python3.14` are one file under `readlink -f` and get two different pages -- which is why the grouping rule checks the resolved answer and not merely the target.
 
 There is no populated Mise shim directory here, so shim discovery is unverified and `mise which -C $HOME` remains cwd-sensitive.
 A live `mise activate bash` exports `MISE_SHELL`, `__MISE_EXE`, `__MISE_DIFF` and `__MISE_ORIG_PATH`.
