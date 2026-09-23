@@ -26,7 +26,6 @@ from maniac.listing import (
     classify,
     compute_rows,
 )
-from maniac.listing import inventory as inventory_module
 from maniac.listing.classification import provider_target_freshness
 from maniac.listing.inventory import _build_inventory, _with_target_clusters
 from maniac.listing.upstream import resolve_upstream
@@ -66,7 +65,7 @@ def _classification_pair(
     cfg: Config,
     entries: Any = None,
 ) -> tuple[ActionState, PageSource]:
-    result = classify(_candidate(provider, inst, tool), cfg, entries, upstream=None)
+    result = classify(_candidate(provider, inst, tool), cfg, entries)
     return result.state, result.source
 
 
@@ -443,36 +442,6 @@ def test_compute_rows_upgrades_a_versioned_cached_repository_page(
     assert rows[0].source is PageSource.UPSTREAM
     assert rows[0].upstream is source
     assert rows[0].page_path == page
-
-
-def test_compute_rows_passes_classify_the_same_upstream_object_it_resolved(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """`_classify_and_resolve` (`inventory.py:153`) must pass `classify` the
-    very `RepoSource` `resolve_upstream` produced -- pinning the wiring a
-    hardcoded `upstream=None` at the `verify_external_page` call site would
-    not otherwise catch."""
-    cfg = _config(tmp_path)
-    source = RepoSource(name="tool", target="owner/tool", is_local=False)
-    provider = _FakeProvider(source=source)
-    inst = _installation()
-    monkeypatch.setattr(
-        "maniac.listing.inventory.resolution.enumerate_installations",
-        lambda on_start=None, on_scan=None: [(provider, inst)],
-    )
-    received: list[RepoSource | None] = []
-    real_classify = inventory_module.classify
-
-    def _capturing_classify(*args: Any, **kwargs: Any) -> LocalClassification:
-        received.append(kwargs["upstream"])
-        return real_classify(*args, **kwargs)
-
-    monkeypatch.setattr("maniac.listing.inventory.classify", _capturing_classify)
-
-    rows = compute_rows(config=cfg)
-
-    assert received == [source]
-    assert received[0] is rows[0].upstream is source
 
 
 def test_local_repository_page_links_to_its_source_file(
@@ -1097,7 +1066,7 @@ def test_managed_page_keeps_content_provenance_separate_from_ownership(
         lambda man_bin, tool_name: installed,
     )
 
-    actual = classify(_candidate(None, None, "tool"), cfg, upstream=None)
+    actual = classify(_candidate(None, None, "tool"), cfg)
 
     assert actual.source is source
     assert actual.managed
@@ -1734,121 +1703,11 @@ def test_classify_surfaces_the_provable_external_owner(
         ),
     )
 
-    result = classify(
-        _candidate(_FakeProvider(), _installation(), "python"), cfg, upstream=None
-    )
+    result = classify(_candidate(_FakeProvider(), _installation(), "python"), cfg)
 
     assert result.state is ActionState.UNVERIFIED
     assert result.source is PageSource.SYSTEM
     assert result.owning_package == "python3.12-minimal"
-
-
-def test_classify_misattributed_when_dpkg_proves_a_different_owner(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """A provable owner that is not the candidate's own package is a
-    stronger finding than `UNVERIFIED` (ADR-0052), founded on canonical
-    repository identity since ADR-0055 phase 2 -- `tmux`'s page cannot
-    belong to a `python` installation under any normalization, unlike
-    `python3.12-minimal`/`python`, which ADR-0055 proved to be the same
-    software. `WRONG_OWNER` is reachable only with a real `upstream`
-    (`packages.py:193`), so one is passed here rather than `None`."""
-    cfg = _config(tmp_path)
-    installed = tmp_path / "usr" / "share" / "man" / "man1" / "python.1"
-    monkeypatch.setattr(
-        "maniac.listing.classification.find_installed_manpage_path",
-        lambda man_bin, tool_name: installed,
-    )
-    monkeypatch.setattr(
-        "maniac.listing.classification.verify_external_page",
-        lambda page, **kwargs: ExternalPageVerification(
-            ExternalPageFreshness.WRONG_OWNER, "tmux"
-        ),
-    )
-    upstream = RepoSource(name="python", target="python/cpython", is_local=False)
-
-    result = classify(
-        _candidate(_FakeProvider(), _installation(), "python"),
-        cfg,
-        upstream=upstream,
-    )
-
-    assert result.state is ActionState.MISATTRIBUTED
-    assert result.source is PageSource.SYSTEM
-    assert result.owning_package == "tmux"
-
-
-def test_classify_wrong_owner_skips_the_roff_fallback(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """A roff header version match proves the page documents the version it
-    claims, not which package it belongs to, so it cannot rebut a proven
-    wrong owner (ADR-0052) -- the fallback must not even run. `WRONG_OWNER`
-    is reachable only with a real `upstream` (`packages.py:193`)."""
-    cfg = _config(tmp_path)
-    installed = tmp_path / "usr" / "share" / "man" / "man1" / "python.1"
-    monkeypatch.setattr(
-        "maniac.listing.classification.find_installed_manpage_path",
-        lambda man_bin, tool_name: installed,
-    )
-    monkeypatch.setattr(
-        "maniac.listing.classification.verify_external_page",
-        lambda page, **kwargs: ExternalPageVerification(
-            ExternalPageFreshness.WRONG_OWNER, "tmux"
-        ),
-    )
-
-    def _unexpected_roff_call(page: Path, **kwargs: object) -> ExternalPageFreshness:
-        raise AssertionError("roff fallback must not run on a proven wrong owner")
-
-    monkeypatch.setattr(
-        "maniac.listing.classification.verify_page_header", _unexpected_roff_call
-    )
-    upstream = RepoSource(name="python", target="python/cpython", is_local=False)
-
-    result = classify(
-        _candidate(_FakeProvider(), _installation(), "python"),
-        cfg,
-        upstream=upstream,
-    )
-
-    assert (result.state, result.source) == (
-        ActionState.MISATTRIBUTED,
-        PageSource.SYSTEM,
-    )
-
-
-def test_classify_threads_upstream_into_verify_external_page(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """`classify`'s `upstream` must reach `verify_external_page` intact --
-    ADR-0055 phase 2's `WRONG_OWNER` disproof depends on it
-    (`packages.py:193-194`), and a stub that discards `**kwargs` cannot
-    catch a caller that drops the argument."""
-    cfg = _config(tmp_path)
-    installed = tmp_path / "usr" / "share" / "man" / "man1" / "tool.1"
-    monkeypatch.setattr(
-        "maniac.listing.classification.find_installed_manpage_path",
-        lambda man_bin, tool_name: installed,
-    )
-    upstream = RepoSource(name="tool", target="owner/tool", is_local=False)
-    received: list[RepoSource | None] = []
-
-    def _capturing_verify(
-        page: Path, *, upstream: RepoSource | None, **kwargs: object
-    ) -> ExternalPageVerification:
-        received.append(upstream)
-        return ExternalPageVerification(ExternalPageFreshness.UNVERIFIED, None)
-
-    monkeypatch.setattr(
-        "maniac.listing.classification.verify_external_page", _capturing_verify
-    )
-
-    classify(
-        _candidate(_FakeProvider(), _installation(), "tool"), cfg, upstream=upstream
-    )
-
-    assert received == [upstream]
 
 
 @pytest.mark.parametrize(
@@ -1912,9 +1771,7 @@ def test_classify_roff_fallback_never_sets_owning_package(
         lambda page, **kwargs: ExternalPageFreshness.MATCH,
     )
 
-    result = classify(
-        _candidate(_FakeProvider(), _installation(), "tool"), cfg, upstream=None
-    )
+    result = classify(_candidate(_FakeProvider(), _installation(), "tool"), cfg)
 
     assert result.state is ActionState.OK
     assert result.owning_package is None
@@ -2060,7 +1917,7 @@ def test_classify_drift_true_when_manifest_entry_points_to_vanished_target(
         config=cfg,
     )
 
-    result = classify(_candidate(None, None, "tool"), cfg, upstream=None)
+    result = classify(_candidate(None, None, "tool"), cfg)
 
     assert result.drift is True
     assert result.state is ActionState.MISSING
@@ -2093,7 +1950,7 @@ def test_classify_drift_false_when_link_is_sound(
         lambda man_bin, tool_name: entry_path,
     )
 
-    result = classify(_candidate(None, None, "tool"), cfg, upstream=None)
+    result = classify(_candidate(None, None, "tool"), cfg)
 
     assert result.drift is False
     assert result.state is ActionState.OK
@@ -2114,7 +1971,7 @@ def test_classify_drift_false_for_pre_target_entry_with_page_present(
         config=cfg,
     )
 
-    result = classify(_candidate(None, None, "tool"), cfg, upstream=None)
+    result = classify(_candidate(None, None, "tool"), cfg)
 
     assert result.drift is False
 

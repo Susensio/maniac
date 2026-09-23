@@ -7,7 +7,6 @@ import threading
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
-from functools import cache
 from hashlib import sha256
 from http.client import HTTPMessage
 from pathlib import Path
@@ -173,36 +172,6 @@ def _download_cached_result(
         if max_age is not None:
             _write_json_cache(freshness_path, {"created": time.time()})
         return content, True
-
-
-_CANONICAL_ID_TIMEOUT = 10
-
-
-@cache
-def canonical_github_repository_id(identity: str) -> int | None:
-    """Canonical numeric repository ID for a GitHub `owner/repo` identity.
-
-    Follows a 301 on a renamed or transferred repository (via `_opener`,
-    so `_AuthStrippingRedirectHandler` still drops `Authorization` across
-    the host jump) and reads `id` from the final JSON body. `None` on any
-    network failure, HTTP error, or unparseable body -- ADR-0055 phase 2
-    never fails a row on an unreachable network. Memoized per process
-    (ADR-0045 left cross-invocation persistence out of scope).
-    """
-    url = f"https://{_GITHUB_API_HOST}/repos/{identity}"
-    request = Request(url, headers=_github_headers(url))
-    try:
-        with _open(request, timeout=_CANONICAL_ID_TIMEOUT) as response:
-            document = json.loads(response.read())
-    except (HTTPError, OSError, URLError, ValueError, UnicodeError) as error:
-        logger.debug(
-            "Canonical repository lookup failed", identity=identity, error=str(error)
-        )
-        return None
-    if not isinstance(document, dict):
-        return None
-    repository_id = document.get("id")
-    return repository_id if isinstance(repository_id, int) else None
 
 
 def _download(url: str, cfg: Config) -> tuple[bytes | None, bool]:

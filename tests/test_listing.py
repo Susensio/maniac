@@ -1209,7 +1209,6 @@ def test_filter_rows_unions_within_the_state_axis() -> None:
         states=_selected_states(
             outdated=False,
             unverified=False,
-            misattributed=False,
             available=True,
             missing=True,
         ),
@@ -1230,7 +1229,6 @@ def test_filter_rows_selects_unverified_rows() -> None:
         states=_selected_states(
             outdated=False,
             unverified=True,
-            misattributed=False,
             available=False,
             missing=False,
         ),
@@ -1238,27 +1236,6 @@ def test_filter_rows_selects_unverified_rows() -> None:
     )
 
     assert [row.tool for row in filtered] == ["unproven"]
-
-
-def test_filter_rows_selects_misattributed_rows() -> None:
-    rows = [
-        _row("wrong-owner", ActionState.MISATTRIBUTED, PageSource.SYSTEM),
-        _row("current", ActionState.OK, PageSource.SYSTEM),
-    ]
-
-    filtered = _filter_rows(
-        rows,
-        states=_selected_states(
-            outdated=False,
-            unverified=False,
-            misattributed=True,
-            available=False,
-            missing=False,
-        ),
-        managed=False,
-    )
-
-    assert [row.tool for row in filtered] == ["wrong-owner"]
 
 
 def test_filter_rows_intersects_across_axes() -> None:
@@ -1273,7 +1250,6 @@ def test_filter_rows_intersects_across_axes() -> None:
         states=_selected_states(
             outdated=True,
             unverified=False,
-            misattributed=False,
             available=False,
             missing=False,
         ),
@@ -1340,41 +1316,6 @@ def test_cli_list_pipe_unverified_emits_exactly_the_filtered_set(
 
     assert res.exit_code == 0
     assert res.output == "tool\n"
-
-
-def test_cli_list_pipe_misattributed_emits_exactly_the_filtered_set(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """`WRONG_OWNER` is reachable only with a real `upstream`
-    (`packages.py:193`), so the provider must resolve one for this row to
-    reach the CLI's `--misattributed` filter at all."""
-    monkeypatch.setattr(
-        cli_module.console, "_instance", Console(force_terminal=False, no_color=True)
-    )
-    monkeypatch.setattr(cli_module, "Config", lambda: _config(tmp_path))
-    page = tmp_path / "usr" / "share" / "man" / "man1" / "python.1"
-    monkeypatch.setattr(
-        "maniac.listing.classification.find_installed_manpage_path",
-        lambda man_bin, tool_name: page,
-    )
-    monkeypatch.setattr(
-        "maniac.listing.classification.verify_external_page",
-        lambda page, **kwargs: ExternalPageVerification(
-            ExternalPageFreshness.WRONG_OWNER, "tmux"
-        ),
-    )
-    upstream = RepoSource(name="python", target="python/cpython", is_local=False)
-    monkeypatch.setattr(
-        "maniac.listing.inventory.resolution.enumerate_installations",
-        lambda on_start=None, on_scan=None: [
-            (_FakeProvider(source=upstream), _installation(binary="python"))
-        ],
-    )
-
-    res = runner.invoke(app, ["list", "--misattributed"])
-
-    assert res.exit_code == 0
-    assert res.output == "python\n"
 
 
 def test_cli_list_pipe_available_waits_for_upstream_classification(

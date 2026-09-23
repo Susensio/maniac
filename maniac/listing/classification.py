@@ -14,7 +14,6 @@ from pathlib import Path
 
 from .. import manifest
 from ..config import Config
-from ..models import RepoSource
 from ..sources.candidates import select_install_root
 from ..sources.crawler import get_version
 from ..sources.manpages import (
@@ -115,29 +114,24 @@ def _managed_page_state(
 
 
 def _external_page_state(
-    installed: Path, candidate: Candidate, upstream: RepoSource | None
+    installed: Path, candidate: Candidate
 ) -> tuple[ActionState, str | None]:
     """Return the verified state and provable owner for an external page.
 
     dpkg is tried first; only when it has nothing to say at all
     (`UNVERIFIED` -- no owner found, an owner found but not provably the
     same software, or not on a Debian system) does the page's own
-    `.TH`/`.Dt` header get a chance to prove freshness instead. Proving
-    sameness -- through normalized `${Source}` or through the owner and
-    `upstream` sharing a canonical GitHub repository ID -- yields
-    `MATCH`/`MISMATCH`; failing to prove it yields `UNVERIFIED`, so the
-    roff fallback runs there too. Only two distinct canonical IDs yield
-    `WRONG_OWNER` (ADR-0055 phase 2), and that still skips the roff
-    fallback (ADR-0052), since a header version match proves the page
-    documents the version it claims, not which package it belongs to, and
-    cannot rebut evidence dpkg already gave the other way. The roff path
-    never overrides an actual dpkg `MATCH`/`MISMATCH`/`WRONG_OWNER`, and
-    never sets `owning_package` -- it proves freshness, not ownership.
+    `.TH`/`.Dt` header get a chance to prove freshness instead (ADR-0026).
+    Proving sameness through normalized `${Source}` yields `MATCH`/
+    `MISMATCH`; failing to prove it yields `UNVERIFIED`, so the roff
+    fallback runs for every unverified row. The roff path never overrides
+    an actual dpkg `MATCH`/`MISMATCH`, and never sets `owning_package` --
+    it proves freshness, not ownership.
     """
     inst = candidate.installation
     assert inst is not None
     verification = verify_external_page(
-        installed, package=inst.package, version=inst.version, upstream=upstream
+        installed, package=inst.package, version=inst.version
     )
     freshness = verification.freshness
     if freshness is ExternalPageFreshness.UNVERIFIED:
@@ -148,7 +142,6 @@ def _external_page_state(
         ExternalPageFreshness.MATCH: ActionState.OK,
         ExternalPageFreshness.MISMATCH: ActionState.OUTDATED,
         ExternalPageFreshness.UNVERIFIED: ActionState.UNVERIFIED,
-        ExternalPageFreshness.WRONG_OWNER: ActionState.MISATTRIBUTED,
     }[freshness]
     return state, verification.owner
 
@@ -158,8 +151,6 @@ def _resolved_page_classification(
     cfg: Config,
     installed: Path,
     evidence: _PageEvidence,
-    *,
-    upstream: RepoSource | None,
 ) -> LocalClassification:
     """Classify the page that `man` resolved for a binary."""
     source = _installed_source(candidate, installed, evidence)
@@ -174,7 +165,7 @@ def _resolved_page_classification(
         )
     claimed = candidate.provider is not None and candidate.installation is not None
     if claimed and source is PageSource.SYSTEM:
-        state, owning_package = _external_page_state(installed, candidate, upstream)
+        state, owning_package = _external_page_state(installed, candidate)
         return LocalClassification(
             state,
             source,
@@ -223,17 +214,11 @@ def classify(
     candidate: Candidate,
     cfg: Config,
     entries: Mapping[str, manifest.Entry] | None = None,
-    *,
-    upstream: RepoSource | None,
 ) -> LocalClassification:
     """Decide one binary's state and page source by whether `man` resolves it (ADR-0026).
 
     `entries` is a bulk run's single immutable manifest snapshot; omitting
     it falls back to a per-tool `manifest.lookup` for a direct caller.
-    `upstream` is the candidate's already-resolved repository identity
-    (`upstream.resolve_upstream`), threaded through to `verify_external_page`
-    for `WRONG_OWNER`'s canonical-ID disproof (ADR-0055 phase 2); a row
-    genuinely may resolve none, and `None` is a real value, not a shim.
     """
     installed = find_installed_manpage_path("man", candidate.tool)
     entry = (
@@ -272,7 +257,6 @@ def classify(
                 owned=_owns_resolved_page(entry, installed),
                 provider_target_current=direct_target and freshness is True,
             ),
-            upstream=upstream,
         ),
         drift=drift,
     )

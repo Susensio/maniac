@@ -1,6 +1,5 @@
 import io
 from pathlib import Path
-from typing import Self
 
 import pytest
 
@@ -267,74 +266,3 @@ def test_download_degrades_on_invalid_request_url(
     monkeypatch.setattr(cache, "_open", lambda *args, **kwargs: None)
 
     assert cache._download("\x00", Config()) == (None, False)
-
-
-class _FakeResponse:
-    def __init__(self, body: bytes) -> None:
-        self._body = body
-
-    def read(self) -> bytes:
-        return self._body
-
-    def __enter__(self) -> Self:
-        return self
-
-    def __exit__(self, *exc_info: object) -> None:
-        return None
-
-
-def test_canonical_github_repository_id_reads_the_final_body(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """`_opener`'s redirect handling resolves a rename before this reads the
-    body -- the caller only ever sees the final JSON's `id`."""
-
-    def fake_open(request: object, timeout: float) -> _FakeResponse:
-        return _FakeResponse(b'{"id": 48739367, "full_name": "tealdeer-rs/tealdeer"}')
-
-    monkeypatch.setattr(cache, "_open", fake_open)
-
-    assert cache.canonical_github_repository_id("dbrgn/tealdeer") == 48739367
-
-
-def test_canonical_github_repository_id_none_on_http_error(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from email.message import Message
-    from urllib.error import HTTPError
-
-    def fake_open(request: object, timeout: float) -> _FakeResponse:
-        raise HTTPError(
-            "https://api.github.com/repos/x/y", 404, "missing", Message(), None
-        )
-
-    monkeypatch.setattr(cache, "_open", fake_open)
-
-    assert cache.canonical_github_repository_id("x/y") is None
-
-
-def test_canonical_github_repository_id_none_on_unparseable_body(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(
-        cache, "_open", lambda request, timeout: _FakeResponse(b"not json")
-    )
-
-    assert cache.canonical_github_repository_id("x/y") is None
-
-
-def test_canonical_github_repository_id_memoizes_per_process(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    calls = 0
-
-    def fake_open(request: object, timeout: float) -> _FakeResponse:
-        nonlocal calls
-        calls += 1
-        return _FakeResponse(b'{"id": 1}')
-
-    monkeypatch.setattr(cache, "_open", fake_open)
-
-    assert cache.canonical_github_repository_id("x/y") == 1
-    assert cache.canonical_github_repository_id("x/y") == 1
-    assert calls == 1
