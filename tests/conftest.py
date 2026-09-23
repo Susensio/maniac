@@ -1,10 +1,28 @@
+from collections.abc import Generator
 from pathlib import Path
 
 import pytest
+import structlog
 
 from maniac.sources.docs import cache
 from maniac.sources.loginpath import login_path
 from maniac.sources.pathcache import resolve_cached
+
+
+@pytest.fixture(autouse=True)
+def _reset_structlog() -> Generator[None, None, None]:
+    """`structlog.configure()` is process-lifetime global state.
+
+    `maniac list --verbose` and any test that calls `setup_logging` or
+    reconfigures structlog directly (a level, a processor chain, a capture
+    fixture) leaves that configuration standing for whichever test runs
+    next. Resetting to structlog's own built-in defaults before and after
+    every test means no test starts polluted by an earlier one, and none
+    leaves debug output live for a later test's CLI assertion to trip over.
+    """
+    structlog.reset_defaults()
+    yield
+    structlog.reset_defaults()
 
 
 @pytest.fixture(autouse=True)

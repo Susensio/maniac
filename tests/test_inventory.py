@@ -13,6 +13,7 @@ from typing import Any
 from urllib.error import URLError
 
 import pytest
+import structlog
 
 from maniac import manifest
 from maniac.config import Config
@@ -146,26 +147,27 @@ def test_compute_rows_logs_phase_timing(
     )
     clock = iter(float(value) for value in range(1, 9))
     monkeypatch.setattr("maniac.listing.inventory.monotonic", lambda: next(clock))
-    logged: list[tuple[str, dict[str, object]]] = []
-    monkeypatch.setattr(
-        "maniac.listing.inventory.logger.debug",
-        lambda event, **fields: logged.append((event, fields)),
-    )
 
-    compute_rows(["tool"], config=_config(tmp_path))
+    # `structlog.testing.capture_logs` swaps the processor chain in place
+    # rather than the module's `logger` proxy attribute -- patching
+    # `logger.debug` directly instead froze the proxy's laziness for the
+    # rest of the run (`__getattr__` binds a concrete logger the first time
+    # `monkeypatch` reads the old value to restore, and restoration then
+    # pins that concrete binding forever instead of undoing the patch).
+    with structlog.testing.capture_logs() as logged:
+        compute_rows(["tool"], config=_config(tmp_path))
 
     assert logged == [
-        (
-            "List inventory timing",
-            {
-                "candidates": 1,
-                "manifest_seconds": 1.0,
-                "inventory_seconds": 1.0,
-                "local_seconds": 1.0,
-                "upstream_seconds": 0.0,
-                "total_seconds": 7.0,
-            },
-        )
+        {
+            "event": "List inventory timing",
+            "log_level": "debug",
+            "candidates": 1,
+            "manifest_seconds": 1.0,
+            "inventory_seconds": 1.0,
+            "local_seconds": 1.0,
+            "upstream_seconds": 0.0,
+            "total_seconds": 7.0,
+        }
     ]
 
 
