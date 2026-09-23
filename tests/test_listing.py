@@ -1345,6 +1345,9 @@ def test_cli_list_pipe_unverified_emits_exactly_the_filtered_set(
 def test_cli_list_pipe_misattributed_emits_exactly_the_filtered_set(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    """`WRONG_OWNER` is reachable only with a real `upstream`
+    (`packages.py:193`), so the provider must resolve one for this row to
+    reach the CLI's `--misattributed` filter at all."""
     monkeypatch.setattr(
         cli_module.console, "_instance", Console(force_terminal=False, no_color=True)
     )
@@ -1360,10 +1363,11 @@ def test_cli_list_pipe_misattributed_emits_exactly_the_filtered_set(
             ExternalPageFreshness.WRONG_OWNER, "tmux"
         ),
     )
+    upstream = RepoSource(name="python", target="python/cpython", is_local=False)
     monkeypatch.setattr(
         "maniac.listing.inventory.resolution.enumerate_installations",
         lambda on_start=None, on_scan=None: [
-            (_FakeProvider(), _installation(binary="python"))
+            (_FakeProvider(source=upstream), _installation(binary="python"))
         ],
     )
 

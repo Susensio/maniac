@@ -47,7 +47,10 @@ def test_verify_external_page_marks_tldr_shaped_debian_mismatch(
     )
 
     result = packages.verify_external_page(
-        Path("/usr/share/man/man1/tldr.1.gz"), package="tealdeer", version="1.9.0"
+        Path("/usr/share/man/man1/tldr.1.gz"),
+        package="tealdeer",
+        version="1.9.0",
+        upstream=None,
     )
 
     assert result.freshness is packages.ExternalPageFreshness.MISMATCH
@@ -63,7 +66,10 @@ def test_verify_external_page_accepts_matching_debian_epoch_and_revision(
     )
 
     result = packages.verify_external_page(
-        Path("/usr/share/man/man1/tldr.1.gz"), package="tealdeer", version="1.9.0"
+        Path("/usr/share/man/man1/tldr.1.gz"),
+        package="tealdeer",
+        version="1.9.0",
+        upstream=None,
     )
 
     assert result.freshness is packages.ExternalPageFreshness.MATCH
@@ -84,7 +90,10 @@ def test_verify_external_page_reaches_unverified_when_sameness_is_unproven(
     monkeypatch.setattr(packages.subprocess, "run", run)
 
     result = packages.verify_external_page(
-        Path("/usr/share/man/man1/tldr.1.gz"), package="tealdeer", version="1.9.0"
+        Path("/usr/share/man/man1/tldr.1.gz"),
+        package="tealdeer",
+        version="1.9.0",
+        upstream=None,
     )
 
     assert result.freshness is packages.ExternalPageFreshness.UNVERIFIED
@@ -101,7 +110,10 @@ def test_verify_external_page_stays_unverified_when_no_owner_is_found(
     monkeypatch.setattr(packages.subprocess, "run", run)
 
     result = packages.verify_external_page(
-        Path("/usr/share/man/man1/tldr.1.gz"), package="tealdeer", version="1.9.0"
+        Path("/usr/share/man/man1/tldr.1.gz"),
+        package="tealdeer",
+        version="1.9.0",
+        upstream=None,
     )
 
     assert result.freshness is packages.ExternalPageFreshness.UNVERIFIED
@@ -117,7 +129,10 @@ def test_verify_external_page_degrades_when_dpkg_is_unavailable(
     monkeypatch.setattr(packages.subprocess, "run", missing)
 
     result = packages.verify_external_page(
-        Path("/usr/share/man/man1/tldr.1.gz"), package="tealdeer", version="1.9.0"
+        Path("/usr/share/man/man1/tldr.1.gz"),
+        package="tealdeer",
+        version="1.9.0",
+        upstream=None,
     )
 
     assert result.freshness is packages.ExternalPageFreshness.UNVERIFIED
@@ -136,7 +151,10 @@ def test_verify_external_page_skips_the_owner_lookup_without_a_version(
     monkeypatch.setattr(packages.subprocess, "run", run)
 
     result = packages.verify_external_page(
-        Path("/usr/share/man/man1/tldr.1.gz"), package="tealdeer", version=None
+        Path("/usr/share/man/man1/tldr.1.gz"),
+        package="tealdeer",
+        version=None,
+        upstream=None,
     )
 
     assert result.freshness is packages.ExternalPageFreshness.UNVERIFIED
@@ -158,13 +176,13 @@ def test_verify_external_page_caches_owner_and_version_subprocesses(
 
     assert (
         packages.verify_external_page(
-            page, package="tealdeer", version="1.9.0"
+            page, package="tealdeer", version="1.9.0", upstream=None
         ).freshness
         is packages.ExternalPageFreshness.MATCH
     )
     assert (
         packages.verify_external_page(
-            page, package="tealdeer", version="1.9.0"
+            page, package="tealdeer", version="1.9.0", upstream=None
         ).freshness
         is packages.ExternalPageFreshness.MATCH
     )
@@ -197,7 +215,10 @@ def test_verify_external_page_proves_sameness_through_normalized_source(
     )
 
     result = packages.verify_external_page(
-        Path("/usr/share/man/man1/tool.1"), package=package, version="1.9.0"
+        Path("/usr/share/man/man1/tool.1"),
+        package=package,
+        version="1.9.0",
+        upstream=None,
     )
 
     assert result.freshness is packages.ExternalPageFreshness.MATCH

@@ -213,7 +213,7 @@ def verify_external_page(
     *,
     package: str,
     version: str | None,
-    upstream: RepoSource | None = None,
+    upstream: RepoSource | None,
 ) -> ExternalPageVerification:
     """Return Debian-backed freshness, alongside the owner it was checked against."""
     if version is None:

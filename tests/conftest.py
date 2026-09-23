@@ -30,9 +30,15 @@ def _clear_resolve_cache() -> None:
     `login_path` is cleared alongside it for the same reason: also
     process-lifetime, and a test that patches `$SHELL` or `os.environ` would
     otherwise see a prior test's cached result instead of its own.
+
+    `canonical_github_repository_id` is cleared for the same reason: it is
+    process-lifetime and keys on the bare `owner/repo` identity, so two
+    tests naming the same repository with different expected results would
+    otherwise leak across each other.
     """
     resolve_cached.cache_clear()
     login_path.cache_clear()
+    cache.canonical_github_repository_id.cache_clear()
 
 
 @pytest.fixture(autouse=True)
