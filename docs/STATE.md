@@ -54,6 +54,12 @@ It walks what MANIAC owns, not what is on `$PATH`.
 
 ## Conventions learned the hard way
 
+`monkeypatch.setattr` on a `structlog` logger attribute does not survive its own teardown.
+`logger` is a `BoundLoggerLazyProxy`, so `monkeypatch` reading the old `.debug` to restore it later goes through `__getattr__` and binds a concrete logger; teardown then restores that bound method rather than undoing the shadow, freezing the attribute for the rest of the process.
+That is what leaked `List inventory timing` into piped CLI output and made `tests/test_inventory.py` plus `tests/test_listing.py` fail only when run together (`a670951`).
+Use `structlog.testing.capture_logs()`, which swaps the processor list and never touches the proxy.
+A `structlog.reset_defaults()` autouse fixture now bounds this suite-wide, because the reverse order failed for the mirror-image reason: a prior CLI test's `setup_logging()` left the level at WARNING for a test that needed it permissive.
+
 A test stub that cannot occur in production hides the bug it is standing in for.
 `maniac install`'s silent-success defect -- a compile failure leaving no page while exiting 0 and printing bold green -- survived because two CLI tests stubbed a *successful* synthesis with `installed_path=None`, a combination `pipeline.py` cannot produce.
 The suite was green on a state the program never reaches, so nothing pinned the state it does.
