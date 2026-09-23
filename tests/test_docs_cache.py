@@ -288,7 +288,6 @@ def test_canonical_github_repository_id_reads_the_final_body(
 ) -> None:
     """`_opener`'s redirect handling resolves a rename before this reads the
     body -- the caller only ever sees the final JSON's `id`."""
-    cache.canonical_github_repository_id.cache_clear()
 
     def fake_open(request: object, timeout: float) -> _FakeResponse:
         return _FakeResponse(b'{"id": 48739367, "full_name": "tealdeer-rs/tealdeer"}')
@@ -304,8 +303,6 @@ def test_canonical_github_repository_id_none_on_http_error(
     from email.message import Message
     from urllib.error import HTTPError
 
-    cache.canonical_github_repository_id.cache_clear()
-
     def fake_open(request: object, timeout: float) -> _FakeResponse:
         raise HTTPError(
             "https://api.github.com/repos/x/y", 404, "missing", Message(), None
@@ -319,7 +316,6 @@ def test_canonical_github_repository_id_none_on_http_error(
 def test_canonical_github_repository_id_none_on_unparseable_body(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    cache.canonical_github_repository_id.cache_clear()
     monkeypatch.setattr(
         cache, "_open", lambda request, timeout: _FakeResponse(b"not json")
     )
@@ -330,7 +326,6 @@ def test_canonical_github_repository_id_none_on_unparseable_body(
 def test_canonical_github_repository_id_memoizes_per_process(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    cache.canonical_github_repository_id.cache_clear()
     calls = 0
 
     def fake_open(request: object, timeout: float) -> _FakeResponse:
