@@ -19,6 +19,11 @@ These are findings the work surfaced and deliberately did not take; they are fir
 
 ## Bugs and correctness
 
+- Fix the order-dependent failure between `tests/test_inventory.py` and `tests/test_listing.py`.
+  Running those two files together fails five `test_cli_list_pipe_*` tests: stray `[debug] List inventory timing` lines leak into the piped CLI output the tests assert on.
+  Running either file alone is clean, and so is the whole suite through `just test`, which is why it has stayed invisible.
+  Found 2026-09-23 during the ADR-0055 phase-2 fix and confirmed pre-existing by reproducing it on `51539ca` with the change stashed -- it is a logging-configuration leak across tests, not a product defect.
+  A suite that passes only at one particular collection order is a suite that will fail on an unrelated change someday, and the debug handler outliving the test that installed it is the thing to find.
 - Decide what a fork should mean to `verify_external_page`.
   ADR-0055 phase 2 (`1e35eb3`) treats two distinct canonical GitHub repository IDs as positive disproof, without qualification.
   A fork has its own ID, so where Debian's `${Homepage}` names the canonical upstream and a provider registry names an actively maintained fork of the same tool, the IDs diverge and the row reads `misattributed`.
