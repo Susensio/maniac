@@ -53,6 +53,10 @@ The four grouped rows today are `idle3` (2), `pip` (3), `python3` (2) and `tree-
 What is rendered from the representative alone and is *not* in the key is `upstream` and `page_uri`; no group's members disagree on those today, so it is theoretical.
 
 `python3` and `python3.14` group together and read `ok`/`vendor` because both resolve to mise's own page, `~/.local/share/man/man1/python3.14.1`.
+Those links are not MANIAC's: the manifest holds only `aichat` and `ty`, and MANIAC writes nothing it does not record there.
+They come from the user's own mise `postinstall` hook (`~/.config/mise/tasks/system-install`, `[hooks]` in `~/.config/mise/config.toml`), which linked `python3.1` and `python3.14.1` -- and, wrongly, two `share/terminfo` entries -- into `man1/` on 2026-09-21.
+So a `vendor` row can rest entirely on a link MANIAC neither created nor tracks, and that row will change if the hook does, with no commit here to explain it.
+`vendor` is content provenance, never ownership (ADR-0027): ownership is the manifest, and `--managed` is the flag that asks about it.
 `python` is not with them, and the reason is the useful one: there is no `python.1` in MANIAC's managed manpath, so the bare name falls through to Debian's `python3.12.1.gz` and reads `outdated` on its own evidence.
 Executable identity does not imply the same reachability answer, let alone the same page -- `python`, `python3` and `python3.14` are one file under `readlink -f` and get two different pages -- which is why the grouping rule checks the resolved answer and not merely the target.
 
