@@ -100,8 +100,9 @@ No installation on this machine meets that, so the disproof path ships correct b
 That is a known gap, accepted because the alternative is leaving the state founded on an inference ADR-0026 rules out.
 
 A fork counts as positive disproof, which this decision accepts without qualifying it.
-A fork has its own repository ID, so where Debian's `${Homepage}` names the canonical upstream and a provider registry names an actively maintained fork of the same tool, the two IDs diverge and the row reads `misattributed`.
+A fork has its own repository ID, so where Debian's `${Homepage}` names the canonical upstream and a provider registry names a fork, the two IDs diverge and the row reads `misattributed`.
 That follows from "two distinct IDs prove difference" as written, and it points the damaging way: proving difference wrongly rather than failing to prove sameness.
+The exposure is narrow, because the chain begins at `man <tool>` and is keyed on the binary name: a fork that renames its binary never reaches this comparison, so the case needs a fork that kept the upstream's name, packaged by Debian under the original's homepage, while a provider resolves the fork.
 It is recorded here as a known edge of the rule rather than a defect in it, because no installation on this machine is fork-shaped and the alternative -- reading GitHub's `fork` and `parent` fields -- adds a second inference to a decision whose whole point was to stop inferring.
 `docs/BACKLOG.md` carries it for the day a fork-shaped row appears.
 

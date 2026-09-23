@@ -26,8 +26,11 @@ These are findings the work surfaced and deliberately did not take; they are fir
   A suite that passes only at one particular collection order is a suite that will fail on an unrelated change someday, and the debug handler outliving the test that installed it is the thing to find.
 - Decide what a fork should mean to `verify_external_page`.
   ADR-0055 phase 2 (`1e35eb3`) treats two distinct canonical GitHub repository IDs as positive disproof, without qualification.
-  A fork has its own ID, so where Debian's `${Homepage}` names the canonical upstream and a provider registry names an actively maintained fork of the same tool, the IDs diverge and the row reads `misattributed`.
-  That is within the decision as written rather than a deviation from it, but it is the most plausible real-world false positive, and it points the damaging way -- proving difference wrongly rather than failing to prove sameness.
+  A fork has its own ID, so where Debian's `${Homepage}` names the canonical upstream and a provider registry names a fork, the IDs diverge and the row reads `misattributed`.
+  That is within the decision as written rather than a deviation from it, and it points the damaging way -- proving difference wrongly rather than failing to prove sameness.
+  It is narrower than it first looks, though, and the narrowing is why this is filed rather than worked.
+  The page lookup starts from `man <tool>`, keyed on the binary name, so a fork that renames its binary never collides at all -- the chain never starts.
+  Reaching this needs a fork that kept the upstream's binary name, packaged by Debian under the original's homepage, while a provider resolves the fork.
   No row on this machine is fork-shaped, so this is unobserved rather than reproduced; raised by the phase-2 audit.
   Evidence that would separate a fork from different software is the question, and GitHub's API does expose `fork` and `parent` on the repository object.
 - Distinguish a wrong documentation repository from one that legitimately has no manpage.
