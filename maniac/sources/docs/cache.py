@@ -44,6 +44,10 @@ class _AuthStrippingRedirectHandler(HTTPRedirectHandler):
     both leaks the token to a third-party host and breaks the download --
     that host rejects a request carrying its own signed query parameters
     alongside an `Authorization` header.
+
+    Defence in depth; release assets are fetched from `browser_download_url`,
+    a github.com URL, so production never reaches this path and unit tests
+    are its only possible coverage.
     """
 
     def redirect_request(

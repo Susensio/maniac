@@ -19,6 +19,12 @@ def _reset_structlog() -> Generator[None, None, None]:
     next. Resetting to structlog's own built-in defaults before and after
     every test means no test starts polluted by an earlier one, and none
     leaves debug output live for a later test's CLI assertion to trip over.
+
+    Never `monkeypatch.setattr` a structlog logger attribute -- `logger` is
+    a `BoundLoggerLazyProxy`, so monkeypatch's restore binds a concrete
+    logger and freezes the attribute for the rest of the process; use
+    `structlog.testing.capture_logs()`. A prior CLI test's `setup_logging()`
+    left level at WARNING, so this fixture bounds it suite-wide.
     """
     structlog.reset_defaults()
     yield

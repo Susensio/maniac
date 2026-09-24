@@ -124,6 +124,9 @@ def _grouped_for_display(rows: list[ToolRow]) -> list[tuple[str, ToolRow]]:
     rendered: list[tuple[str, ToolRow]] = []
     for group in group_rows(rows):
         representative = group[0]
+        # `upstream` and `page_uri` are taken from the representative and are
+        # not in the key, so a group whose members disagreed on them would render
+        # only one; no current group does.
         if len(group) == 1:
             label = representative.tool
         else:

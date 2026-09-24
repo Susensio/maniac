@@ -342,6 +342,9 @@ def _cluster_partition(
     by_digest: dict[str, int] = {}
     for real_path, index in singletons:
         digest = _content_digest(real_path)
+        # Python `console_scripts` are written as distinct byte-identical files
+        # so symlink identity under-collapses them and content hash is the rung
+        # that catches it, not ADR-0020's --version guessing.
         assignment[index] = (
             next_id() if digest is None else by_digest.setdefault(digest, next_id())
         )
