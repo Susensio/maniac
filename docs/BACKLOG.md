@@ -37,10 +37,6 @@ These are findings the work surfaced and deliberately did not take; they are fir
 
 ### Maintainability
 
-- Move the row-grouping identity rule out of `maniac/cli/listing.py` into `maniac/listing`, beside `target_cluster` which already lives there.
-  `_grouped_for_display`'s 7-tuple key (`provider`, `package`, `state`, `source`, `page_path`, `owning_package`, `target_cluster`) decides which binaries render as one row, and it lives in the terminal-rendering module next to column-width budgeting and Rich markup.
-  ADR-0049, ADR-0052, ADR-0055 and ADR-0056 have each had to edit that rendering file to change what is an equivalence rule, not a display concern.
-  Surfaced 2026-09-24 by an architecture review; no call site outside `cli/listing.py` needs grouping today, so this is a refactor, not a correctness fix.
 - Record losing provider claims for a binary after first-PATH-entry selection.
   The visible winner is correct, but discarded competing claims prevent diagnostics when PATH hides a better-documented installation.
 - Tell transparent wrappers from genuinely different shadowing binaries only with evidence: compare `--version` for the first and later PATH occurrences.
