@@ -1,7 +1,10 @@
 """Tests for external manpage package provenance."""
 
 import subprocess
+import threading
+import time
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -12,6 +15,7 @@ from maniac.sources import packages
 @pytest.fixture(autouse=True)
 def _clear_debian_caches() -> None:
     packages._debian_owner.cache_clear()
+    packages._debian_owner_map_reset()
     packages._debian_version.cache_clear()
     packages._debian_source.cache_clear()
 
@@ -153,6 +157,149 @@ def test_verify_external_page_skips_the_owner_lookup_without_a_version(
     assert result.freshness is packages.ExternalPageFreshness.UNVERIFIED
     assert result.owner is None
     assert calls == []
+
+
+def test_debian_owner_map_parses_a_normal_line(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(
+            args, 0, "coreutils: /usr/share/man/man1/ls.1.gz\n", ""
+        )
+
+    monkeypatch.setattr(packages.subprocess, "run", run)
+
+    assert packages._debian_owner_map() == {"/usr/share/man/man1/ls.1.gz": "coreutils"}
+
+
+def test_debian_owner_map_leaves_a_multi_owner_page_ambiguous(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(
+            args, 0, "passwd, man-db: /usr/share/man/man5/passwd.5.gz\n", ""
+        )
+
+    monkeypatch.setattr(packages.subprocess, "run", run)
+
+    assert packages._debian_owner_map() == {"/usr/share/man/man5/passwd.5.gz": None}
+
+
+def test_debian_owner_map_excludes_a_diverted_page(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(
+            args,
+            0,
+            "diversion by captain from: /usr/share/man/man1/apturl.1.gz\n"
+            "diversion by captain to: /usr/share/man/man1/apturl.1.gz.distrib\n"
+            "captain: /usr/share/man/man1/apturl.1.gz\n",
+            "",
+        )
+
+    monkeypatch.setattr(packages.subprocess, "run", run)
+
+    assert packages._debian_owner_map() == {}
+
+
+def test_debian_owner_map_excludes_a_locally_diverted_page(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(
+            args,
+            0,
+            "local diversion from: /usr/share/man/man1/foo.1.gz\n"
+            "local diversion to: /usr/share/man/man1/foo.1.gz.distrib\n",
+            "",
+        )
+
+    monkeypatch.setattr(packages.subprocess, "run", run)
+
+    assert packages._debian_owner_map() == {}
+
+
+def test_debian_owner_map_is_empty_when_nothing_matches(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(
+            args, 1, "", "dpkg-query: no path found matching pattern\n"
+        )
+
+    monkeypatch.setattr(packages.subprocess, "run", run)
+
+    assert packages._debian_owner_map() == {}
+
+
+def test_debian_owner_map_is_empty_without_dpkg(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def missing(*args: object, **kwargs: object) -> None:
+        raise FileNotFoundError
+
+    monkeypatch.setattr(packages.subprocess, "run", missing)
+
+    assert packages._debian_owner_map() == {}
+
+
+def test_debian_owner_map_runs_the_dpkg_query_exactly_once_under_concurrent_callers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`list` classifies pages from a thread pool, so several threads can
+    all reach a cache miss on the batch map before any of them has stored
+    a result. Only the first should actually shell out."""
+    calls: list[list[str]] = []
+    calls_lock = threading.Lock()
+
+    def run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        with calls_lock:
+            calls.append(args)
+        time.sleep(0.05)
+        return subprocess.CompletedProcess(
+            args, 0, "coreutils: /usr/share/man/man1/ls.1.gz\n", ""
+        )
+
+    monkeypatch.setattr(packages.subprocess, "run", run)
+
+    barrier = threading.Barrier(8)
+
+    def worker() -> dict[str, str | None]:
+        barrier.wait()
+        return packages._debian_owner_map()
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        results = list(pool.map(lambda _: worker(), range(8)))
+
+    assert len(calls) == 1
+    assert all(r == {"/usr/share/man/man1/ls.1.gz": "coreutils"} for r in results)
+
+
+def test_debian_owner_falls_back_to_the_per_page_query_for_a_page_outside_the_map(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A page the batch map does not cover (a diverted page, or one outside
+    every manpath root) still gets an answer, from the untouched per-page
+    query -- not silently `None`."""
+    calls: list[list[str]] = []
+
+    def run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        calls.append(args)
+        if "-S" in args and "--" not in args:
+            return subprocess.CompletedProcess(
+                args, 0, "coreutils: /usr/share/man/man1/ls.1.gz\n", ""
+            )
+        return subprocess.CompletedProcess(
+            args, 0, "tealdeer: /usr/share/man/man1/tldr.1.gz\n", ""
+        )
+
+    monkeypatch.setattr(packages.subprocess, "run", run)
+
+    assert packages._debian_owner("/usr/share/man/man1/tldr.1.gz") == "tealdeer"
+    assert len(calls) == 2
+    assert calls[0][:3] == ["dpkg-query", "-S", "/usr/share/man/*"]
+    assert calls[1] == ["dpkg-query", "-S", "--", "/usr/share/man/man1/tldr.1.gz"]
 
 
 def test_verify_external_page_caches_owner_and_version_subprocesses(
