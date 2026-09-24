@@ -2172,6 +2172,79 @@ def test_target_clusters_keep_distinct_content_apart(tmp_path: Path) -> None:
     assert clustered[0].target_cluster != clustered[1].target_cluster
 
 
+def test_target_clusters_same_size_different_content_stay_apart(
+    tmp_path: Path,
+) -> None:
+    """Two distinct files that happen to share a size still get hashed, and
+    still split -- a shared size is not evidence, only what makes hashing
+    worth trying."""
+    left_path = tmp_path / "left"
+    left_path.write_bytes(b"aaaaaaaaaa")
+    right_path = tmp_path / "right"
+    right_path.write_bytes(b"bbbbbbbbbb")
+    assert left_path.stat().st_size == right_path.stat().st_size
+    candidates = [
+        _candidate(inst=_installation_at(path.name, path))
+        for path in (left_path, right_path)
+    ]
+    rows = [_cluster_row(path.name) for path in (left_path, right_path)]
+
+    clustered = _with_target_clusters(rows, candidates)
+
+    assert clustered[0].target_cluster != clustered[1].target_cluster
+
+
+def test_target_clusters_never_hash_singletons_of_distinct_size(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A partition where every singleton's size is unique to it never opens
+    and hashes a file -- there is no same-size peer that hashing could ever
+    merge it with."""
+    pydoc_path = tmp_path / "pydoc3.14"
+    pydoc_path.write_bytes(b"short")
+    config_path = tmp_path / "python3.14-config"
+    config_path.write_bytes(b"much longer content than the other file")
+    assert pydoc_path.stat().st_size != config_path.stat().st_size
+    candidates = [
+        _candidate(inst=_installation_at(path.name, path))
+        for path in (pydoc_path, config_path)
+    ]
+    rows = [_cluster_row(path.name) for path in (pydoc_path, config_path)]
+    monkeypatch.setattr(
+        "maniac.listing.inventory._content_digest",
+        lambda path: pytest.fail(f"hashed {path} despite a unique size"),
+    )
+
+    clustered = _with_target_clusters(rows, candidates)
+
+    assert clustered[0].target_cluster != clustered[1].target_cluster
+
+
+def test_target_clusters_unreadable_file_gets_own_cluster(
+    tmp_path: Path,
+) -> None:
+    """An unreadable file among a same-size group still gets its own cluster
+    -- unreadable is unproven, exactly like the `digest is None` case it
+    always was."""
+    readable_path = tmp_path / "readable"
+    readable_path.write_bytes(b"same size")
+    unreadable_path = tmp_path / "unreadable"
+    unreadable_path.write_bytes(b"same size")
+    unreadable_path.chmod(0o000)
+    try:
+        candidates = [
+            _candidate(inst=_installation_at(path.name, path))
+            for path in (readable_path, unreadable_path)
+        ]
+        rows = [_cluster_row(path.name) for path in (readable_path, unreadable_path)]
+
+        clustered = _with_target_clusters(rows, candidates)
+
+        assert clustered[0].target_cluster != clustered[1].target_cluster
+    finally:
+        unreadable_path.chmod(0o644)
+
+
 # -- group_rows (ADR-0049) ----------------------------------------------------
 
 

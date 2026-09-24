@@ -300,8 +300,10 @@ def _content_digest(path: Path) -> str | None:
     """SHA-256 of a resolved file's bytes, or `None` if it cannot be read.
 
     Only reached when `real_path` fails to unify two candidates already
-    sharing `(provider, package, page_path)` (ADR-0049) -- an ordinary
-    symlink alias never pays for this, and it is never persisted.
+    sharing `(provider, package, page_path)` *and* `stat().st_size` (ADR-0049)
+    -- an ordinary symlink alias never pays for this, a size mismatch already
+    disproves byte-identity without opening either file, and the digest is
+    never persisted.
     """
     try:
         return hashlib.sha256(path.read_bytes()).hexdigest()
@@ -317,10 +319,14 @@ def _cluster_partition(
     Group by `real_path` first (`python`/`python3`/`python3.14`, one mise
     symlink layer, unify here for free). A `real_path` that stays a
     singleton is a proven-distinct *file*, not yet a proven-distinct
-    *program* -- hash it, and singletons sharing a hash merge (`pip`/`pip3`/
-    `pip3.14`: three `console_scripts` files, one program). A candidate with
-    no `Installation` (ADR-0020's unclaimed case) gets its own id untouched;
-    it never needed help distinguishing itself.
+    *program*. Two files of different size can't be byte-identical, so a
+    singleton is grouped next by `stat().st_size`; only a size shared by two
+    or more singletons is worth opening and hashing (`pip`/`pip3`/`pip3.14`:
+    three `console_scripts` files, one size, one program) -- most partitions
+    have one singleton of a size nothing else shares, so most hashing this
+    used to do is skipped outright. A candidate with no `Installation`
+    (ADR-0020's unclaimed case), or a real_path that can't be stat'd, gets
+    its own id untouched; it never needed help distinguishing itself.
     """
     by_real_path: dict[Path, list[int]] = {}
     assignment: dict[int, int] = {}
@@ -339,15 +345,29 @@ def _cluster_partition(
         else:
             singletons.append((real_path, indexes[0]))
 
-    by_digest: dict[str, int] = {}
+    by_size: dict[int, list[tuple[Path, int]]] = {}
     for real_path, index in singletons:
-        digest = _content_digest(real_path)
-        # Python `console_scripts` are written as distinct byte-identical files
-        # so symlink identity under-collapses them and content hash is the rung
-        # that catches it, not ADR-0020's --version guessing.
-        assignment[index] = (
-            next_id() if digest is None else by_digest.setdefault(digest, next_id())
-        )
+        try:
+            size = real_path.stat().st_size
+        except OSError:
+            assignment[index] = next_id()
+            continue
+        by_size.setdefault(size, []).append((real_path, index))
+
+    by_digest: dict[str, int] = {}
+    for same_size in by_size.values():
+        if len(same_size) == 1:
+            _, index = same_size[0]
+            assignment[index] = next_id()
+            continue
+        for real_path, index in same_size:
+            digest = _content_digest(real_path)
+            # Python `console_scripts` are written as distinct byte-identical files
+            # so symlink identity under-collapses them and content hash is the rung
+            # that catches it, not ADR-0020's --version guessing.
+            assignment[index] = (
+                next_id() if digest is None else by_digest.setdefault(digest, next_id())
+            )
     return assignment
 
 
