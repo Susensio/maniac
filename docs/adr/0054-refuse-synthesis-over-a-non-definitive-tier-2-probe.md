@@ -19,7 +19,7 @@ The backlog item left one question open on top of the mechanism: "then decide be
 That question is what this record settles.
 
 Both items were picked up together in this session (2026-09-22), alongside two adjacent backlog items rejected on the same pass for resting on a premise MANIAC does not have -- a long-running process and concurrent access to the manpath -- which this machine's solo, single-invocation, single-user use never exercises.
-Those two are recorded as settled exclusions in `docs/BACKLOG.md`, not here; this record is about the two that were real.
+Those two were recorded as settled exclusions in `docs/BACKLOG.md`, not here; this record is about the two that were real.
 
 ## Decision
 
@@ -48,3 +48,9 @@ The cost is a new way for `install` to stop short that a flaky network can trigg
 This is accepted because the alternative -- silently synthesizing -- is exactly the concealment the backlog item was written against: a wrong repository, a bad tag match, or a dropped connection would have produced a plausible-looking page with no signal that tier 2 was never actually consulted.
 
 `docs/BACKLOG.md`'s definitive-tier-2-absence item is closed by this record and the commit implementing it.
+
+## Corrections
+
+2026-09-24: the Context said the two rejected items "are recorded as settled exclusions in `docs/BACKLOG.md`".
+That section was dissolved that day.
+The manpath-atomicity one now sits as a comment on `lifecycle.link_manpath_entry`; the provider-memoization one was dropped, since a process-local cache in a one-process-per-invocation CLI needs no defending (ADR-0022).
