@@ -1,7 +1,13 @@
 # Project records
 
-- `docs/BACKLOG.md` — open work nobody has committed to. The main agent writes it.
-- `docs/STATE.md` — work committed to and not yet finished. The main agent writes it.
+- `docs/adr/` — settled decisions.
+- `docs/BACKLOG.md` — open work nobody has committed to.
+- `docs/STATE.md` — work committed to and not yet finished; absent when nothing is.
+
+# Shared master
+
+`master` has taken commits from more than one session at a time, including a rewind that dropped a branch's work.
+Before moving it, gate the move on `git merge-base --is-ancestor`, not just print the result.
 
 # Moving fast before 1.0.0
 
