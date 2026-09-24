@@ -32,9 +32,8 @@ Settled decisions live in `docs/adr/`; defects with a line to sit beside are mar
 
 ## Features and discovery
 
-- Serve system and distro-packaged binaries, starting with Debian package provenance for system candidates.
-  `maniac/sources/packages.py` already asks `dpkg-query` for a page's owner, version and `${Source}`; what is missing is batched ownership for binaries plus homepage/copyright evidence for upstream identity.
-  Keep downstream package VCS distinct from upstream identity, and defer other package managers until real installations exist.
+- Add package-manager providers beyond Debian for system binaries (Arch, RPM-family, others), now that `DebianProvider` (`maniac/sources/providers/debian.py`) establishes the shape.
+  Each needs a real installation to verify ownership and version queries against, per ADR-0015's pattern for unverified providers.
 - Extract bounded documentation from installed package roots and system packages: recognized local docs, Info pages, package metadata as supplementary context, and absolute-path help.
   Preserve each source's provenance.
 - Add tldr-pages as an examples source, preferring an installed tealdeer cache before its release zip and recording provenance in generated output.

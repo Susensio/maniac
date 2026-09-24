@@ -7,6 +7,12 @@ from enum import Enum
 from functools import cache
 from pathlib import Path
 
+_SYSTEM_BIN_DIRS = frozenset(
+    {Path("/bin"), Path("/sbin"), Path("/usr/bin"), Path("/usr/sbin")}
+)
+
+_DEBIAN_DOC_ROOT = Path("/usr/share/doc")
+
 
 class ExternalPageFreshness(Enum):
     """Package-backed conclusion for a reachable page outside an install root."""
@@ -132,6 +138,94 @@ def _debian_source(package: str) -> str | None:
         return None
     source = result.stdout.strip()
     return source or package
+
+
+@cache
+def _debian_bin_owners() -> dict[Path, str]:
+    """Resolved path -> owning Debian package, for every file dpkg claims
+    across `_SYSTEM_BIN_DIRS`.
+
+    One batched `dpkg-query -S`, not one call per binary, run lazily and
+    cached for the life of the process. Each directory entry is queried
+    under its own directory's literal path (`/bin/x` as well as
+    `/usr/bin/x`) because usrmerge may leave dpkg's own ownership records
+    under either form; the result is keyed by the resolved path, so a
+    lookup against an already-resolved binary path needs no form of its
+    own. Missing dpkg, or any failure, yields no claims.
+    """
+    literal_paths = sorted(
+        {
+            entry
+            for directory in _SYSTEM_BIN_DIRS
+            if directory.is_dir()
+            for entry in directory.iterdir()
+        },
+        key=str,
+    )
+    if not literal_paths:
+        return {}
+    try:
+        result = subprocess.run(
+            ["dpkg-query", "-S", "--", *(str(p) for p in literal_paths)],
+            capture_output=True,
+            check=False,
+            text=True,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return {}
+    owners: dict[Path, str] = {}
+    for line in result.stdout.splitlines():
+        owner, separator, path_str = line.partition(": ")
+        if not separator:
+            continue
+        names = [name.strip() for name in owner.split(",") if name.strip()]
+        if len(names) != 1:
+            continue
+        try:
+            resolved = Path(path_str.strip()).resolve()
+        except OSError:
+            continue
+        owners[resolved] = names[0]
+    return owners
+
+
+@cache
+def _debian_homepage(package: str) -> str | None:
+    """`${Homepage}` for `package`, or `None` if it is unset or unreadable."""
+    try:
+        result = subprocess.run(
+            ["dpkg-query", "-W", "-f=${Homepage}", package],
+            capture_output=True,
+            check=False,
+            text=True,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0:
+        return None
+    homepage = result.stdout.strip()
+    return homepage or None
+
+
+@cache
+def _debian_copyright_source(package: str) -> str | None:
+    """DEP-5 `Source:` field from `package`'s own copyright file.
+
+    Read from the header paragraph only -- the field DEP-5 defines for the
+    upstream project's own location, never Debian's `Vcs-Git`/`Vcs-Browser`,
+    which name the packaging repository instead.
+    """
+    path = _DEBIAN_DOC_ROOT / package / "copyright"
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    header = text.split("\n\n", 1)[0]
+    for line in header.splitlines():
+        if line.startswith("Source:"):
+            value = line.removeprefix("Source:").strip().strip("<>").strip()
+            return value or None
+    return None
 
 
 def _same_software(owner: str, package: str) -> bool:

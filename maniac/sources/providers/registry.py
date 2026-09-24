@@ -5,9 +5,11 @@ from pathlib import Path
 
 from ...config import Config
 from ...models import Installation, RepoSource
+from ..packages import _SYSTEM_BIN_DIRS
 from ..pathcache import resolve_cached
 from .base import Provider, RoutableProvider
 from .cargo import CargoProvider
+from .debian import DebianProvider
 from .go import GoProvider
 from .homebrew import HomebrewProvider
 from .local_lib import LocalLibProvider
@@ -15,10 +17,6 @@ from .mise import MiseProvider
 from .npm import NpmProvider
 from .pipx import PipxProvider
 from .uv import UvProvider
-
-_SYSTEM_BIN_DIRS = frozenset(
-    {Path("/bin"), Path("/sbin"), Path("/usr/bin"), Path("/usr/sbin")}
-)
 
 
 class ProviderRegistry:
@@ -106,3 +104,4 @@ registry.register(PipxProvider())
 registry.register(CargoProvider())
 registry.register(GoProvider())
 registry.register(HomebrewProvider())
+registry.register(DebianProvider())
