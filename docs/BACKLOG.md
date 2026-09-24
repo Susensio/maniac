@@ -93,6 +93,11 @@ These are findings the work surfaced and deliberately did not take; they are fir
   Each `maniac install`/`maniac list` invocation is a fresh process, so the `functools.cache` never outlives the run it was populated in.
   Revisit only if MANIAC grows a long-lived mode (daemon, watch, server) or a command that installs and re-reads within one invocation.
 
+- Do not redesign when `Config` reads XDG paths.
+  Decided 2026-09-24: MANIAC is a short-lived CLI, one process per invocation, so import-time versus per-instance binding is the same answer at runtime, and test convenience is not a reason to pick either.
+  The item's premise was stale anyway: no module-level path global remains -- `_xdg_*_dir()` read `os.environ` on each call and every `Config` path field is a `default_factory`, so each instance already reads the environment when it is built.
+  Revisit only if MANIAC grows a long-lived mode.
+
 - Do not reconstruct tier-1 direct provider links.
   ADR-0046 refused: "not under `output_dir`" is not evidence of a provider root, and adopting one would let MANIAC replace and later remove a symlink the user owns.
   A fully lost manifest loses tier-1 ownership entirely as the accepted cost; real evidence would be a target resolving beneath a live provider install root, which `sources.candidates` can already establish, should that ever change.

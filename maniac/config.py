@@ -30,8 +30,6 @@ _PROVIDER_CREDENTIALS: dict[str, tuple[str, ...]] = {
 }
 
 
-# Read on each call, not cached: MANIAC is one short-lived process per
-# invocation, so when XDG is read is chosen for simplicity, not test comfort.
 def _xdg_config_dir() -> Path:
     return Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
 
