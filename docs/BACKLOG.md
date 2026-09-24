@@ -17,6 +17,13 @@ Settled decisions live in `docs/adr/`; defects with a line to sit beside are mar
 
 ## Refactors and architecture
 
+- Surface `Installation.losers` to the user.
+  Losing later-`$PATH` claims are retained on the model but reach no output: `maniac list` rows (`ToolRow`) carry no `Installation`, and there is no diagnostic command.
+  Next step: decide the surface -- a `list` column/flag or a new diagnostic command.
+- Retain competing providers claiming the same `bin_path` at one `$PATH` entry.
+  `_detect_via_registry` stops at the first matching provider, and it is also the single-name lookup path for `find_installation`/`discover_repo`, so collecting all claims changes that hot path's cost.
+- Link tier-1 companion pages from the install root instead of copying them.
+  `_try_install_root` copies every non-primary page into `output_dir` because only `final_target`'s containment is verified (`candidate.provider_owned`); a per-page containment check on `InstallRootCandidate` would let companions link like the primary.
 - Tell transparent wrappers from genuinely different shadowing binaries by comparing `--version` for the first and later PATH occurrences.
   Never fall through positionally (ADR-0020).
   Blocked on a live wrapper fixture.
