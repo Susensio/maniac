@@ -13,6 +13,7 @@ all three, so tier 3 never re-resolves what tiers 1-2 already found.
 """
 
 import shutil
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -201,6 +202,66 @@ def _refuse_unmanaged_destination(dest_file: Path, cfg: Config, *, force: bool) 
     )
 
 
+@dataclass(frozen=True, slots=True)
+class _PageInstall:
+    """One page's queued `install_manpage` call, for `_install_page_group`."""
+
+    source_file: Path
+    tool: str
+    request: PageRequest
+    target_dir: Path
+    durable_source: bool = False
+
+
+def _install_page_group(
+    items: Iterable[_PageInstall],
+    txn: manifest.Transaction,
+    cfg: Config,
+    *,
+    force: bool,
+) -> list[InstallResult]:
+    """Install every queued page as one unit, in `txn`, undoing all on any failure.
+
+    Shared by tier 1 (`_try_install_root`) and tier 2 (`_try_repository`): a
+    multi-page release installs the same way regardless of which tier found
+    it -- one transaction around the whole group, so its entries land in a
+    single write or none of them do (ADR-0046, ADR-0042).
+    """
+    # Snapshot before this loop's own puts, for ADR-0050's undo below --
+    # `txn.entries` is mutated in place by every `install_manpage` call
+    # through `manifest.joined`, so checking target usage against it at
+    # undo time would see the very entry now being undone.
+    baseline_entries = dict(txn.entries)
+    installed: list[InstallResult] = []
+    try:
+        for item in items:
+            result = install_manpage(
+                item.source_file,
+                item.tool,
+                item.request,
+                target_dir=item.target_dir,
+                force=force,
+                durable_source=item.durable_source,
+                transaction=txn,
+            )
+            installed.append(result)
+    except Exception:
+        # A later page failed: undo every earlier page this loop already
+        # installed, in reverse order, before the transaction's own exit
+        # discards the manifest side (ADR-0046).
+        for result in reversed(installed):
+            _undo_installed_page(result, cfg, baseline_entries)
+        raise
+    # The loop reached here clean: every page's own reinstall stands, so
+    # any throwaway undo copy taken for it (ADR-0051's reused-own-target
+    # gap) was never needed and would otherwise sit under `backup_dir`
+    # forever with nothing left to reference or restore it.
+    for result in installed:
+        if result.attempt_backup and result.backup_path is not None:
+            result.backup_path.unlink(missing_ok=True)
+    return installed
+
+
 def _try_install_root(
     tool: ResolvedTool, *, force: bool, dry_run: bool
 ) -> InstallOutcome | None:
@@ -212,9 +273,16 @@ def _try_install_root(
     if candidate is None:
         return None
     cfg = tool.config
-    _refuse_unmanaged_destination(
-        cfg.man_dir / candidate.final_target.name, cfg, force=force
-    )
+    # Every page of the install root installs as one unit, same as tier 2
+    # (ADR-0042, ADR-0046) -- a companion's own destination refuses the
+    # whole group before any of them is materialized, not only the primary's.
+    for page in candidate.pages:
+        dest_name = (
+            candidate.final_target.name if page == candidate.primary else page.path.name
+        )
+        _refuse_unmanaged_destination(
+            _manpage_directory(page.path, cfg) / dest_name, cfg, force=force
+        )
     detail = "upstream manpage from install root"
     if inst.version:
         detail += f" ({inst.version})"
@@ -227,19 +295,48 @@ def _try_install_root(
             source_path=candidate.discovered_page,
             installed_path=None,
         )
-    installed_path = install_manpage(
-        candidate.final_target,
-        inst.binary,
-        PageRequest(
-            Tier.INSTALL_ROOT,
-            str(inst.root),
-            version=inst.version,
-            provider_target=candidate.provider_owned,
-        ),
-        force=force,
-        durable_source=candidate.provider_owned,
-        config=tool.config,
-    ).path
+    # Every page of one install root records the primary's manifest key as
+    # its group, the same fact tier 2 records for one release archive
+    # (ADR-0042).  The primary is keyed on `inst.binary` -- not
+    # `manpage_owner(candidate.primary.path)` -- because its filename can
+    # match the subcommand pattern (`select_primary_manpage`) rather than
+    # `inst.binary` verbatim.
+    group = inst.binary
+    with manifest.transaction(cfg) as txn:
+        installed = _install_page_group(
+            (
+                _PageInstall(
+                    source_file=candidate.final_target
+                    if page == candidate.primary
+                    else page.path,
+                    tool=inst.binary
+                    if page == candidate.primary
+                    else manpage_owner(page.path),
+                    request=PageRequest(
+                        Tier.INSTALL_ROOT,
+                        str(inst.root),
+                        version=inst.version,
+                        provider_target=candidate.provider_owned
+                        if page == candidate.primary
+                        else False,
+                        group=group,
+                    ),
+                    target_dir=_manpage_directory(page.path, cfg),
+                    durable_source=candidate.provider_owned
+                    if page == candidate.primary
+                    else False,
+                )
+                for page in candidate.pages
+            ),
+            txn,
+            cfg,
+            force=force,
+        )
+    installed_path = next(
+        result.path
+        for result, page in zip(installed, candidate.pages, strict=True)
+        if page == candidate.primary
+    )
     detail += "   [no synthesis]"
     return InstallOutcome(
         tool=inst.binary,
@@ -306,7 +403,6 @@ def _try_repository(
             True,
         )
 
-    installed_path: Path | None = None
     # Every page of one release archive records the primary's owner as its
     # group: they arrived together and uninstall together, which `source_uri`
     # cannot say -- it names the asset, not the unit, and cannot mark a primary.
@@ -317,18 +413,12 @@ def _try_repository(
     # (ADR-0046, ADR-0042).  The pages are already materialized by here, so
     # no generation happens under the lock (ADR-0043).
     with manifest.transaction(cfg) as txn:
-        # Snapshot before this loop's own puts, for ADR-0050's undo below --
-        # `txn.entries` is mutated in place by every `install_manpage` call
-        # through `manifest.joined`, so checking target usage against it at
-        # undo time would see the very entry now being undone.
-        baseline_entries = dict(txn.entries)
-        installed: list[InstallResult] = []
-        try:
-            for page in candidate.pages:
-                result = install_manpage(
-                    page.path,
-                    manpage_owner(page.path),
-                    PageRequest(
+        installed = _install_page_group(
+            (
+                _PageInstall(
+                    source_file=page.path,
+                    tool=manpage_owner(page.path),
+                    request=PageRequest(
                         Tier.REPOSITORY,
                         source.identity,
                         version=inst.version,
@@ -336,29 +426,20 @@ def _try_repository(
                         group=group,
                     ),
                     target_dir=_manpage_directory(page.path, cfg),
-                    force=force,
-                    transaction=txn,
                 )
-                installed.append(result)
-                if page == candidate.primary:
-                    installed_path = result.path
-        except Exception:
-            # A later page failed: undo every earlier page this loop already
-            # installed, in reverse order, before the transaction's own exit
-            # discards the manifest side (ADR-0046).
-            for result in reversed(installed):
-                _undo_installed_page(result, cfg, baseline_entries)
-            raise
-        # The loop reached here clean: every page's own reinstall stands, so
-        # any throwaway undo copy taken for it (ADR-0051's reused-own-target
-        # gap) was never needed and would otherwise sit under `backup_dir`
-        # forever with nothing left to reference or restore it.
-        for result in installed:
-            if result.attempt_backup and result.backup_path is not None:
-                result.backup_path.unlink(missing_ok=True)
+                for page in candidate.pages
+            ),
+            txn,
+            cfg,
+            force=force,
+        )
         kept = {manpage_owner(page.path) for page in candidate.pages}
         _prune_dropped_group_members(group, kept, txn, cfg)
-    assert installed_path is not None
+    installed_path = next(
+        result.path
+        for result, page in zip(installed, candidate.pages, strict=True)
+        if page == candidate.primary
+    )
     detail = f"upstream manpage from repository ({inst.version})   [no synthesis]"
     return (
         InstallOutcome(

@@ -167,6 +167,55 @@ def test_run_install_links_a_verified_install_root_page_directly(
     assert not cfg.output_dir.exists()
 
 
+def test_run_install_installs_every_page_of_a_multi_page_install_root_candidate(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A tier-1 release with a companion page installs both as one unit,
+    the primary's manifest key recorded as `group` on each -- the same
+    thing tier 2 already does for a multi-page repository release
+    (docs/BACKLOG.md, "Install every page of a multi-page install-root
+    release").
+    """
+    root = tmp_path / "provider" / "tool" / "1.2.3"
+    primary = root / "share" / "man" / "man1" / "tool.1"
+    companion = root / "share" / "man" / "man5" / "tool_colors.5"
+    primary.parent.mkdir(parents=True)
+    companion.parent.mkdir(parents=True)
+    primary.write_text(".TH TOOL 1\n", encoding="utf-8")
+    companion.write_text(".TH TOOL_COLORS 5\n", encoding="utf-8")
+    provider = _FakeProvider(local_docs=[primary, companion])
+    inst = _installation(root=root)
+    cfg = Config(
+        man_dir=tmp_path / "man" / "man1",
+        output_dir=tmp_path / "maniac",
+        manifest_path=tmp_path / "state" / "installed.json",
+    )
+    monkeypatch.setattr(
+        "maniac.orchestration.context.resolution.find_installation",
+        lambda name, bin_dir=None: (provider, inst),
+    )
+
+    outcome = run_install("tool", config=cfg)
+
+    assert outcome.installed_path is not None
+    assert outcome.installed_path.resolve() == primary
+    companion_path = cfg.man_dir.parent / "man5" / companion.name
+    assert companion_path.resolve() == cfg.output_dir / companion.name
+
+    primary_entry = manifest.lookup("tool", config=cfg)
+    companion_entry = manifest.lookup("tool_colors", config=cfg)
+    assert primary_entry is not None
+    assert companion_entry is not None
+    assert primary_entry.group == "tool"
+    assert companion_entry.group == "tool"
+    # The primary links directly to its provider-owned source; the
+    # companion, never checked for containment, is copied through the
+    # ordinary materialize path instead.
+    assert primary_entry.provider_target is True
+    assert companion_entry.provider_target is False
+    assert companion_entry.target == cfg.output_dir / companion.name
+
+
 def test_run_install_materializes_an_install_root_page_resolving_outside_its_root(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
