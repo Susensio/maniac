@@ -371,6 +371,43 @@ def _with_target_clusters(
     return [replace(row, target_cluster=assignment[i]) for i, row in enumerate(rows)]
 
 
+def group_rows(rows: list[ToolRow]) -> list[list[ToolRow]]:
+    """Partition rows into groups a caller may render as one (ADR-0049).
+
+    The key is `(provider, package, state, source, page_path, owning_package,
+    target_cluster)`. `page_path` and `owning_package` join the key because a
+    group can only exist where every member already agrees on both, so any
+    representative drawn from the group has a correct Source link and
+    owning-package label by construction. `target_cluster` refines a
+    `(provider, package)` partition further, by proven filesystem identity --
+    a shared `real_path`, or failing that a shared content hash -- so `python`,
+    `pip` and `idle3` no longer collapse merely for sharing a package.
+
+    Groups come back in first-seen order.
+    """
+    groups: dict[
+        tuple[str, str, ActionState, PageSource, Path | None, str | None, int | None],
+        list[ToolRow],
+    ] = {}
+    order: list[
+        tuple[str, str, ActionState, PageSource, Path | None, str | None, int | None]
+    ] = []
+    for row in rows:
+        key = (
+            row.provider,
+            row.package,
+            row.state,
+            row.source,
+            row.page_path,
+            row.owning_package,
+            row.target_cluster,
+        )
+        if key not in groups:
+            order.append(key)
+        groups.setdefault(key, []).append(row)
+    return [groups[key] for key in order]
+
+
 def compute_rows(
     tools: list[str] | None = None,
     config: Config | None = None,

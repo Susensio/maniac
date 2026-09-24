@@ -21,7 +21,7 @@ cannot reach the state the coordinator is still mutating.
 """
 
 from .classification import classify
-from .inventory import InventoryObserver, compute_rows
+from .inventory import InventoryObserver, compute_rows, group_rows
 from .models import (
     ActionState,
     Candidate,
@@ -41,4 +41,5 @@ __all__ = [
     "ToolRow",
     "classify",
     "compute_rows",
+    "group_rows",
 ]

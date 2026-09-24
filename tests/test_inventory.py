@@ -27,7 +27,7 @@ from maniac.listing import (
     compute_rows,
 )
 from maniac.listing.classification import provider_target_freshness
-from maniac.listing.inventory import _build_inventory, _with_target_clusters
+from maniac.listing.inventory import _build_inventory, _with_target_clusters, group_rows
 from maniac.listing.upstream import resolve_upstream
 from maniac.manifest import Entry, Tier
 from maniac.models import Installation, RepoSource
@@ -2170,6 +2170,140 @@ def test_target_clusters_keep_distinct_content_apart(tmp_path: Path) -> None:
     clustered = _with_target_clusters(rows, candidates)
 
     assert clustered[0].target_cluster != clustered[1].target_cluster
+
+
+# -- group_rows (ADR-0049) ----------------------------------------------------
+
+
+def test_group_rows_key_includes_source_and_upstream() -> None:
+    """Two rows sharing (provider, package, state) but differing in Source or
+    Upstream must never collapse -- the extended key ADR-0018 requires."""
+    rows = [
+        ToolRow(
+            tool="pandoc",
+            package="pandoc",
+            provider="mise",
+            state=ActionState.OK,
+            source=PageSource.MANIAC,
+            upstream=None,
+        ),
+        ToolRow(
+            tool="pandoc-lua",
+            package="pandoc",
+            provider="mise",
+            state=ActionState.OK,
+            source=PageSource.SYSTEM,
+            upstream=None,
+        ),
+    ]
+
+    assert len(group_rows(rows)) == 2
+
+
+def test_group_rows_siblings_collapse_despite_differing_reposource_name() -> None:
+    """Siblings resolving to one repository collapse, though each `RepoSource`
+    carries its own binary name.
+
+    Observed live: `pandoc`, `pandoc-lua` and `pandoc-server` all render
+    `jgm/pandoc` in Upstream but rendered as three rows, because the group
+    key included `RepoSource.name` -- a field the table never shows.
+    """
+    rows = [
+        ToolRow(
+            tool=name,
+            package="pandoc",
+            provider="mise",
+            state=ActionState.AVAILABLE,
+            source=PageSource.VENDOR,
+            upstream=RepoSource(name=name, target="jgm/pandoc", is_local=False),
+        )
+        for name in ("pandoc", "pandoc-lua", "pandoc-server")
+    ]
+
+    grouped = group_rows(rows)
+    assert len(grouped) == 1
+    assert len(grouped[0]) == 3
+
+
+def test_group_rows_differing_page_path_still_splits(tmp_path: Path) -> None:
+    """A differing page already proves two different things (ADR-0049), even
+    when every other key component agrees."""
+    rows = [
+        ToolRow(
+            tool="pandoc",
+            package="pandoc",
+            provider="mise",
+            state=ActionState.AVAILABLE,
+            source=PageSource.VENDOR,
+            upstream=None,
+            page_path=tmp_path / "pandoc.1",
+        ),
+        ToolRow(
+            tool="pandoc-lua",
+            package="pandoc",
+            provider="mise",
+            state=ActionState.AVAILABLE,
+            source=PageSource.VENDOR,
+            upstream=None,
+            page_path=tmp_path / "pandoc-lua.1",
+        ),
+    ]
+
+    assert len(group_rows(rows)) == 2
+
+
+def test_group_rows_differing_owning_package_still_splits() -> None:
+    """A page's provable owner is part of the key (ADR-0049): two rows
+    disagreeing on it must never render one owning-package label for both."""
+    rows = [
+        ToolRow(
+            tool="pydoc3",
+            package="python",
+            provider="mise",
+            state=ActionState.OK,
+            source=PageSource.SYSTEM,
+            upstream=None,
+            owning_package="python3.12",
+        ),
+        ToolRow(
+            tool="python3-config",
+            package="python",
+            provider="mise",
+            state=ActionState.OK,
+            source=PageSource.SYSTEM,
+            upstream=None,
+            owning_package="libpython3.12-dev:amd64",
+        ),
+    ]
+
+    assert len(group_rows(rows)) == 2
+
+
+def test_group_rows_differing_target_cluster_still_splits() -> None:
+    """Two proven-distinct programs sharing a package must never collapse,
+    even absent any other distinguishing field (ADR-0049)."""
+    rows = [
+        ToolRow(
+            tool="idle3",
+            package="python",
+            provider="mise",
+            state=ActionState.MISSING,
+            source=PageSource.NONE,
+            upstream=None,
+            target_cluster=1,
+        ),
+        ToolRow(
+            tool="pip",
+            package="python",
+            provider="mise",
+            state=ActionState.MISSING,
+            source=PageSource.NONE,
+            upstream=None,
+            target_cluster=2,
+        ),
+    ]
+
+    assert len(group_rows(rows)) == 2
 
 
 # -- provider_target_freshness: a provider-owned target's own verdict -------

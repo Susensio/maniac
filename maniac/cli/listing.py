@@ -10,7 +10,6 @@ needing no action.
 """
 
 from dataclasses import replace
-from pathlib import Path
 from time import monotonic
 from typing import Annotated, Any
 
@@ -26,6 +25,7 @@ from ..listing import (
     RowSnapshot,
     ToolRow,
     compute_rows,
+    group_rows,
 )
 from ..models import RepoSource
 from . import app, console, get_config
@@ -102,16 +102,7 @@ def _bare_names(rows: list[ToolRow]) -> list[str]:
 
 
 def _grouped_for_display(rows: list[ToolRow]) -> list[tuple[str, ToolRow]]:
-    """Collapse binaries sharing one proven-identical target into one row (ADR-0049).
-
-    The key is `(provider, package, state, source, page_path, owning_package,
-    target_cluster)`. `page_path` and `owning_package` join the key because a
-    group can only exist where every member already agrees on both, so the
-    representative's Source link and owning-package label are correct by
-    construction. `target_cluster` (`maniac.listing.inventory`) refines a
-    `(provider, package)` partition further, by proven filesystem identity --
-    a shared `real_path`, or failing that a shared content hash -- so `python`,
-    `pip` and `idle3` no longer collapse merely for sharing a package.
+    """Render `group_rows`'s groups (`maniac.listing.inventory`, ADR-0049) as one row each.
 
     A solo group's label is its one tool's name. A group of several is
     anchored on its shortest member's name, tie-broken alphabetically, with a
@@ -130,30 +121,8 @@ def _grouped_for_display(rows: list[ToolRow]) -> list[tuple[str, ToolRow]]:
     where its own label belongs (`docs/BACKLOG.md`, confirmed live
     2026-09-16, unblocked by ADR-0049's narrower grouping).
     """
-    groups: dict[
-        tuple[str, str, ActionState, PageSource, Path | None, str | None, int | None],
-        list[ToolRow],
-    ] = {}
-    order: list[
-        tuple[str, str, ActionState, PageSource, Path | None, str | None, int | None]
-    ] = []
-    for row in rows:
-        key = (
-            row.provider,
-            row.package,
-            row.state,
-            row.source,
-            row.page_path,
-            row.owning_package,
-            row.target_cluster,
-        )
-        if key not in groups:
-            order.append(key)
-        groups.setdefault(key, []).append(row)
-
     rendered: list[tuple[str, ToolRow]] = []
-    for key in order:
-        group = groups[key]
+    for group in group_rows(rows):
         representative = group[0]
         if len(group) == 1:
             label = representative.tool
