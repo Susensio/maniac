@@ -13,11 +13,32 @@ from maniac.sources import packages
 
 
 @pytest.fixture(autouse=True)
-def _clear_debian_caches() -> None:
+def _clear_debian_caches(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     packages._debian_owner.cache_clear()
     packages._debian_owner_map_reset()
     packages._debian_version.cache_clear()
     packages._debian_source.cache_clear()
+    # No test relies on this machine's real dpkg database. Point the map
+    # builder at a directory that does not exist so it falls back to
+    # nothing (an empty map) by default; tests of the map itself build a
+    # real fake directory and override this.
+    monkeypatch.setattr(packages, "_DPKG_INFO_DIR", tmp_path / "no-such-info-dir")
+    monkeypatch.setattr(
+        packages, "_DPKG_DIVERSIONS_FILE", tmp_path / "no-such-diversions"
+    )
+
+
+def _write_list_file(info_dir: Path, package: str, paths: list[str]) -> None:
+    """A fake `/var/lib/dpkg/info/<package>.list`, dpkg's own manifest format."""
+    info_dir.mkdir(parents=True, exist_ok=True)
+    (info_dir / f"{package}.list").write_text("\n".join(paths) + "\n")
+
+
+def _write_diversions(path: Path, records: list[tuple[str, str, str]]) -> None:
+    """A fake `/var/lib/dpkg/diversions`: three lines per record."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lines = [line for record in records for line in record]
+    path.write_text("\n".join(lines) + "\n")
 
 
 def _dpkg(
@@ -159,109 +180,105 @@ def test_verify_external_page_skips_the_owner_lookup_without_a_version(
     assert calls == []
 
 
-def test_debian_owner_map_parses_a_normal_line(
-    monkeypatch: pytest.MonkeyPatch,
+def test_debian_owner_map_parses_a_normal_entry(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    def run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
-        return subprocess.CompletedProcess(
-            args, 0, "coreutils: /usr/share/man/man1/ls.1.gz\n", ""
-        )
-
-    monkeypatch.setattr(packages.subprocess, "run", run)
+    info_dir = tmp_path / "info"
+    _write_list_file(
+        info_dir, "coreutils", ["/usr", "/usr/bin/ls", "/usr/share/man/man1/ls.1.gz"]
+    )
+    monkeypatch.setattr(packages, "_DPKG_INFO_DIR", info_dir)
 
     assert packages._debian_owner_map() == {"/usr/share/man/man1/ls.1.gz": "coreutils"}
 
 
-def test_debian_owner_map_leaves_a_multi_owner_page_ambiguous(
-    monkeypatch: pytest.MonkeyPatch,
+def test_debian_owner_map_keeps_the_multiarch_qualifier(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    def run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
-        return subprocess.CompletedProcess(
-            args, 0, "passwd, man-db: /usr/share/man/man5/passwd.5.gz\n", ""
-        )
+    info_dir = tmp_path / "info"
+    _write_list_file(
+        info_dir, "binutils-common:amd64", ["/usr/share/man/man1/addr2line.1.gz"]
+    )
+    monkeypatch.setattr(packages, "_DPKG_INFO_DIR", info_dir)
 
-    monkeypatch.setattr(packages.subprocess, "run", run)
+    assert packages._debian_owner_map() == {
+        "/usr/share/man/man1/addr2line.1.gz": "binutils-common:amd64"
+    }
+
+
+def test_debian_owner_map_leaves_a_multi_owner_page_ambiguous(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    info_dir = tmp_path / "info"
+    _write_list_file(info_dir, "passwd", ["/usr/share/man/man5/passwd.5.gz"])
+    _write_list_file(info_dir, "man-db", ["/usr/share/man/man5/passwd.5.gz"])
+    monkeypatch.setattr(packages, "_DPKG_INFO_DIR", info_dir)
 
     assert packages._debian_owner_map() == {"/usr/share/man/man5/passwd.5.gz": None}
 
 
 def test_debian_owner_map_excludes_a_diverted_page(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    def run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
-        return subprocess.CompletedProcess(
-            args,
-            0,
-            "diversion by captain from: /usr/share/man/man1/apturl.1.gz\n"
-            "diversion by captain to: /usr/share/man/man1/apturl.1.gz.distrib\n"
-            "captain: /usr/share/man/man1/apturl.1.gz\n",
-            "",
-        )
-
-    monkeypatch.setattr(packages.subprocess, "run", run)
+    info_dir = tmp_path / "info"
+    _write_list_file(info_dir, "captain", ["/usr/share/man/man1/apturl.1.gz"])
+    diversions = tmp_path / "diversions"
+    _write_diversions(
+        diversions,
+        [
+            (
+                "/usr/share/man/man1/apturl.1.gz",
+                "/usr/share/man/man1/apturl.1.gz.distrib",
+                "captain",
+            )
+        ],
+    )
+    monkeypatch.setattr(packages, "_DPKG_INFO_DIR", info_dir)
+    monkeypatch.setattr(packages, "_DPKG_DIVERSIONS_FILE", diversions)
 
     assert packages._debian_owner_map() == {}
 
 
-def test_debian_owner_map_excludes_a_locally_diverted_page(
-    monkeypatch: pytest.MonkeyPatch,
+def test_debian_owner_map_is_empty_when_the_info_dir_is_missing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    def run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
-        return subprocess.CompletedProcess(
-            args,
-            0,
-            "local diversion from: /usr/share/man/man1/foo.1.gz\n"
-            "local diversion to: /usr/share/man/man1/foo.1.gz.distrib\n",
-            "",
-        )
-
-    monkeypatch.setattr(packages.subprocess, "run", run)
+    monkeypatch.setattr(packages, "_DPKG_INFO_DIR", tmp_path / "does-not-exist")
 
     assert packages._debian_owner_map() == {}
 
 
-def test_debian_owner_map_is_empty_when_nothing_matches(
-    monkeypatch: pytest.MonkeyPatch,
+def test_debian_owner_map_is_empty_when_the_info_dir_holds_no_list_files(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    def run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
-        return subprocess.CompletedProcess(
-            args, 1, "", "dpkg-query: no path found matching pattern\n"
-        )
-
-    monkeypatch.setattr(packages.subprocess, "run", run)
+    info_dir = tmp_path / "info"
+    info_dir.mkdir()
+    (info_dir / "coreutils.md5sums").write_text("not a list file\n")
+    monkeypatch.setattr(packages, "_DPKG_INFO_DIR", info_dir)
 
     assert packages._debian_owner_map() == {}
 
 
-def test_debian_owner_map_is_empty_without_dpkg(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    def missing(*args: object, **kwargs: object) -> None:
-        raise FileNotFoundError
-
-    monkeypatch.setattr(packages.subprocess, "run", missing)
-
-    assert packages._debian_owner_map() == {}
-
-
-def test_debian_owner_map_runs_the_dpkg_query_exactly_once_under_concurrent_callers(
-    monkeypatch: pytest.MonkeyPatch,
+def test_debian_owner_map_builds_exactly_once_under_concurrent_callers(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """`list` classifies pages from a thread pool, so several threads can
     all reach a cache miss on the batch map before any of them has stored
-    a result. Only the first should actually shell out."""
-    calls: list[list[str]] = []
+    a result. Only the first should actually build it."""
+    info_dir = tmp_path / "info"
+    _write_list_file(info_dir, "coreutils", ["/usr/share/man/man1/ls.1.gz"])
+    monkeypatch.setattr(packages, "_DPKG_INFO_DIR", info_dir)
+
+    calls: list[None] = []
     calls_lock = threading.Lock()
+    real_fetch = packages._fetch_debian_owner_map
 
-    def run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+    def counting_fetch() -> dict[str, str | None]:
         with calls_lock:
-            calls.append(args)
+            calls.append(None)
         time.sleep(0.05)
-        return subprocess.CompletedProcess(
-            args, 0, "coreutils: /usr/share/man/man1/ls.1.gz\n", ""
-        )
+        return real_fetch()
 
-    monkeypatch.setattr(packages.subprocess, "run", run)
+    monkeypatch.setattr(packages, "_fetch_debian_owner_map", counting_fetch)
 
     barrier = threading.Barrier(8)
 
@@ -276,20 +293,31 @@ def test_debian_owner_map_runs_the_dpkg_query_exactly_once_under_concurrent_call
     assert all(r == {"/usr/share/man/man1/ls.1.gz": "coreutils"} for r in results)
 
 
-def test_debian_owner_falls_back_to_the_per_page_query_for_a_page_outside_the_map(
-    monkeypatch: pytest.MonkeyPatch,
+def test_debian_owner_falls_back_to_the_per_page_query_for_a_diverted_page(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """A page the batch map does not cover (a diverted page, or one outside
-    every manpath root) still gets an answer, from the untouched per-page
-    query -- not silently `None`."""
+    """A diverted page is excluded from the map entirely, so it still gets
+    an answer, from the untouched per-page query -- not silently `None`."""
+    info_dir = tmp_path / "info"
+    _write_list_file(info_dir, "tealdeer", ["/usr/share/man/man1/tldr.1.gz"])
+    diversions = tmp_path / "diversions"
+    _write_diversions(
+        diversions,
+        [
+            (
+                "/usr/share/man/man1/tldr.1.gz",
+                "/usr/share/man/man1/tldr.1.gz.distrib",
+                "captain",
+            )
+        ],
+    )
+    monkeypatch.setattr(packages, "_DPKG_INFO_DIR", info_dir)
+    monkeypatch.setattr(packages, "_DPKG_DIVERSIONS_FILE", diversions)
+
     calls: list[list[str]] = []
 
     def run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
         calls.append(args)
-        if "-S" in args and "--" not in args:
-            return subprocess.CompletedProcess(
-                args, 0, "coreutils: /usr/share/man/man1/ls.1.gz\n", ""
-            )
         return subprocess.CompletedProcess(
             args, 0, "tealdeer: /usr/share/man/man1/tldr.1.gz\n", ""
         )
@@ -297,9 +325,26 @@ def test_debian_owner_falls_back_to_the_per_page_query_for_a_page_outside_the_ma
     monkeypatch.setattr(packages.subprocess, "run", run)
 
     assert packages._debian_owner("/usr/share/man/man1/tldr.1.gz") == "tealdeer"
-    assert len(calls) == 2
-    assert calls[0][:3] == ["dpkg-query", "-S", "/usr/share/man/*"]
-    assert calls[1] == ["dpkg-query", "-S", "--", "/usr/share/man/man1/tldr.1.gz"]
+    assert calls == [["dpkg-query", "-S", "--", "/usr/share/man/man1/tldr.1.gz"]]
+
+
+def test_debian_owner_falls_back_to_the_per_page_query_when_the_info_dir_is_missing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(packages, "_DPKG_INFO_DIR", tmp_path / "does-not-exist")
+
+    calls: list[list[str]] = []
+
+    def run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        calls.append(args)
+        return subprocess.CompletedProcess(
+            args, 0, "tealdeer: /usr/share/man/man1/tldr.1.gz\n", ""
+        )
+
+    monkeypatch.setattr(packages.subprocess, "run", run)
+
+    assert packages._debian_owner("/usr/share/man/man1/tldr.1.gz") == "tealdeer"
+    assert calls == [["dpkg-query", "-S", "--", "/usr/share/man/man1/tldr.1.gz"]]
 
 
 def test_verify_external_page_caches_owner_and_version_subprocesses(
@@ -327,6 +372,36 @@ def test_verify_external_page_caches_owner_and_version_subprocesses(
         is packages.ExternalPageFreshness.MATCH
     )
     assert len(calls) == 2
+
+
+def test_debian_version_dedupes_concurrent_misses_for_the_same_package(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`list` classifies rows from a thread pool; several rows can name the
+    same package and all reach a cache miss before the first caller has
+    stored a result. Only the first should actually shell out."""
+    calls: list[list[str]] = []
+    calls_lock = threading.Lock()
+
+    def run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        with calls_lock:
+            calls.append(args)
+        time.sleep(0.05)
+        return subprocess.CompletedProcess(args, 0, "1.9.0-1\n", "")
+
+    monkeypatch.setattr(packages.subprocess, "run", run)
+
+    barrier = threading.Barrier(8)
+
+    def worker() -> str | None:
+        barrier.wait()
+        return packages._debian_version("tealdeer")
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        results = list(pool.map(lambda _: worker(), range(8)))
+
+    assert len(calls) == 1
+    assert all(r == "1.9.0-1" for r in results)
 
 
 @pytest.mark.parametrize(

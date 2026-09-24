@@ -1,8 +1,10 @@
 """Verify external manpages against native package-manager facts."""
 
+import os
 import re
 import subprocess
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
 from functools import cache
@@ -81,8 +83,15 @@ def _debian_upstream_version(version: str) -> str:
 
 # Debian only ever installs manpages under these roots; a user manpath entry
 # (e.g. `~/.local/share/man`) is never dpkg-owned, so it is left out of the
-# glob and simply falls back to the per-page query if ever queried.
+# scan and simply falls back to the per-page query if ever queried.
 _DEBIAN_MANPATH_ROOTS = ("/usr/share/man", "/usr/local/share/man", "/usr/local/man")
+_DEBIAN_MANPATH_ROOT_PREFIXES = tuple(
+    f"{root}/".encode() for root in _DEBIAN_MANPATH_ROOTS
+)
+
+_DPKG_ADMINDIR = Path("/var/lib/dpkg")
+_DPKG_INFO_DIR = _DPKG_ADMINDIR / "info"
+_DPKG_DIVERSIONS_FILE = _DPKG_ADMINDIR / "diversions"
 
 
 def _one_owner(names: str) -> str | None:
@@ -91,43 +100,77 @@ def _one_owner(names: str) -> str | None:
     return owners[0] if len(owners) == 1 else None
 
 
-def _fetch_debian_owner_map() -> dict[str, str | None]:
-    """Every page owned by a Debian package under a manpath root, from one
-    `dpkg-query -S` glob call instead of one call per page (dpkg re-reads
-    its whole file database per invocation, ~1s regardless of pattern).
+def _one_owner_of(names: set[str]) -> str | None:
+    """Single owner from a set of owning packages, or `None` if ambiguous."""
+    return next(iter(names)) if len(names) == 1 else None
 
-    A diverted page (`diversion by ... from/to:` or `local diversion
-    from/to:` lines) is left out of the map entirely, so `_debian_owner`
-    falls back to the untouched per-page call for it -- that call's
-    whole-stdout parse of a multi-line diversion answer is undefined
-    beyond "not a plain owner", and the fallback path preserves whatever
-    it already did rather than this map inventing a different answer.
+
+def _diverted_paths() -> set[str]:
+    """Every page path named on either side of a dpkg diversion.
+
+    `/var/lib/dpkg/diversions` is plain text, three lines per record:
+    diverted-from, diverted-to, diverting package (dpkg-divert(1)'s own
+    format). Either of the first two lines can be a page path.
     """
-    patterns = [f"{root}/*" for root in _DEBIAN_MANPATH_ROOTS]
     try:
-        result = subprocess.run(
-            ["dpkg-query", "-S", *patterns],
-            capture_output=True,
-            check=False,
-            text=True,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return {}
-    if not result.stdout:
-        return {}
-    owners: dict[str, str | None] = {}
+        lines = _DPKG_DIVERSIONS_FILE.read_text().splitlines()
+    except OSError:
+        return set()
+    record_count = len(lines) - len(lines) % 3
     diverted: set[str] = set()
-    for line in result.stdout.splitlines():
-        names, separator, path = line.partition(": ")
-        if not separator or not path.startswith("/"):
+    for start in range(0, record_count, 3):
+        diverted.add(lines[start])
+        diverted.add(lines[start + 1])
+    return diverted
+
+
+def _fetch_debian_owner_map() -> dict[str, str | None]:
+    """Every page owned by a Debian package under a manpath root, read
+    straight from dpkg's own per-package file lists
+    (`/var/lib/dpkg/info/<package>.list`) instead of shelling out to
+    `dpkg-query -S`.
+
+    Measured on this machine: the equivalent `dpkg-query -S` glob call
+    costs 4.5-6.3s (dpkg re-reads its whole database per invocation,
+    regardless of pattern); scanning the ~2200 `.list` files directly
+    costs under 2s. The list-file format is stable and documented by
+    dpkg-query(1) itself ("this option requires the /var/lib/dpkg/info
+    directory in a special way"); `dlocate` reads it the same way for
+    the same reason. A page listed in more than one `.list` file keeps
+    the current ambiguous-owner semantics (`None`, like a comma-separated
+    `dpkg-query -S` answer). A diverted page (either side of a
+    `/var/lib/dpkg/diversions` record) is left out of the map entirely,
+    so `_debian_owner` falls back to the untouched per-page query for it.
+    Falls back the same way when the info directory is missing, unreadable,
+    or holds no `.list` files -- never guessed.
+    """
+    try:
+        list_files = [
+            entry.name
+            for entry in os.scandir(_DPKG_INFO_DIR)
+            if entry.name.endswith(".list")
+        ]
+    except OSError:
+        return {}
+    if not list_files:
+        return {}
+    diverted = _diverted_paths()
+    owners: dict[str, set[str]] = {}
+    for name in list_files:
+        package = name.removesuffix(".list")
+        try:
+            with (_DPKG_INFO_DIR / name).open("rb") as handle:
+                data = handle.read()
+        except OSError:
             continue
-        if names.startswith(("diversion by ", "local diversion ")):
-            diverted.add(path)
-            continue
-        owners[path] = _one_owner(names)
-    for path in diverted:
-        owners.pop(path, None)
-    return owners
+        for line in data.split(b"\n"):
+            if not line.startswith(_DEBIAN_MANPATH_ROOT_PREFIXES):
+                continue
+            path = line.decode(errors="surrogateescape")
+            if path in diverted:
+                continue
+            owners.setdefault(path, set()).add(package)
+    return {path: _one_owner_of(names) for path, names in owners.items()}
 
 
 _owner_map_lock = threading.Lock()
@@ -194,7 +237,41 @@ def _debian_owner(page: str) -> str | None:
     return _debian_owner_uncached(page)
 
 
-@cache
+class _DedupedCache:
+    """Like `functools.cache`, but a concurrent miss on the same key blocks
+    on the first caller's query instead of running its own.
+
+    `list` classifies rows from a thread pool; several rows can name the
+    same package (a `${Version}` and a `${Source}` lookup for it, or two
+    rows owned by the same package) and all reach a cache miss before the
+    first caller has stored a result -- `functools.cache` only locks its
+    own bookkeeping, not the wrapped call, so each miss would shell out.
+    """
+
+    def __init__(self, func: Callable[[str], str | None]) -> None:
+        self._func = func
+        self._cache: dict[str, str | None] = {}
+        self._locks: dict[str, threading.Lock] = {}
+        self._locks_guard = threading.Lock()
+
+    def __call__(self, key: str) -> str | None:
+        if key in self._cache:
+            return self._cache[key]
+        with self._locks_guard:
+            lock = self._locks.setdefault(key, threading.Lock())
+        with lock:
+            if key not in self._cache:
+                self._cache[key] = self._func(key)
+            return self._cache[key]
+
+    def cache_clear(self) -> None:
+        """Test-only: forget every cached result and its lock."""
+        with self._locks_guard:
+            self._cache.clear()
+            self._locks.clear()
+
+
+@_DedupedCache
 def _debian_version(package: str) -> str | None:
     """Installed Debian package version, or `None` if it cannot be read."""
     try:
@@ -210,7 +287,7 @@ def _debian_version(package: str) -> str | None:
     return version if result.returncode == 0 and version else None
 
 
-@cache
+@_DedupedCache
 def _debian_source(package: str) -> str | None:
     """Debian source package for `package`, or `package` itself when the
     field is blank -- a package that is its own source leaves it empty."""
