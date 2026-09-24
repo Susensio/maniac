@@ -22,6 +22,9 @@ Settled decisions live in `docs/adr/`; defects with a line to sit beside are mar
   Next step: decide the surface -- a `list` column/flag or a new diagnostic command.
 - Retain competing providers claiming the same `bin_path` at one `$PATH` entry.
   `_detect_via_registry` stops at the first matching provider, and it is also the single-name lookup path for `find_installation`/`discover_repo`, so collecting all claims changes that hot path's cost.
+- Cut `maniac list` below ~10s warm (measured 2026-09-24 at 0ae53ad).
+  No single hotspot remains: inside the ~9s local-classify pool, `man -w` (80 calls) ~2.9s, provider `local_docs` ~2.5s and `resolve_source` ~2.3s wall-union; startup ~1s.
+  Measure thread-aware (wall-clock union across the pool), never by summing per-call durations or plain cProfile -- both misled this session.
 - Link tier-1 companion pages from the install root instead of copying them.
   `_try_install_root` copies every non-primary page into `output_dir` because only `final_target`'s containment is verified (`candidate.provider_owned`); a per-page containment check on `InstallRootCandidate` would let companions link like the primary.
 - Tell transparent wrappers from genuinely different shadowing binaries by comparing `--version` for the first and later PATH occurrences.
