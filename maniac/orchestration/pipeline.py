@@ -14,7 +14,7 @@ from ..exceptions import CrawlerError, GenerationError
 from ..generation.compiler import compile_to_man
 from ..generation.llm import run_llm_synthesis
 from ..generation.prompts import build_synthesis_prompt
-from ..installer import draft_entry, install_manpage
+from ..installer import PageRequest, install_manpage
 from ..logging import logger
 from ..manifest import Tier
 from ..models import DocFile, PipelineResult
@@ -118,7 +118,7 @@ def synthesize(
         installed_path = install_manpage(
             actual_roff_path,
             tool.tool_name,
-            draft_entry(
+            PageRequest(
                 Tier.SYNTHESIS,
                 selected_model or "unknown",
                 version=recorded_version,

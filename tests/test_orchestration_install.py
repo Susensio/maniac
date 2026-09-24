@@ -1168,7 +1168,7 @@ def test_run_install_does_not_refuse_a_manifest_owned_destination(
     """Reinstalling a tool MANIAC already owns must not trip the precheck --
     only a foreign, unmanaged page at the destination should.
     """
-    from maniac.installer import draft_entry, install_manpage
+    from maniac.installer import PageRequest, install_manpage
     from maniac.manifest import Tier as ManifestTier
 
     man_dir = tmp_path / "man1"
@@ -1186,7 +1186,7 @@ def test_run_install_does_not_refuse_a_manifest_owned_destination(
     install_manpage(
         source,
         "tool",
-        draft_entry(ManifestTier.SYNTHESIS, "model"),
+        PageRequest(ManifestTier.SYNTHESIS, "model"),
         target_dir=man_dir,
         config=cfg,
     )
@@ -1212,7 +1212,7 @@ def test_run_install_does_not_refuse_its_own_orphaned_destination(
     this page (a symlink resolving under `output_dir`) as MANIAC's; the
     precheck must recognize it the same way, not just `manifest.transaction`.
     """
-    from maniac.installer import draft_entry, install_manpage
+    from maniac.installer import PageRequest, install_manpage
     from maniac.manifest import Tier as ManifestTier
 
     man_dir = tmp_path / "man1"
@@ -1230,7 +1230,7 @@ def test_run_install_does_not_refuse_its_own_orphaned_destination(
     install_manpage(
         source,
         "tool",
-        draft_entry(ManifestTier.SYNTHESIS, "model"),
+        PageRequest(ManifestTier.SYNTHESIS, "model"),
         target_dir=man_dir,
         config=cfg,
     )
@@ -1366,7 +1366,7 @@ def test_run_install_tier1_does_not_refuse_an_owned_resolved_destination(
     """A destination MANIAC already owns at tier 1's resolved name (not the
     default `<tool>.1` guess) must not trip the widened precheck.
     """
-    from maniac.installer import draft_entry, install_manpage
+    from maniac.installer import PageRequest, install_manpage
     from maniac.manifest import Tier as ManifestTier
 
     man_dir = tmp_path / "man1"
@@ -1384,7 +1384,7 @@ def test_run_install_tier1_does_not_refuse_an_owned_resolved_destination(
     install_manpage(
         source,
         "tool",
-        draft_entry(ManifestTier.INSTALL_ROOT, "/root"),
+        PageRequest(ManifestTier.INSTALL_ROOT, "/root"),
         target_dir=man_dir,
         config=cfg,
     )

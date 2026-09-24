@@ -1,7 +1,7 @@
 """Manpage system installation, conflict resolution, and uninstallation."""
 
 import shutil
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import lifecycle, manifest
@@ -11,36 +11,21 @@ from .logging import logger
 from .manifest import Entry, Tier
 
 
-def draft_entry(
-    tier: Tier,
-    source: str,
-    *,
-    version: str | None = None,
-    source_uri: str | None = None,
-    provider_target: bool = False,
-    group: str | None = None,
-) -> Entry:
-    """Describe the page `install_manpage` is about to install.
+@dataclass(frozen=True)
+class PageRequest:
+    """Everything about a page's install `install_manpage`'s caller knows in advance.
 
-    Carries every field of the eventual manifest `Entry` that the caller,
-    not the install itself, knows: `Entry` is the record ADR-0046 already
-    settled on, so this reuses it rather than declaring a second one.
-    `path` and `checksum` are placeholders -- `install_manpage` always
-    overwrites them from `source_file` and the destination it resolves,
-    same for `backup` and `target`, which only exist once the install has
-    run. Nothing here reads this draft's `path`, `checksum`, `backup` or
-    `target`.
+    `path`, `checksum`, `backup` and `target` on the eventual manifest
+    `Entry` (ADR-0046) only exist once `install_manpage` has resolved
+    `source_file` and the destination -- this carries the rest.
     """
-    return Entry(
-        path=Path(),
-        tier=tier,
-        source=source,
-        checksum="",
-        version=version,
-        source_uri=source_uri,
-        provider_target=provider_target,
-        group=group,
-    )
+
+    tier: Tier
+    source: str
+    version: str | None = None
+    source_uri: str | None = None
+    provider_target: bool = False
+    group: str | None = None
 
 
 @dataclass(frozen=True)
@@ -72,7 +57,7 @@ class InstallResult:
 def install_manpage(
     source_file: str | Path,
     tool: str,
-    entry: Entry,
+    request: PageRequest,
     target_dir: str | Path | None = None,
     force: bool = False,
     *,
@@ -82,10 +67,10 @@ def install_manpage(
 ) -> InstallResult:
     """Link a manpath entry to a durable page with conflict guard and backup.
 
-    `entry` (built by `draft_entry`) carries the page's tier, source,
-    version, source URI and group -- everything about it, past its final
-    path and checksum, which come only from `source_file` and the
-    destination this call resolves and are never trusted from `entry`.
+    `request` carries the page's tier, source, version, source URI and
+    group -- everything about it the caller knows in advance.  Its final
+    path and checksum come only from `source_file` and the destination this
+    call resolves, and go into the manifest `Entry` this call constructs.
 
     Ownership of an occupying page is decided by the manifest (ADR-0017),
     never by its bytes: `tool`'s existing entry pointing at this exact
@@ -94,7 +79,7 @@ def install_manpage(
     which backs it up into `Config.backup_dir` rather than `man_dir` -- a
     non-manpage file has no business in a directory `man`/`mandb` scan.
 
-    `entry.group` is the manifest key of the primary page of the upstream
+    `request.group` is the manifest key of the primary page of the upstream
     release this page came in; every page of one multi-page release is
     installed with the same value, which is what makes them uninstall
     together.
@@ -106,9 +91,9 @@ def install_manpage(
     passing it passes no `config`.
     """
     src = Path(source_file)
-    if durable_source and entry.tier is not Tier.INSTALL_ROOT:
+    if durable_source and request.tier is not Tier.INSTALL_ROOT:
         raise ValueError("Only install-root pages may link directly to their source")
-    if entry.provider_target and not durable_source:
+    if request.provider_target and not durable_source:
         raise ValueError("A provider target must link directly to its source")
     checksum = manifest.checksum_of(src)
     cfg = transaction.config if transaction is not None else config or Config()
@@ -158,12 +143,17 @@ def install_manpage(
         )
         txn.put(
             tool,
-            replace(
-                entry,
+            Entry(
                 path=dest_file,
+                tier=request.tier,
+                source=request.source,
                 checksum=checksum,
                 backup=backup_path,
+                version=request.version,
+                source_uri=request.source_uri,
                 target=materialized.path,
+                provider_target=request.provider_target,
+                group=request.group,
             ),
         )
     logger.info("Installed manpage", path=str(dest_file))

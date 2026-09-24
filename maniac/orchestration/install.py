@@ -21,10 +21,10 @@ from ..config import Config
 from ..exceptions import ManiacError
 from ..installer import (
     InstallResult,
+    PageRequest,
     _discard_materialized_target,
     _remove_orphaned_roff,
     _remove_recorded_manpage,
-    draft_entry,
     install_manpage,
 )
 from ..manifest import Tier, manpage_owner
@@ -230,7 +230,7 @@ def _try_install_root(
     installed_path = install_manpage(
         candidate.final_target,
         inst.binary,
-        draft_entry(
+        PageRequest(
             Tier.INSTALL_ROOT,
             str(inst.root),
             version=inst.version,
@@ -328,7 +328,7 @@ def _try_repository(
                 result = install_manpage(
                     page.path,
                     manpage_owner(page.path),
-                    draft_entry(
+                    PageRequest(
                         Tier.REPOSITORY,
                         source.identity,
                         version=inst.version,
