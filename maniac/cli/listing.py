@@ -410,6 +410,10 @@ def _render_list(
     to already be filtered (ADR-0018: what is displayed and what is piped
     never disagree), so this renders exactly what it is given.
     """
+    # When stdout is not a terminal, Rich falls back to 80 columns and only the Tool column
+    # renders; bare names are the wanted pipe output (decided 2026-09-15), so the accident
+    # and the intent coincide. A plain width, `--plain` and `--json` were considered and
+    # not wanted; revisit only if a real consumer needs the other columns.
     if names or not target_console.is_terminal:
         for tool in _bare_names(rows):
             print(tool)

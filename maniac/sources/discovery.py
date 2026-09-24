@@ -261,6 +261,11 @@ def _mise_entry_repo(entry: dict[str, object]) -> str | None:
 
 
 def _clean_git_url(url: str) -> str:
+    # TODO: non-GitHub hosts (GitLab, Codeberg) are unresolved on purpose -- npm, pipx, uv,
+    # go, homebrew and cargo discard any repository URL this function leaves unchanged, so
+    # such a project resolves to nothing even when its metadata declares the URL. Trigger: a
+    # real installed tool resolving to a non-GitHub host; the fix is one cross-provider
+    # policy, not six provider patches.
     url = url.strip()
     match = re.search(r"github\.com[/:]([\w.-]+/[\w.-]+?)(?:\.git)?/?$", url)
     if match:

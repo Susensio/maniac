@@ -98,6 +98,10 @@ def _recorded_target_owner(
 
 def link_manpath_entry(path: Path, target: Path) -> None:
     """Point a manpath entry at `target`, replacing whatever occupies it atomically."""
+    # Replacement atomicity is not asserted by any interleaving test, deliberately
+    # (2026-09-22). The only mid-swap reader is `man <tool>` racing MANIAC's own install
+    # on a single-user machine; worst case is a transient "no page found", not corruption.
+    # Revisit only if MANIAC runs unattended or concurrently with itself.
     temporary_link = path.with_name(f".{path.name}.maniac.tmp")
     temporary_link.unlink(missing_ok=True)
     try:
