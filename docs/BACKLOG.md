@@ -20,10 +20,6 @@ Settled decisions live in `docs/adr/`; defects with a line to sit beside are mar
 - Install every page of a multi-page install-root release, not just the primary.
   `_try_install_root` uses `candidate.final_target` alone and ignores `candidate.pages`, so a tier-1 release ships its primary with no `group` recorded.
   Tier 2 installs the whole bundle as one unit (ADR-0042, ADR-0046); tier 1 does not, and nothing says why.
-- Decide whether `Entry` splits into a descriptive draft and a written record.
-  `path` and `checksum` are fields no caller can know at call time, so `draft_entry` fills them with inert placeholders (`Path()`, `""`) that `install_manpage` overwrites before anything reads them.
-  A wart rather than a defect: making every call site resolve the destination itself would move coordination outward instead of removing it.
-  Reopening `Entry` touches ADR-0046's manifest boundary, so it starts with an ADR.
 - Record losing provider claims for a binary after first-PATH-entry selection.
   The visible winner is correct, but discarded competing claims prevent diagnostics when PATH hides a better-documented installation.
 - Tell transparent wrappers from genuinely different shadowing binaries by comparing `--version` for the first and later PATH occurrences.
