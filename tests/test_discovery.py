@@ -140,12 +140,12 @@ def test_discover_repo_does_not_use_the_registry_without_an_installation(
     assert discover_repo("envsubst", bin_dir=tmp_path, config=Config()) is None
 
 
-def _fake_installation(binary: str) -> Installation:
+def _fake_installation(binary: str, *, provider: str = "fake") -> Installation:
     return Installation(
         binary=binary,
         bin_path=Path(f"/bin/{binary}"),
         real_path=Path(f"/bin/{binary}"),
-        provider="fake",
+        provider=provider,
         package=binary,
         version=None,
         root=Path("/root"),
@@ -191,17 +191,64 @@ def test_enumerate_installations_resolves_a_name_once_at_its_first_path_entry(
         lambda: LoginPath(path=f"{first_dir}:{second_dir}", degraded=False),
     )
 
-    seen_paths: list[Path] = []
-
     def fake_detect(bin_path: Path):
-        seen_paths.append(bin_path)
-        return ("fake-provider", _fake_installation("tool"))
+        return (f"fake-provider-{bin_path.parent.name}", _fake_installation("tool"))
 
     monkeypatch.setattr(resolution, "_detect_via_registry", fake_detect)
 
-    enumerate_installations()
+    [(provider, inst)] = enumerate_installations()
 
-    assert seen_paths == [first_dir / "tool"]
+    assert (provider, inst.binary) == ("fake-provider-first", "tool")
+
+
+def test_enumerate_installations_retains_a_later_path_occurrences_claim_as_a_loser(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """A shadowed same-name binary later on `$PATH` is discarded as the winner
+    but its provider's claim is retained on the winner's `Installation.losers`.
+    """
+    first_dir = tmp_path / "first"
+    second_dir = tmp_path / "second"
+    first_dir.mkdir()
+    second_dir.mkdir()
+    (first_dir / "tool").touch(mode=0o755)
+    (second_dir / "tool").touch(mode=0o755)
+    monkeypatch.setattr(
+        loginpath,
+        "login_path",
+        lambda: LoginPath(path=f"{first_dir}:{second_dir}", degraded=False),
+    )
+
+    def fake_detect(bin_path: Path):
+        label = bin_path.parent.name
+        return (f"fake-provider-{label}", _fake_installation("tool", provider=label))
+
+    monkeypatch.setattr(resolution, "_detect_via_registry", fake_detect)
+
+    [(provider, inst)] = enumerate_installations()
+
+    assert provider == "fake-provider-first"
+    assert inst.provider == "first"
+    assert [loser.provider for loser in inst.losers] == ["second"]
+
+
+def test_enumerate_installations_leaves_losers_empty_with_no_shadow(
+    monkeypatch, tmp_path: Path
+) -> None:
+    claimed = tmp_path / "claimed"
+    claimed.touch(mode=0o755)
+    monkeypatch.setattr(
+        loginpath, "login_path", lambda: LoginPath(path=str(tmp_path), degraded=False)
+    )
+    monkeypatch.setattr(
+        resolution,
+        "_detect_via_registry",
+        lambda p: ("fake-provider", _fake_installation(p.name)),
+    )
+
+    [(_, inst)] = enumerate_installations()
+
+    assert inst.losers == ()
 
 
 def test_enumerate_installations_skips_non_executable_files(

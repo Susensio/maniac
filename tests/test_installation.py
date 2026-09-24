@@ -75,6 +75,7 @@ def test_is_slotted() -> None:
         "version",
         "root",
         "parent",
+        "losers",
     )
 
 

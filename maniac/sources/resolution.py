@@ -8,6 +8,7 @@ module- or class-global state.
 
 import os
 from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 
 from ..config import Config
@@ -76,31 +77,46 @@ def enumerate_installations(
     right after the directory scan and before the per-candidate
     `_detect_via_registry` loop that dominates the cost; `on_scan` fires
     once per candidate processed in that loop.
+
+    A later `$PATH` occurrence of a claimed name never wins, but a provider
+    that claims it too is retained on the winner's `Installation.losers`
+    rather than discarded -- diagnostics can then show when PATH hides a
+    better-documented install, without this changing which one resolves.
     """
     seen: dict[str, Path] = {}
+    shadowed: dict[str, list[Path]] = {}
     for entry in loginpath.login_path().dirs:
         try:
             children = list(os.scandir(entry))
         except OSError:
             continue
         for child in children:
-            if child.name in seen:
-                continue
             try:
                 if not child.is_file() or not os.access(child.path, os.X_OK):
                     continue
             except OSError:
                 continue
-            seen[child.name] = Path(child.path)
+            if child.name in seen:
+                shadowed.setdefault(child.name, []).append(Path(child.path))
+            else:
+                seen[child.name] = Path(child.path)
 
     if on_start is not None:
         on_start(len(seen))
 
     found: list[tuple[Provider, Installation]] = []
-    for bin_path in seen.values():
+    for name, bin_path in seen.items():
         claim = _detect_via_registry(bin_path)
         if claim is not None:
-            found.append(claim)
+            provider, inst = claim
+            losers: list[Installation] = []
+            for shadow_path in shadowed.get(name, ()):
+                shadow_claim = _detect_via_registry(shadow_path)
+                if shadow_claim is not None:
+                    losers.append(shadow_claim[1])
+            if losers:
+                inst = replace(inst, losers=tuple(losers))
+            found.append((provider, inst))
         if on_scan is not None:
             on_scan()
     return sorted(found, key=lambda item: item[1].binary)

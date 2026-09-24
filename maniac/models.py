@@ -179,6 +179,10 @@ class Installation:
     version: str | None  # "25.01"
     root: Path  # install root; docs may live under it
     parent: "Installation | None" = None  # mise -> its backend
+    losers: tuple["Installation", ...] = ()
+    """Other providers' claims for this same binary, discarded by PATH-first-wins
+    or by losing to another provider at a later `$PATH` occurrence
+    (`resolution.enumerate_installations`). Empty unless populated there."""
 
 
 @dataclass

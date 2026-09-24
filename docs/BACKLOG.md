@@ -20,8 +20,6 @@ Settled decisions live in `docs/adr/`; defects with a line to sit beside are mar
 - Install every page of a multi-page install-root release, not just the primary.
   `_try_install_root` uses `candidate.final_target` alone and ignores `candidate.pages`, so a tier-1 release ships its primary with no `group` recorded.
   Tier 2 installs the whole bundle as one unit (ADR-0042, ADR-0046); tier 1 does not, and nothing says why.
-- Record losing provider claims for a binary after first-PATH-entry selection.
-  The visible winner is correct, but discarded competing claims prevent diagnostics when PATH hides a better-documented installation.
 - Tell transparent wrappers from genuinely different shadowing binaries by comparing `--version` for the first and later PATH occurrences.
   Never fall through positionally (ADR-0020).
   Blocked on a live wrapper fixture.
