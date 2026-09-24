@@ -62,8 +62,7 @@ def test_registry_holds_the_registered_providers() -> None:
     """`local_lib`, `uv`, `mise` register first, mirroring the prior check order;
     Stage 4 appends npm, pipx, cargo, go, Homebrew -- registration order settles
     nothing between providers (ADR-0015: `$PATH` order breaks ties), only the
-    diff staying a pure append. `debian` registers last of all, so a
-    user-level provider's direct route always precedes it.
+    diff staying a pure append.
     """
     expected = [
         "local_lib",
@@ -74,7 +73,6 @@ def test_registry_holds_the_registered_providers() -> None:
         "cargo",
         "go",
         "homebrew",
-        "debian",
     ]
     assert [provider.name for provider in resolution.registry] == expected
     assert [provider.name for provider in registry] == expected
