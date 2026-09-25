@@ -49,3 +49,9 @@ The line between broken and different is a judgement made case by case.
 The test to apply: does the user's system work for the user?
 A working system that maniac does not understand yet is maniac's problem.
 A system that fails for the user too is not.
+
+## Corrections
+
+2026-09-25: the rule covers the user's environment, not maniac's own disposable state.
+A corrupt file maniac itself wrote and can regenerate, such as its cached copy of the Mise registry, is deleted and rebuilt; only a failure to rebuild it is reported.
+Before this note the Decision's "a malformed file maniac must read" could be read as including maniac's own caches.
