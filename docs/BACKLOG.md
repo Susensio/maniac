@@ -54,6 +54,8 @@ Settled decisions live in `docs/adr/`; defects with a line to sit beside are mar
 
 ## Verification and research
 
+- Exercise real Pandoc and Groff compilation in CI, not only mocked unit paths.
+  Install both tools in GitHub Actions and add a dedicated integration check that requires them, while unit tests retain their deterministic stubs.
 - Verify `maniac compare` against a live LLM and a real installed page; its current coverage mocks synthesis.
   Blocked on API access; the staged fzf context is ready.
 - Measure the coverage cost of refusing an unmatched upstream version before changing ADR-0016's version-match policy.

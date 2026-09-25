@@ -1877,6 +1877,9 @@ def test_install_reaching_tier_3_resolves_the_tool_once_not_twice(
         lambda cmd, **kwargs: {"> tool --help": "Usage: tool"},
     )
     monkeypatch.setattr(
+        "maniac.orchestration.install.shutil.which", lambda name: "/usr/bin/pandoc"
+    )
+    monkeypatch.setattr(
         "maniac.orchestration.pipeline.fetch_and_extract_docs",
         lambda source, cache_dir, **kwargs: (
             [DocFile(rel_path="README.md", content="# Tool")],

@@ -251,7 +251,12 @@ Options:
     assert any("Missing flags from context" in d for d in defects)
 
 
-def test_build_evaluation_prompt() -> None:
+def test_build_evaluation_prompt(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "maniac.evaluation.judge.render_manpage_to_terminal",
+        lambda *args, **kwargs: ("rendered output", "man"),
+    )
+
     prompt = build_evaluation_prompt(
         "mytool", VALID_MANPAGE, "> mytool --help\nUsage: mytool"
     )

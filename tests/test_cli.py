@@ -267,6 +267,9 @@ def test_cli_install_dry_run(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) ->
         lambda name: Path(f"/bin/{name}"),
     )
     monkeypatch.setattr(
+        "maniac.orchestration.install.shutil.which", lambda name: "/usr/bin/pandoc"
+    )
+    monkeypatch.setattr(
         "maniac.orchestration.pipeline.find_subcommands",
         lambda cmd, **kwargs: {"> tool --help": "Usage: tool"},
     )
