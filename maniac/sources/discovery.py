@@ -46,12 +46,22 @@ class _SingleFlightCache[T]:
     otherwise re-paid its 5s timeout once per mise tool looked up the same
     way. The per-key lock also makes concurrent callers for a cold key wait
     on the first call rather than each re-running the loader.
+
+    `_failure` stores `(path, reason)`, not the raised exception itself: one
+    exception instance re-raised across many lookups accumulates a frame per
+    `raise` on its `__traceback__` (confirmed: depth 101 after 50 lookups)
+    and would be shared, mid-mutation, across concurrent callers hitting the
+    same failed key. Each lookup raises a fresh exception built from the
+    stored data instead.
+
+    Not re-entrant: a loader that calls back into this cache for the same
+    key deadlocks on its own per-key lock. No current loader does this.
     """
 
     def __init__(self, loader: Callable[..., T]) -> None:
         self._loader = loader
         self._cache: dict[tuple[object, ...], T] = {}
-        self._failure: dict[tuple[object, ...], MalformedToolMetadata] = {}
+        self._failure: dict[tuple[object, ...], tuple[Path, str]] = {}
         self._locks: dict[tuple[object, ...], threading.Lock] = {}
         self._guard = threading.Lock()
 
@@ -61,7 +71,7 @@ class _SingleFlightCache[T]:
                 return self._cache[key]
             failed = self._failure.get(key)
             if failed is not None:
-                raise failed
+                raise MalformedToolMetadata(*failed)
             lock = self._locks.setdefault(key, threading.Lock())
 
         with lock:
@@ -70,13 +80,13 @@ class _SingleFlightCache[T]:
                     return self._cache[key]
                 failed = self._failure.get(key)
                 if failed is not None:
-                    raise failed
+                    raise MalformedToolMetadata(*failed)
 
             try:
                 value = self._loader(*key)
             except MalformedToolMetadata as e:
                 with self._guard:
-                    self._failure[key] = e
+                    self._failure[key] = (e.path, e.reason)
                 raise
             with self._guard:
                 self._cache[key] = value

@@ -906,3 +906,51 @@ def test_which_skips_a_non_executable_match(monkeypatch, tmp_path: Path) -> None
     monkeypatch.setenv("PATH", str(tmp_path))
 
     assert pathcache.which("tool") is None
+
+
+def test_single_flight_cache_failure_does_not_grow_traceback_across_reraises() -> None:
+    """A failed load is stored as `(path, reason)` and raised fresh each time
+    (item 3): re-raising one exception instance across many lookups would
+    accumulate a frame per `raise` on its own `__traceback__` instead.
+    """
+    cache = discovery._SingleFlightCache(
+        lambda: (_ for _ in ()).throw(MalformedToolMetadata(Path("mise"), "boom"))
+    )
+
+    depths = []
+    for _ in range(50):
+        with pytest.raises(MalformedToolMetadata) as excinfo:
+            cache()
+        depth = 0
+        tb = excinfo.value.__traceback__
+        while tb is not None:
+            depth += 1
+            tb = tb.tb_next
+        depths.append(depth)
+
+    # The first call runs the loader itself, so its traceback shape differs
+    # from every later cache-hit call -- what must not grow is the depth
+    # across those repeated cache hits.
+    assert depths[1] == depths[-1]
+
+
+def test_single_flight_cache_does_not_memoize_a_non_malformed_error() -> None:
+    """Only `MalformedToolMetadata` is memoized as a failure -- any other
+    exception from the loader must not be cached, so it stays visible (and
+    the loader retried) rather than silently pinned to one process-lifetime
+    outcome.
+    """
+    calls = 0
+
+    def loader() -> None:
+        nonlocal calls
+        calls += 1
+        raise ValueError("not a mise-metadata failure")
+
+    cache = discovery._SingleFlightCache(loader)
+
+    for _ in range(3):
+        with pytest.raises(ValueError):
+            cache()
+
+    assert calls == 3
