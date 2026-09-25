@@ -69,3 +69,7 @@ Only what shell activation exports is removed: every `__MISE_*` variable and `MI
 The Consequences' "one `mise` call" also understated the cost.
 The Mise provider asks `mise ls --current`, and source resolution also asks `mise config ls` plus one `mise config get` per TOML config file.
 Each is cached per process, failures included.
+
+2026-09-25: keeping every non-activation `MISE_*` variable also kept `MISE_<TOOL>_VERSION`, which `mise shell tool@v` sets for one session.
+Mise then reported the session's version as current from `$HOME` (measured), so maniac treated it as global.
+Entries whose `source.type` is `environment` in `mise ls --current --json` are therefore not counted as globally selected.
