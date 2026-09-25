@@ -5,7 +5,7 @@ import tomllib
 from pathlib import Path
 
 from ...config import Config
-from ...exceptions import MalformedToolMetadata, ProjectScopedInstall
+from ...exceptions import MalformedToolMetadata, NotGloballySelected
 from ...logging import logger
 from ...models import Installation, RemoteRepoSource, RepoSource
 from .. import discovery
@@ -62,7 +62,7 @@ class MiseProvider:
             # outright rather than returned as unclaimed (ADR-0061's
             # Corrections): unclaimed falls to tier-3 synthesis, which would
             # document this project's version as the machine's global one.
-            raise ProjectScopedInstall(bin_path.name, root)
+            raise NotGloballySelected(bin_path.name, root)
         return Installation(
             binary=bin_path.name,
             bin_path=bin_path,

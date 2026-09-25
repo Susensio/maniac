@@ -1084,13 +1084,13 @@ def test_run_install_refuses_a_project_scoped_mise_install(
     refused outright, naming the tool and the resolved root -- not treated
     as unclaimed and left to fall through to tier-3 synthesis, which would
     document this project's version as the machine's global one."""
-    from maniac.exceptions import ProjectScopedInstall
+    from maniac.exceptions import NotGloballySelected
 
     root = tmp_path / "installs" / "ripgrep" / "13.0.0"
     bin_path = tmp_path / "bin" / "rg"
 
     def raise_project_scoped(name: str, bin_dir: str | None = None) -> None:
-        raise ProjectScopedInstall(name, root)
+        raise NotGloballySelected(name, root)
 
     monkeypatch.setattr(pathcache, "which", lambda name: bin_path)
     monkeypatch.setattr(

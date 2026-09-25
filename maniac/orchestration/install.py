@@ -19,7 +19,7 @@ from pathlib import Path
 
 from .. import manifest
 from ..config import Config
-from ..exceptions import ManiacError, ProjectScopedInstall
+from ..exceptions import ManiacError, NotGloballySelected
 from ..installer import (
     InstallResult,
     PageRequest,
@@ -96,11 +96,12 @@ def run_install(
 
     try:
         tool = resolve_tool(tool_name, config=cfg, bin_dir=bin_dir)
-    except ProjectScopedInstall as e:
+    except NotGloballySelected as e:
         raise InstallRefused(
-            f"'{tool_name}' resolves to {e.path}, active only via a "
-            "project config -- not one of Mise's globally selected tools. "
-            "Install it globally (`mise use -g ...`) first."
+            f"'{tool_name}' resolves to {e.path}, which is not one of Mise's "
+            "globally selected tools (`mise ls --current` from $HOME) -- "
+            "selected only by a project config, or by none. Select it "
+            "globally (`mise use -g ...`) or remove the stale link."
         ) from e
     if tool.provider is None:
         # ADR-0061: with $PATH inherited rather than login-shell-reconstructed,

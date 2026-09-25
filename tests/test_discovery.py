@@ -12,7 +12,7 @@ import pytest
 import zstandard
 
 from maniac.config import Config
-from maniac.exceptions import MalformedToolMetadata, ProjectScopedInstall
+from maniac.exceptions import MalformedToolMetadata, NotGloballySelected
 from maniac.models import Installation
 from maniac.sources import discovery, pathcache, resolution
 from maniac.sources.discovery import (
@@ -417,7 +417,7 @@ def test_enumerate_installations_reports_and_drops_a_malformed_candidate(
         return ("fake-provider", _fake_installation("ok"))
 
     monkeypatch.setattr(resolution, "_detect_via_registry", fake_detect)
-    reported: list[tuple[str, MalformedToolMetadata | ProjectScopedInstall]] = []
+    reported: list[tuple[str, MalformedToolMetadata | NotGloballySelected]] = []
 
     found = enumerate_installations(on_error=lambda name, e: reported.append((name, e)))
 
@@ -428,12 +428,12 @@ def test_enumerate_installations_reports_and_drops_a_malformed_candidate(
 def test_enumerate_installations_reports_a_project_scoped_refusal_too(
     monkeypatch, tmp_path: Path
 ) -> None:
-    """`ProjectScopedInstall` (ADR-0061) is caught through the same path as
+    """`NotGloballySelected` (ADR-0061) is caught through the same path as
     `MalformedToolMetadata`, not left to escape unenumerated."""
     refused = tmp_path / "refused"
     refused.touch(mode=0o755)
     monkeypatch.setenv("PATH", str(tmp_path))
-    error = ProjectScopedInstall("refused", Path("/root"))
+    error = NotGloballySelected("refused", Path("/root"))
     monkeypatch.setattr(
         resolution, "_detect_via_registry", lambda p: (_ for _ in ()).throw(error)
     )
@@ -464,7 +464,7 @@ def test_enumerate_installations_drops_a_later_shadow_that_also_errors(
         raise MalformedToolMetadata(bin_path, "shadow is broken")
 
     monkeypatch.setattr(resolution, "_detect_via_registry", fake_detect)
-    reported: list[tuple[str, MalformedToolMetadata | ProjectScopedInstall]] = []
+    reported: list[tuple[str, MalformedToolMetadata | NotGloballySelected]] = []
 
     found = enumerate_installations(on_error=lambda name, e: reported.append((name, e)))
 

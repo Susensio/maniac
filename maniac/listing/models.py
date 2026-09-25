@@ -43,7 +43,7 @@ class PageSource(Enum):
 @dataclass(frozen=True, slots=True)
 class ToolError:
     """A tool's own broken evidence, carried as `MalformedToolMetadata` and
-    `ProjectScopedInstall` raise it (ADR-0060, ADR-0061): the file or
+    `NotGloballySelected` raise it (ADR-0060, ADR-0061): the file or
     resolved root at fault, and why, kept apart so a renderer can show the
     reason without the path first mangling it (`row.error` used to be one
     pre-joined string, and `rsplit("/", 1)` on a reason that itself
@@ -66,7 +66,7 @@ class Candidate:
     installation: "Installation | None"
     error: ToolError | None = None
     """Set when discovery itself raised `MalformedToolMetadata` or
-    `ProjectScopedInstall` (ADR-0060, ADR-0061) for this tool, before any
+    `NotGloballySelected` (ADR-0060, ADR-0061) for this tool, before any
     provider or installation could be resolved."""
 
     @property

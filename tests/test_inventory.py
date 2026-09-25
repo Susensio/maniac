@@ -19,7 +19,7 @@ import structlog
 
 from maniac import manifest
 from maniac.config import Config
-from maniac.exceptions import MalformedToolMetadata, ProjectScopedInstall
+from maniac.exceptions import MalformedToolMetadata, NotGloballySelected
 from maniac.listing import (
     ActionState,
     Candidate,
@@ -2618,7 +2618,7 @@ def test_build_inventory_with_tools_keeps_a_broken_tool_and_the_rest(
 def test_build_inventory_with_no_tools_keeps_a_project_scoped_refusal_and_the_rest(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A Mise install refused as project-only (`ProjectScopedInstall`,
+    """A Mise install refused as project-only (`NotGloballySelected`,
     ADR-0061) still gets a row through discovery's own catch, same as a
     malformed metadata file -- not silently absent."""
     provider = _FakeProvider()
@@ -2628,11 +2628,11 @@ def test_build_inventory_with_no_tools_keeps_a_project_scoped_refusal_and_the_re
     def fake_enumerate(
         on_start=None,
         on_scan=None,
-        on_error: Callable[[str, MalformedToolMetadata | ProjectScopedInstall], None]
+        on_error: Callable[[str, MalformedToolMetadata | NotGloballySelected], None]
         | None = None,
     ):
         assert on_error is not None
-        on_error("rg", ProjectScopedInstall("rg", root))
+        on_error("rg", NotGloballySelected("rg", root))
         return [(provider, inst)]
 
     monkeypatch.setattr(
@@ -2646,15 +2646,13 @@ def test_build_inventory_with_no_tools_keeps_a_project_scoped_refusal_and_the_re
     refused = candidates[1]
     assert refused.provider is None
     assert refused.installation is None
-    assert refused.error == ToolError(
-        root, "active only via a project config, not a globally selected mise tool"
-    )
+    assert refused.error == ToolError(root, "not a globally selected mise tool")
 
 
 def test_build_inventory_with_tools_keeps_a_project_scoped_refusal_and_the_rest(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The named-tool path (`tools=[...]`) catches `ProjectScopedInstall`
+    """The named-tool path (`tools=[...]`) catches `NotGloballySelected`
     the same way as the discovery path above."""
     provider = _FakeProvider()
     inst = _installation(binary="bash")
@@ -2662,7 +2660,7 @@ def test_build_inventory_with_tools_keeps_a_project_scoped_refusal_and_the_rest(
 
     def fake_find_installation(name, bin_dir=None):
         if name == "rg":
-            raise ProjectScopedInstall("rg", root)
+            raise NotGloballySelected("rg", root)
         return (provider, inst) if name == "bash" else None
 
     monkeypatch.setattr(
@@ -2673,9 +2671,7 @@ def test_build_inventory_with_tools_keeps_a_project_scoped_refusal_and_the_rest(
 
     assert discovered is False
     assert [c.tool for c in candidates] == ["bash", "rg"]
-    assert candidates[1].error == ToolError(
-        root, "active only via a project config, not a globally selected mise tool"
-    )
+    assert candidates[1].error == ToolError(root, "not a globally selected mise tool")
 
 
 def test_compute_rows_drives_a_real_malformed_file_through_discovery(

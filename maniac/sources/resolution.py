@@ -12,7 +12,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from ..config import Config
-from ..exceptions import MalformedToolMetadata, ProjectScopedInstall
+from ..exceptions import MalformedToolMetadata, NotGloballySelected
 from ..models import Installation, RepoSource
 from .pathcache import path_dirs, resolve_bin_path
 from .providers.base import Provider
@@ -20,8 +20,8 @@ from .providers.registry import registry
 
 # Both name a claim `_detect_via_registry` could not complete (ADR-0060,
 # ADR-0061): a tool's own metadata file unreadable, or a Mise install
-# refused as project-only. Every catch below treats them alike.
-_DiscoveryError = (MalformedToolMetadata, ProjectScopedInstall)
+# refused as not globally selected. Every catch below treats them alike.
+_DiscoveryError = (MalformedToolMetadata, NotGloballySelected)
 
 
 def find_installation(
@@ -62,7 +62,7 @@ def discover_repo(
 def enumerate_installations(
     on_start: Callable[[int], None] | None = None,
     on_scan: Callable[[], None] | None = None,
-    on_error: Callable[[str, MalformedToolMetadata | ProjectScopedInstall], None]
+    on_error: Callable[[str, MalformedToolMetadata | NotGloballySelected], None]
     | None = None,
 ) -> list[tuple[Provider, Installation]]:
     """Claim each first-PATH binary once, preserving PATH precedence.
@@ -85,10 +85,11 @@ def enumerate_installations(
     once per candidate processed in that loop.
 
     A candidate whose provider raises `MalformedToolMetadata` (ADR-0060: its
-    own metadata file is present but unreadable) or `ProjectScopedInstall`
-    (ADR-0061: a Mise install active only via a project's config) is
-    reported through `on_error` -- `(name, error)` -- and dropped from the
-    result rather than aborting every other candidate's enumeration. A
+    own metadata file is present but unreadable) or `NotGloballySelected`
+    (ADR-0061: a Mise install that resolves but is not among Mise's globally
+    selected tools) is reported through `on_error` -- `(name, error)` -- and
+    dropped from the result rather than aborting every other candidate's
+    enumeration. A
     later `$PATH` shadow that also errors is silently dropped instead: it
     never wins regardless, and does not have its own row to report an
     error against.

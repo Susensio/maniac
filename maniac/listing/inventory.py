@@ -24,7 +24,7 @@ from typing import Any
 
 from .. import manifest
 from ..config import Config
-from ..exceptions import MalformedToolMetadata, ProjectScopedInstall
+from ..exceptions import MalformedToolMetadata, NotGloballySelected
 from ..logging import logger
 from ..models import Installation, RepoSource
 from ..sources import resolution
@@ -40,9 +40,9 @@ from .models import (
 )
 
 # Both name a tool's own broken evidence (ADR-0060, ADR-0061): a metadata
-# file that cannot be read, or a Mise install that exists but is refused as
-# project-only. Every discovery-time catch here treats them alike.
-_DiscoveryError = (MalformedToolMetadata, ProjectScopedInstall)
+# file that cannot be read, or a Mise install that resolves but isn't
+# globally selected. Every discovery-time catch here treats them alike.
+_DiscoveryError = (MalformedToolMetadata, NotGloballySelected)
 from .upstream import (
     ProbeKey,
     ProbePage,
@@ -103,8 +103,8 @@ def _build_inventory(
     """Return requested or discovered candidates and whether discovery ran.
 
     A tool whose own metadata file `resolution` found unreadable
-    (`MalformedToolMetadata`, ADR-0060), or a Mise install refused as
-    project-only (`ProjectScopedInstall`, ADR-0061), still gets a row --
+    (`MalformedToolMetadata`, ADR-0060), or a Mise install refused as not
+    globally selected (`NotGloballySelected`, ADR-0061), still gets a row --
     `Candidate.error` carries why, so one broken or refused tool never
     drops the rest of the inventory.
     """

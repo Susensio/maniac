@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from maniac.exceptions import MalformedToolMetadata, ProjectScopedInstall
+from maniac.exceptions import MalformedToolMetadata, NotGloballySelected
 from maniac.sources.providers import mise
 
 
@@ -64,7 +64,7 @@ def test_detect_refuses_a_project_only_install(
         _fake_run(json.dumps({"ripgrep": [{"install_path": "/other/root"}]})),
     )
 
-    with pytest.raises(ProjectScopedInstall) as excinfo:
+    with pytest.raises(NotGloballySelected) as excinfo:
         mise.MiseProvider().detect(bin_path)
     assert excinfo.value.tool == "rg"
     assert excinfo.value.path == root
