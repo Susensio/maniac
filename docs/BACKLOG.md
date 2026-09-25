@@ -8,11 +8,6 @@ Settled decisions live in `docs/adr/`; defects with a line to sit beside are mar
 
 - Distinguish a wrong documentation repository from one that legitimately has no manpage.
   Flag-inventory overlap and whether the repository contains implementation source are possible evidence, but absence is a normal synthesis fallback and must not be treated as proof of misresolution.
-- See global Mise tools when `mise activate` runs only in interactive shells.
-  Measured 2026-09-25 in a throwaway `$HOME`: with Debian's stock `.bashrc` (non-interactive early return before `mise activate`), `$SHELL -lc` never activates Mise, so `login_path()` has none of the global tools; activation in `.profile`, `--shims` or fish's `config.fish` all work.
-  This is a valid setup, not a broken one (ADR-0060).
-  Candidate evidence: `mise bin-paths` / `mise ls --current --json` run with cwd=`$HOME` list exactly the global tools (~170ms); every `MISE_*` must be scrubbed, since `MISE_CONFIG_FILE` alone was measured to leak a project config into that query.
-  The same fixture tripped the "shell built no `$PATH` of its own" degenerate check only because its `$HOME` lacked `~/.local/bin`; recheck that condition when ADR-0060 removes the fallback.
 
 ## Refactors and architecture
 

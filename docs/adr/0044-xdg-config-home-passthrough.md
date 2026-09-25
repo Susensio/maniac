@@ -1,6 +1,6 @@
 # ADR-0044: Pass XDG_CONFIG_HOME through to the login shell instead of scrubbing it as caller context
 
-Status: Accepted
+Status: Superseded by [ADR-0061](0061-inherited-path-not-login-shell.md)
 Date: 2026-09-15
 
 ## Context

@@ -1,6 +1,6 @@
 # ADR-0020: Take $PATH from a login shell and refuse binaries it cannot reach, instead of trusting the invoking shell
 
-Status: Accepted
+Status: Superseded by [ADR-0061](0061-inherited-path-not-login-shell.md)
 Date: 2026-09-09
 
 ## Context
