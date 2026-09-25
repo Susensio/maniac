@@ -6,7 +6,7 @@ from functools import cache
 from pathlib import Path
 
 from ...config import Config
-from ...logging import logger
+from ...exceptions import MalformedToolMetadata
 from ...models import Installation, RemoteRepoSource, RepoSource
 from .. import discovery
 from ..manpages import find_install_root_manpages
@@ -112,13 +112,12 @@ def find_distribution_metadata(
         metadata_path = dist_info / "METADATA"
         try:
             text = metadata_path.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError) as e:
-            logger.debug(
-                "Error reading pipx dist-info METADATA",
-                path=str(metadata_path),
-                error=str(e),
-            )
+        except FileNotFoundError:
             continue
+        except (OSError, UnicodeDecodeError) as e:
+            raise MalformedToolMetadata(
+                metadata_path, f"pipx dist-info METADATA: {e}"
+            ) from e
         return email.message_from_string(text)
     return None
 

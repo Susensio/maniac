@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 
 from maniac.config import Config
+from maniac.exceptions import MalformedToolMetadata
 from maniac.sources.providers import cargo
 from maniac.sources.providers.registry import registry
 
@@ -137,6 +138,34 @@ def test_cargo_home_is_cached_and_isolated_by_environment_input(tmp_path) -> Non
         other_cwd / "relative-cargo"
     )
     assert cargo._cargo_home.cache_info().misses == 4
+
+
+def test_detect_raises_malformed_tool_metadata_for_invalid_crates2_json(
+    tmp_path, monkeypatch
+) -> None:
+    """A present but unparsable .crates2.json is reported, not silently skipped
+    (ADR-0060)."""
+    cargo_home = _make_cargo_home(tmp_path, {})
+    crates2 = cargo_home / ".crates2.json"
+    crates2.write_text("{not json", encoding="utf-8")
+    bin_path = cargo_home / "bin" / "hexyl"
+    bin_path.touch()
+    provider = _provider(tmp_path, monkeypatch, cargo_home)
+
+    with pytest.raises(MalformedToolMetadata) as excinfo:
+        provider.detect(bin_path)
+    assert excinfo.value.path == crates2
+
+
+def test_detect_returns_none_without_crates2_json(tmp_path, monkeypatch) -> None:
+    """A missing .crates2.json is an ordinary case, unchanged by ADR-0060."""
+    cargo_home = tmp_path / "cargo"
+    (cargo_home / "bin").mkdir(parents=True)
+    bin_path = cargo_home / "bin" / "hexyl"
+    bin_path.touch()
+    provider = _provider(tmp_path, monkeypatch, cargo_home)
+
+    assert provider.detect(bin_path) is None
 
 
 def test_detect_returns_none_without_cargo_home_set(tmp_path, monkeypatch) -> None:
@@ -269,12 +298,14 @@ def test_resolve_source_returns_none_when_the_manifest_declares_no_repository(
     assert provider.resolve_source(inst, config=Config(), sources=registry) is None
 
 
-def test_resolve_source_returns_none_for_a_malformed_manifest(
+def test_resolve_source_raises_malformed_tool_metadata_for_a_malformed_manifest(
     tmp_path, monkeypatch
 ) -> None:
+    """A present but unparsable Cargo.toml is reported, not silently skipped (ADR-0060)."""
     provider, inst = _hexyl_source(tmp_path, monkeypatch, "[package\nname = ")
 
-    assert provider.resolve_source(inst, config=Config(), sources=registry) is None
+    with pytest.raises(MalformedToolMetadata):
+        provider.resolve_source(inst, config=Config(), sources=registry)
 
 
 def test_local_docs_finds_manpage_under_install_root(tmp_path, monkeypatch) -> None:

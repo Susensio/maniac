@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from maniac.config import Config
+from maniac.exceptions import MalformedToolMetadata
 from maniac.models import RepoSource
 from maniac.sources.providers import mise
 from maniac.sources.providers.base import DirectPageProvider
@@ -399,22 +400,19 @@ def test_resolve_source_gives_up_when_the_composed_npm_package_json_is_missing(
     assert provider.resolve_source(inst, config=Config(), sources=registry) is None
 
 
-def test_resolve_source_falls_back_when_the_backend_record_is_not_utf8(
-    tmp_path: Path, monkeypatch
+def test_detect_raises_malformed_tool_metadata_when_the_backend_record_is_not_utf8(
+    tmp_path: Path,
 ) -> None:
-    """A corrupt or oddly-encoded `.mise.backend.toml` must not crash discovery."""
+    """A present but corrupt/oddly-encoded `.mise.backend.toml` is reported, not
+    silently treated as absent (ADR-0060)."""
     bin_path = _make_mise_install(tmp_path, "helix", "25.07.1", "hx")
-    (bin_path.resolve().parents[2] / ".mise.backend.toml").write_bytes(b"\xff\xfe\x00")
+    backend_path = bin_path.resolve().parents[2] / ".mise.backend.toml"
+    backend_path.write_bytes(b"\xff\xfe\x00")
     provider = mise.MiseProvider()
-    inst = provider.detect(bin_path)
-    assert inst is not None
-    monkeypatch.setattr(
-        mise.discovery, "_resolve_from_mise", lambda *a, **k: "helix-editor/helix"
-    )
 
-    source = provider.resolve_source(inst, config=Config(), sources=registry)
-
-    assert source == RepoSource(name="hx", target="helix-editor/helix", is_local=False)
+    with pytest.raises(MalformedToolMetadata) as excinfo:
+        provider.detect(bin_path)
+    assert excinfo.value.path == backend_path
 
 
 def test_resolve_source_falls_back_to_the_registry_keyed_on_the_directory_name(

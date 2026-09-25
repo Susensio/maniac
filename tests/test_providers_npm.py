@@ -3,7 +3,10 @@
 import json
 from pathlib import Path
 
+import pytest
+
 from maniac.config import Config
+from maniac.exceptions import MalformedToolMetadata
 from maniac.models import RepoSource
 from maniac.sources.providers import npm
 from maniac.sources.providers.registry import registry
@@ -64,6 +67,46 @@ def test_detect_rejects_a_path_outside_node_modules(tmp_path: Path) -> None:
     bin_path.symlink_to(real)
 
     assert npm.NpmProvider().detect(bin_path) is None
+
+
+def test_detect_raises_malformed_tool_metadata_for_invalid_package_json(
+    tmp_path: Path,
+) -> None:
+    """A present but unparsable package.json is reported, not silently skipped (ADR-0060)."""
+    bin_path, root = _make_npm_global(tmp_path, "tool", "tool", {"name": "tool"})
+    package_json = root / "package.json"
+    package_json.write_text("{not json", encoding="utf-8")
+
+    with pytest.raises(MalformedToolMetadata) as excinfo:
+        npm.NpmProvider().detect(bin_path)
+    assert excinfo.value.path == package_json
+
+
+def test_detect_leaves_version_none_when_package_json_is_absent(
+    tmp_path: Path,
+) -> None:
+    """A missing package.json is an ordinary case, unchanged by ADR-0060."""
+    bin_path, root = _make_npm_global(tmp_path, "tool", "tool", {"name": "tool"})
+    (root / "package.json").unlink()
+
+    inst = npm.NpmProvider().detect(bin_path)
+
+    assert inst is not None
+    assert inst.version is None
+
+
+def test_resolve_source_raises_malformed_tool_metadata_for_invalid_package_json(
+    tmp_path: Path,
+) -> None:
+    bin_path, root = _make_npm_global(
+        tmp_path, "tool", "tool", {"name": "tool", "repository": "owner/tool"}
+    )
+    inst = npm.NpmProvider().detect(bin_path)
+    assert inst is not None
+    (root / "package.json").write_text("{not json", encoding="utf-8")
+
+    with pytest.raises(MalformedToolMetadata):
+        npm.NpmProvider().resolve_source(inst, config=Config(), sources=registry)
 
 
 def test_resolve_source_reads_the_string_repository_field(tmp_path: Path) -> None:

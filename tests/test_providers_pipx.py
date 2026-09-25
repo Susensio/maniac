@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from maniac.config import Config
+from maniac.exceptions import MalformedToolMetadata
 from maniac.models import RepoSource
 from maniac.sources.providers import pipx
 from maniac.sources.providers.registry import registry
@@ -168,6 +169,39 @@ def test_resolve_source_returns_none_with_no_github_url(tmp_path, monkeypatch) -
     assert inst is not None
 
     assert provider.resolve_source(inst, config=Config(), sources=registry) is None
+
+
+def test_detect_raises_malformed_tool_metadata_for_unreadable_metadata(
+    tmp_path, monkeypatch
+) -> None:
+    """A present but undecodable dist-info METADATA is reported, not silently
+    skipped (ADR-0060)."""
+    bin_path, root = _make_pipx_venv(tmp_path, "howdoi", "howdoi", version="2.0.20")
+    metadata_path = next(root.glob("lib/**/site-packages/*.dist-info")) / "METADATA"
+    metadata_path.write_bytes(b"\xff\xfe\x00")
+    pipx.find_distribution_metadata.cache_clear()
+    provider = _provider(tmp_path, monkeypatch)
+
+    with pytest.raises(MalformedToolMetadata) as excinfo:
+        provider.detect(bin_path)
+    assert excinfo.value.path == metadata_path
+
+
+def test_detect_finds_nothing_when_dist_info_has_no_metadata_file(
+    tmp_path, monkeypatch
+) -> None:
+    """A dist-info directory with no METADATA file is an ordinary miss, unchanged
+    by ADR-0060."""
+    bin_path, root = _make_pipx_venv(tmp_path, "howdoi", "howdoi", version="2.0.20")
+    metadata_path = next(root.glob("lib/**/site-packages/*.dist-info")) / "METADATA"
+    metadata_path.unlink()
+    pipx.find_distribution_metadata.cache_clear()
+    provider = _provider(tmp_path, monkeypatch)
+
+    inst = provider.detect(bin_path)
+
+    assert inst is not None
+    assert inst.version is None
 
 
 def test_local_docs_finds_manpage_under_install_root(tmp_path, monkeypatch) -> None:

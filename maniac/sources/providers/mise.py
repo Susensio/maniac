@@ -4,7 +4,7 @@ import tomllib
 from pathlib import Path
 
 from ...config import Config
-from ...logging import logger
+from ...exceptions import MalformedToolMetadata
 from ...models import Installation, RemoteRepoSource, RepoSource
 from .. import discovery
 from ..manpages import find_install_root_manpages
@@ -138,11 +138,12 @@ def _read_backend_record(root: Path) -> tuple[str, str] | None:
     backend_path = root.parent / ".mise.backend.toml"
     try:
         data = tomllib.loads(backend_path.read_text(encoding="utf-8"))
-    except (OSError, tomllib.TOMLDecodeError, UnicodeDecodeError) as e:
-        logger.debug(
-            "Error parsing mise backend record", path=str(backend_path), error=str(e)
-        )
+    except FileNotFoundError:
         return None
+    except (OSError, tomllib.TOMLDecodeError, UnicodeDecodeError) as e:
+        raise MalformedToolMetadata(
+            backend_path, f"mise .mise.backend.toml: {e}"
+        ) from e
     full = data.get("full")
     if not isinstance(full, str) or ":" not in full:
         return None

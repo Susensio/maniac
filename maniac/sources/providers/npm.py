@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 from ...config import Config
-from ...logging import logger
+from ...exceptions import MalformedToolMetadata
 from ...models import Installation, RemoteRepoSource, RepoSource
 from .. import discovery
 from ..manpages import find_install_root_manpages
@@ -67,9 +67,10 @@ def read_package_json(root: Path) -> dict:
     path = root / "package.json"
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError, UnicodeDecodeError) as e:
-        logger.debug("Error reading npm package.json", path=str(path), error=str(e))
+    except FileNotFoundError:
         return {}
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError) as e:
+        raise MalformedToolMetadata(path, f"npm package.json: {e}") from e
     return data if isinstance(data, dict) else {}
 
 

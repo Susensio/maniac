@@ -20,6 +20,7 @@ from urllib.request import Request, urlopen
 import zstandard
 
 from ..config import Config
+from ..exceptions import MalformedToolMetadata
 from ..logging import logger
 
 MISE_REGISTRY_URL = "https://mise.jdx.dev/registry/latest.tar.zst"
@@ -61,9 +62,10 @@ def _check_mise_toml(cfg_path: Path, tool_id: str, binary_name: str) -> str | No
     """Inspect a mise TOML config file for tool aliases or tool repository definitions."""
     try:
         data = tomllib.loads(cfg_path.read_text(encoding="utf-8"))
-    except (OSError, tomllib.TOMLDecodeError) as e:
-        logger.debug("Error parsing mise config", path=str(cfg_path), error=str(e))
+    except FileNotFoundError:
         return None
+    except (OSError, tomllib.TOMLDecodeError) as e:
+        raise MalformedToolMetadata(cfg_path, f"mise config: {e}") from e
 
     aliases = data.get("tool_alias", {})
     for alias_name, alias_target in aliases.items():
@@ -148,23 +150,37 @@ def _load_mise_registry_uncached(cache_path: Path) -> dict[str, str]:
         UnicodeDecodeError,
         zstandard.ZstdError,
     ) as e:
-        logger.debug("Unable to parse Mise registry", error=str(e))
-        return {}
+        raise MalformedToolMetadata(cache_path, f"Mise registry cache: {e}") from e
 
 
 _load_mise_registry = _MiseRegistryLoader()
 
 
 def _read_mise_registry_archive(cache_path: Path) -> bytes | None:
-    """Read the fresh archive or download it once for the local cache."""
+    """Read the fresh archive from cache, or download it once for the local cache.
+
+    A cache file that vanishes mid-check (`FileNotFoundError`) is an
+    ordinary race with a concurrent write, treated the same as never having
+    had one. Any other read failure -- permissions, an I/O error -- means
+    the cache is present but broken, reported rather than silently routed
+    around by falling through to a network refetch (ADR-0060).
+    """
     try:
-        if (
+        fresh = (
             cache_path.is_file()
             and time() - cache_path.stat().st_mtime < MISE_REGISTRY_TTL_SECONDS
-        ):
+        )
+    except FileNotFoundError:
+        fresh = False
+    if fresh:
+        try:
             return cache_path.read_bytes()
-    except OSError as e:
-        logger.debug("Unable to read cached Mise registry", error=str(e))
+        except FileNotFoundError:
+            pass
+        except OSError as e:
+            raise MalformedToolMetadata(
+                cache_path, f"cannot read Mise registry cache: {e}"
+            ) from e
 
     try:
         request = Request(MISE_REGISTRY_URL, headers={"User-Agent": "maniac/0.1"})
@@ -190,8 +206,12 @@ def _read_mise_registry_archive(cache_path: Path) -> bytes | None:
         logger.debug("Unable to download Mise registry", error=str(e))
         try:
             return cache_path.read_bytes()
-        except OSError:
+        except FileNotFoundError:
             return None
+        except OSError as read_error:
+            raise MalformedToolMetadata(
+                cache_path, f"cannot read Mise registry cache: {read_error}"
+            ) from read_error
 
 
 def _mise_registry_cache_path(config: Config) -> Path:

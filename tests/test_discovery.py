@@ -11,6 +11,7 @@ import pytest
 import zstandard
 
 from maniac.config import Config
+from maniac.exceptions import MalformedToolMetadata
 from maniac.models import Installation
 from maniac.sources import discovery, loginpath, resolution
 from maniac.sources.discovery import (
@@ -87,11 +88,16 @@ def test_check_mise_toml_tools_github_and_cargo(tmp_path: Path) -> None:
     assert _check_mise_toml(cfg, "unknown", "unknown") is None
 
 
-def test_check_mise_toml_invalid(tmp_path: Path) -> None:
+def test_check_mise_toml_invalid_raises_malformed_tool_metadata(tmp_path: Path) -> None:
+    """A present but unparsable mise config is reported, not silently skipped (ADR-0060)."""
     cfg = tmp_path / "invalid.toml"
     cfg.write_text("invalid = [toml", encoding="utf-8")
-    assert _check_mise_toml(cfg, "foo", "foo") is None
+    with pytest.raises(MalformedToolMetadata) as excinfo:
+        _check_mise_toml(cfg, "foo", "foo")
+    assert excinfo.value.path == cfg
 
+
+def test_check_mise_toml_missing_file_is_ordinary_absence(tmp_path: Path) -> None:
     missing = tmp_path / "nonexistent.toml"
     assert _check_mise_toml(missing, "foo", "foo") is None
 
@@ -394,16 +400,37 @@ def test_parse_mise_registry_prefers_canonical_names_and_normalizes_aqua() -> No
     assert registry["kubectl"] == "kubernetes/kubernetes"
 
 
-def test_malformed_mise_registry_falls_back_without_error(monkeypatch) -> None:
+def test_malformed_mise_registry_raises_malformed_tool_metadata(monkeypatch) -> None:
+    """A corrupt cached registry archive is reported, not silently emptied (ADR-0060)."""
     archive = _compressed_mise_registry({"registry/broken.toml": b"\xff"})
     monkeypatch.setattr(
         discovery, "_read_mise_registry_archive", lambda cache_path: archive
     )
     _load_mise_registry.cache_clear()
 
-    assert _load_mise_registry(Path("registry.tar.zst")) == {}
+    cache_path = Path("registry.tar.zst")
+    with pytest.raises(MalformedToolMetadata) as excinfo:
+        _load_mise_registry(cache_path)
+    assert excinfo.value.path == cache_path
 
     _load_mise_registry.cache_clear()
+
+
+def test_read_mise_registry_archive_raises_for_an_unreadable_fresh_cache(
+    tmp_path: Path,
+) -> None:
+    """A present, TTL-fresh cache file that cannot be read is reported rather
+    than silently routed around by falling through to a network refetch
+    (ADR-0060)."""
+    cache_path = tmp_path / "mise-registry.tar.zst"
+    cache_path.write_bytes(b"stale")
+    cache_path.chmod(0o000)
+    try:
+        with pytest.raises(MalformedToolMetadata) as excinfo:
+            _read_mise_registry_archive(cache_path)
+        assert excinfo.value.path == cache_path
+    finally:
+        cache_path.chmod(0o644)
 
 
 def test_mise_registry_download_sends_user_agent(monkeypatch, tmp_path: Path) -> None:

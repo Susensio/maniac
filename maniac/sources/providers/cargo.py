@@ -11,7 +11,7 @@ from functools import cache
 from pathlib import Path
 
 from ...config import Config
-from ...logging import logger
+from ...exceptions import MalformedToolMetadata
 from ...models import Installation, RemoteRepoSource, RepoSource
 from .. import discovery
 from ..manpages import find_install_root_manpages
@@ -96,11 +96,10 @@ def _crates_by_binary(crates2_path: Path) -> dict[str, tuple[str, str]]:
     """
     try:
         data = json.loads(crates2_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError, UnicodeDecodeError) as e:
-        logger.debug(
-            "Error reading cargo .crates2.json", path=str(crates2_path), error=str(e)
-        )
+    except FileNotFoundError:
         return {}
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError) as e:
+        raise MalformedToolMetadata(crates2_path, f"cargo .crates2.json: {e}") from e
     installs = data.get("installs")
     if not isinstance(installs, dict):
         return {}
@@ -151,9 +150,10 @@ def _repo_from_registry_source(
 def _declared_repository(manifest: Path) -> str | None:
     try:
         data = tomllib.loads(manifest.read_text(encoding="utf-8"))
-    except (OSError, tomllib.TOMLDecodeError, UnicodeDecodeError) as e:
-        logger.debug("Error reading crate Cargo.toml", path=str(manifest), error=str(e))
+    except FileNotFoundError:
         return None
+    except (OSError, tomllib.TOMLDecodeError, UnicodeDecodeError) as e:
+        raise MalformedToolMetadata(manifest, f"crate Cargo.toml: {e}") from e
     package = data.get("package")
     if not isinstance(package, dict):
         return None

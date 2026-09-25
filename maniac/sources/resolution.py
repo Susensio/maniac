@@ -12,6 +12,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from ..config import Config
+from ..exceptions import MalformedToolMetadata
 from ..models import Installation, RepoSource
 from . import loginpath
 from .pathcache import resolve_bin_path
@@ -57,6 +58,7 @@ def discover_repo(
 def enumerate_installations(
     on_start: Callable[[int], None] | None = None,
     on_scan: Callable[[], None] | None = None,
+    on_error: Callable[[str, MalformedToolMetadata], None] | None = None,
 ) -> list[tuple[Provider, Installation]]:
     """Claim each first-PATH binary once, preserving PATH precedence.
 
@@ -77,6 +79,13 @@ def enumerate_installations(
     right after the directory scan and before the per-candidate
     `_detect_via_registry` loop that dominates the cost; `on_scan` fires
     once per candidate processed in that loop.
+
+    A candidate whose provider raises `MalformedToolMetadata` (ADR-0060: its
+    own metadata file is present but unreadable) is reported through
+    `on_error` -- `(name, error)` -- and dropped from the result rather than
+    aborting every other candidate's enumeration. A later `$PATH` shadow
+    that also errors is silently dropped instead: it never wins regardless,
+    and does not have its own row to report an error against.
 
     A later `$PATH` occurrence of a claimed name never wins, but a provider
     that claims it too is retained on the winner's `Installation.losers`
@@ -106,12 +115,22 @@ def enumerate_installations(
 
     found: list[tuple[Provider, Installation]] = []
     for name, bin_path in seen.items():
-        claim = _detect_via_registry(bin_path)
+        try:
+            claim = _detect_via_registry(bin_path)
+        except MalformedToolMetadata as e:
+            if on_error is not None:
+                on_error(name, e)
+            if on_scan is not None:
+                on_scan()
+            continue
         if claim is not None:
             provider, inst = claim
             losers: list[Installation] = []
             for shadow_path in shadowed.get(name, ()):
-                shadow_claim = _detect_via_registry(shadow_path)
+                try:
+                    shadow_claim = _detect_via_registry(shadow_path)
+                except MalformedToolMetadata:
+                    continue
                 if shadow_claim is not None:
                     losers.append(shadow_claim[1])
             if losers:
