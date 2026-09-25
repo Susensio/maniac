@@ -7,6 +7,7 @@ are pinned here rather than through rendered output.
 
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -17,6 +18,7 @@ import structlog
 
 from maniac import manifest
 from maniac.config import Config
+from maniac.exceptions import MalformedToolMetadata
 from maniac.listing import (
     ActionState,
     Candidate,
@@ -82,7 +84,7 @@ def test_compute_rows_no_args_walks_providers_not_the_manpath(
     inst = _installation(root=tmp_path)
     monkeypatch.setattr(
         "maniac.listing.inventory.resolution.enumerate_installations",
-        lambda on_start=None, on_scan=None: [(provider, inst)],
+        lambda on_start=None, on_scan=None, on_error=None: [(provider, inst)],
     )
 
     rows = compute_rows(config=_config(tmp_path))
@@ -101,6 +103,79 @@ def test_compute_rows_no_args_walks_providers_not_the_manpath(
     ]
 
 
+def test_compute_rows_reports_a_discovery_error_row_beside_the_rest(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A tool `resolution` could not even detect (ADR-0060) still gets a row,
+    and does not drop the tool discovered cleanly alongside it."""
+    page = tmp_path / "tool.1"
+    page.write_text(".TH TOOL 1\n", encoding="utf-8")
+    provider = _FakeProvider(local_docs=[page])
+    inst = _installation(root=tmp_path)
+
+    def fake_enumerate(
+        on_start=None,
+        on_scan=None,
+        on_error: Callable[[str, MalformedToolMetadata], None] | None = None,
+    ):
+        assert on_error is not None
+        on_error("broken", MalformedToolMetadata(Path("/x/y.toml"), "invalid TOML"))
+        return [(provider, inst)]
+
+    monkeypatch.setattr(
+        "maniac.listing.inventory.resolution.enumerate_installations", fake_enumerate
+    )
+
+    rows = compute_rows(config=_config(tmp_path))
+
+    by_tool = {row.tool: row for row in rows}
+    assert by_tool["tool"].state is ActionState.AVAILABLE
+    broken = by_tool["broken"]
+    assert broken.state is ActionState.ERROR
+    assert broken.error == "/x/y.toml: invalid TOML"
+    assert broken.provider == ""
+    assert broken.upstream is None
+
+
+def test_compute_rows_reports_a_resolve_source_error_row_beside_the_rest(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A malformed metadata file discovered only while resolving the source
+    (ADR-0060) still leaves the row's own tool reported, and the rest intact."""
+
+    class _BrokenProvider:
+        name = "broken-provider"
+
+        def detect(self, bin_path: Path) -> Installation | None:
+            return None
+
+        def resolve_source(self, inst, *, config, sources):
+            raise MalformedToolMetadata(Path("/x/pkg.json"), "invalid JSON")
+
+        def local_docs(self, inst: Installation) -> list[Path]:
+            return []
+
+    ok_provider = _FakeProvider()
+    ok_inst = _installation(binary="ok-tool")
+    broken_inst = _installation(binary="broken-tool")
+
+    monkeypatch.setattr(
+        "maniac.listing.inventory.resolution.enumerate_installations",
+        lambda on_start=None, on_scan=None, on_error=None: [
+            (ok_provider, ok_inst),
+            (_BrokenProvider(), broken_inst),
+        ],
+    )
+
+    rows = compute_rows(config=_config(tmp_path))
+
+    by_tool = {row.tool: row for row in rows}
+    assert by_tool["ok-tool"].state is not ActionState.ERROR
+    broken = by_tool["broken-tool"]
+    assert broken.state is ActionState.ERROR
+    assert broken.error == "/x/pkg.json: invalid JSON"
+
+
 def test_compute_rows_reflects_a_manifest_write_between_invocations(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -117,7 +192,7 @@ def test_compute_rows_reflects_a_manifest_write_between_invocations(
     inst = _installation()
     monkeypatch.setattr(
         "maniac.listing.inventory.resolution.enumerate_installations",
-        lambda on_start=None, on_scan=None: [(provider, inst)],
+        lambda on_start=None, on_scan=None, on_error=None: [(provider, inst)],
     )
 
     before = compute_rows(config=cfg)
@@ -209,7 +284,7 @@ def test_compute_rows_resolves_upstream_for_a_vendor_page(
     inst = _installation(root=tmp_path)
     monkeypatch.setattr(
         "maniac.listing.inventory.resolution.enumerate_installations",
-        lambda on_start=None, on_scan=None: [(provider, inst)],
+        lambda on_start=None, on_scan=None, on_error=None: [(provider, inst)],
     )
     monkeypatch.setattr(
         "maniac.listing.upstream.discover_repo_manpage",
@@ -237,7 +312,7 @@ def test_compute_rows_resolves_upstream_for_a_reachable_page(
     inst = _installation(root=tmp_path)
     monkeypatch.setattr(
         "maniac.listing.inventory.resolution.enumerate_installations",
-        lambda on_start=None, on_scan=None: [(provider, inst)],
+        lambda on_start=None, on_scan=None, on_error=None: [(provider, inst)],
     )
     monkeypatch.setattr(
         "maniac.listing.classification.find_installed_manpage_path",
@@ -265,7 +340,9 @@ def test_compute_rows_resolves_upstream_for_an_unresolved_row(
     provider = _CountingProvider(source=source)
     monkeypatch.setattr(
         "maniac.listing.inventory.resolution.enumerate_installations",
-        lambda on_start=None, on_scan=None: [(provider, _installation())],
+        lambda on_start=None, on_scan=None, on_error=None: [
+            (provider, _installation())
+        ],
     )
     monkeypatch.setattr(
         "maniac.listing.upstream.discover_repo_manpage",
@@ -304,7 +381,7 @@ def test_compute_rows_recovers_the_uri_for_an_older_repository_manifest(
     uri = "https://github.com/owner/tool/blob/v1.2.3/man/tool.1"
     monkeypatch.setattr(
         "maniac.listing.inventory.resolution.enumerate_installations",
-        lambda on_start=None, on_scan=None: [(provider, inst)],
+        lambda on_start=None, on_scan=None, on_error=None: [(provider, inst)],
     )
     monkeypatch.setattr(
         "maniac.listing.classification.find_installed_manpage_path",
@@ -398,7 +475,7 @@ def test_compute_rows_no_args_threads_both_phases_callbacks(
     provider = _FakeProvider()
     inst = _installation()
 
-    def fake_enumerate(on_start, on_scan):
+    def fake_enumerate(on_start, on_scan, on_error=None):
         on_start(5)
         on_scan()
         return [(provider, inst)]
@@ -429,7 +506,7 @@ def test_compute_rows_upgrades_a_versioned_cached_repository_page(
     inst = _installation(binary="fzf", version="0.74.3")
     monkeypatch.setattr(
         "maniac.listing.inventory.resolution.enumerate_installations",
-        lambda on_start=None, on_scan=None: [(provider, inst)],
+        lambda on_start=None, on_scan=None, on_error=None: [(provider, inst)],
     )
     monkeypatch.setattr(
         "maniac.listing.upstream.discover_repo_manpage",
@@ -460,7 +537,7 @@ def test_local_repository_page_links_to_its_source_file(
     inst = _installation()
     monkeypatch.setattr(
         "maniac.listing.inventory.resolution.enumerate_installations",
-        lambda on_start=None, on_scan=None: [(provider, inst)],
+        lambda on_start=None, on_scan=None, on_error=None: [(provider, inst)],
     )
     monkeypatch.setattr(
         "maniac.listing.upstream.discover_repo_manpage",
@@ -483,7 +560,7 @@ def test_compute_rows_uses_the_exact_tmux_documentation_repository(
     inst = _installation(binary="tmux", version="3.7b")
     monkeypatch.setattr(
         "maniac.listing.inventory.resolution.enumerate_installations",
-        lambda on_start=None, on_scan=None: [(provider, inst)],
+        lambda on_start=None, on_scan=None, on_error=None: [(provider, inst)],
     )
     observed: list[RepoSource] = []
 
@@ -509,7 +586,7 @@ def test_compute_rows_keeps_an_offline_upstream_row_missing(
     inst = _installation()
     monkeypatch.setattr(
         "maniac.listing.inventory.resolution.enumerate_installations",
-        lambda on_start=None, on_scan=None: [(provider, inst)],
+        lambda on_start=None, on_scan=None, on_error=None: [(provider, inst)],
     )
     monkeypatch.setattr(
         "maniac.listing.upstream.discover_repo_manpage",
@@ -531,7 +608,7 @@ def test_compute_rows_keeps_a_single_failed_upstream_probe_missing(
     inst = _installation()
     monkeypatch.setattr(
         "maniac.listing.inventory.resolution.enumerate_installations",
-        lambda on_start=None, on_scan=None: [(provider, inst)],
+        lambda on_start=None, on_scan=None, on_error=None: [(provider, inst)],
     )
 
     def fail_probe(*args: object, **kwargs: object) -> tuple[Path, bool]:
@@ -554,7 +631,7 @@ def test_compute_rows_never_probes_an_unversioned_installation(
     inst = _installation(version=None)
     monkeypatch.setattr(
         "maniac.listing.inventory.resolution.enumerate_installations",
-        lambda on_start=None, on_scan=None: [(provider, inst)],
+        lambda on_start=None, on_scan=None, on_error=None: [(provider, inst)],
     )
     monkeypatch.setattr(
         "maniac.listing.upstream.discover_repo_manpage",
@@ -583,7 +660,7 @@ def test_compute_rows_bounds_upstream_probes_and_keeps_row_order(
     ]
     monkeypatch.setattr(
         "maniac.listing.inventory.resolution.enumerate_installations",
-        lambda on_start=None, on_scan=None: installations,
+        lambda on_start=None, on_scan=None, on_error=None: installations,
     )
     active = 0
     max_active = 0
@@ -624,7 +701,7 @@ def test_compute_rows_bounds_parallel_local_classification(
     ]
     monkeypatch.setattr(
         "maniac.listing.inventory.resolution.enumerate_installations",
-        lambda on_start=None, on_scan=None: installations,
+        lambda on_start=None, on_scan=None, on_error=None: installations,
     )
     active = 0
     maximum = 0
@@ -661,7 +738,7 @@ def test_compute_rows_loads_the_manifest_once_per_invocation(
     ]
     monkeypatch.setattr(
         "maniac.listing.inventory.resolution.enumerate_installations",
-        lambda on_start=None, on_scan=None: installations,
+        lambda on_start=None, on_scan=None, on_error=None: installations,
     )
     loads = 0
 
@@ -692,7 +769,7 @@ def test_compute_rows_starts_upstream_before_slow_local_work_finishes(
     ]
     monkeypatch.setattr(
         "maniac.listing.inventory.resolution.enumerate_installations",
-        lambda on_start=None, on_scan=None: installations,
+        lambda on_start=None, on_scan=None, on_error=None: installations,
     )
     slow_started = threading.Event()
     release_slow = threading.Event()
@@ -741,7 +818,7 @@ def test_compute_rows_ticks_while_a_slow_future_leaves_a_quiet_gap(
     ]
     monkeypatch.setattr(
         "maniac.listing.inventory.resolution.enumerate_installations",
-        lambda on_start=None, on_scan=None: installations,
+        lambda on_start=None, on_scan=None, on_error=None: installations,
     )
     release_slow = threading.Event()
     idle = threading.Event()
@@ -787,7 +864,7 @@ def test_compute_rows_deduplicates_identical_upstream_binary_probes(
     ]
     monkeypatch.setattr(
         "maniac.listing.inventory.resolution.enumerate_installations",
-        lambda on_start=None, on_scan=None: installations,
+        lambda on_start=None, on_scan=None, on_error=None: installations,
     )
     probes = 0
 
@@ -813,7 +890,7 @@ def test_deduplicated_probe_publishes_all_siblings_atomically(
     ]
     monkeypatch.setattr(
         "maniac.listing.inventory.resolution.enumerate_installations",
-        lambda on_start=None, on_scan=None: installations,
+        lambda on_start=None, on_scan=None, on_error=None: installations,
     )
     monkeypatch.setattr(
         "maniac.listing.upstream.discover_repo_manpage",
@@ -842,7 +919,7 @@ def test_streaming_skeleton_waits_for_complete_enumeration(
             super().inventory_ready(rows)
             skeleton_seen.set()
 
-    def enumerate_installations(on_start=None, on_scan=None):
+    def enumerate_installations(on_start=None, on_scan=None, on_error=None):
         assert release_enumeration.wait(timeout=2)
         return [(provider, inst)]
 
@@ -868,7 +945,7 @@ def test_compute_rows_emits_one_sorted_complete_skeleton(
     alpha = _installation(binary="alpha")
     beta = _installation(binary="beta")
 
-    def enumerate_installations(on_start=None, on_scan=None):
+    def enumerate_installations(on_start=None, on_scan=None, on_error=None):
         return [(provider, beta), (provider, alpha)]
 
     monkeypatch.setattr(
@@ -895,7 +972,7 @@ def test_compute_rows_streaming_local_callbacks_handle_multiple_partial_rows(
         (_FakeProvider(source=source), _installation(binary="second")),
     ]
 
-    def enumerate_installations(on_start=None, on_scan=None):
+    def enumerate_installations(on_start=None, on_scan=None, on_error=None):
         return installations
 
     monkeypatch.setattr(
@@ -924,7 +1001,9 @@ def test_compute_rows_callbacks_receive_snapshots_after_initial_and_each_probe(
     provider = _FakeProvider(source=source)
     monkeypatch.setattr(
         "maniac.listing.inventory.resolution.enumerate_installations",
-        lambda on_start=None, on_scan=None: [(provider, _installation())],
+        lambda on_start=None, on_scan=None, on_error=None: [
+            (provider, _installation())
+        ],
     )
     monkeypatch.setattr(
         "maniac.listing.upstream.discover_repo_manpage",
@@ -2002,7 +2081,7 @@ def test_compute_rows_reports_drift_for_a_manifest_entry_with_deleted_page(
     inst = _installation()
     monkeypatch.setattr(
         "maniac.listing.inventory.resolution.enumerate_installations",
-        lambda on_start=None, on_scan=None: [(provider, inst)],
+        lambda on_start=None, on_scan=None, on_error=None: [(provider, inst)],
     )
 
     row = compute_rows(config=cfg)[0]
@@ -2435,7 +2514,7 @@ def test_build_inventory_with_no_tools_walks_and_sorts_discovery(
     inst_a = _installation(binary="aaa")
     monkeypatch.setattr(
         "maniac.listing.inventory.resolution.enumerate_installations",
-        lambda on_start=None, on_scan=None: [
+        lambda on_start=None, on_scan=None, on_error=None: [
             (provider_b, inst_b),
             (provider_a, inst_a),
         ],
@@ -2453,7 +2532,7 @@ def test_build_inventory_with_no_tools_walks_and_sorts_discovery(
 def test_build_inventory_no_tools_reports_discovery_progress(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def fake_enumerate(on_start, on_scan):
+    def fake_enumerate(on_start, on_scan, on_error=None):
         on_start(1)
         on_scan()
         return [(_FakeProvider(), _installation())]
@@ -2467,6 +2546,59 @@ def test_build_inventory_no_tools_reports_discovery_progress(
 
     assert observer.discovery_totals == [1]
     assert observer.discovery_scans == 1
+
+
+def test_build_inventory_with_no_tools_keeps_one_broken_tool_and_the_rest(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A tool whose own metadata `resolution` found malformed (ADR-0060) still
+    gets a row, and never drops the others."""
+    provider = _FakeProvider()
+    inst = _installation(binary="ok-tool")
+
+    def fake_enumerate(
+        on_start=None,
+        on_scan=None,
+        on_error: Callable[[str, MalformedToolMetadata], None] | None = None,
+    ):
+        assert on_error is not None
+        on_error("broken-tool", MalformedToolMetadata(Path("/x/y.toml"), "bad toml"))
+        return [(provider, inst)]
+
+    monkeypatch.setattr(
+        "maniac.listing.inventory.resolution.enumerate_installations", fake_enumerate
+    )
+
+    candidates, discovered = _build_inventory(None, RecordingObserver())
+
+    assert discovered is True
+    assert [c.tool for c in candidates] == ["broken-tool", "ok-tool"]
+    broken = candidates[0]
+    assert broken.provider is None
+    assert broken.installation is None
+    assert broken.error == "/x/y.toml: bad toml"
+
+
+def test_build_inventory_with_tools_keeps_a_broken_tool_and_the_rest(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = _FakeProvider()
+    inst = _installation(binary="bash")
+
+    def fake_find_installation(name, bin_dir=None):
+        if name == "broken":
+            raise MalformedToolMetadata(Path("/x/y.toml"), "bad toml")
+        return (provider, inst) if name == "bash" else None
+
+    monkeypatch.setattr(
+        "maniac.listing.inventory.resolution.find_installation", fake_find_installation
+    )
+
+    candidates, discovered = _build_inventory(["bash", "broken"], RecordingObserver())
+
+    assert discovered is False
+    assert [c.tool for c in candidates] == ["bash", "broken"]
+    assert candidates[1].error == "/x/y.toml: bad toml"
 
 
 def test_build_inventory_with_tools_resolves_each_by_name(
@@ -2512,7 +2644,7 @@ def test_build_inventory_with_tools_never_walks_discovery(
     )
     monkeypatch.setattr(
         "maniac.listing.inventory.resolution.enumerate_installations",
-        lambda on_start=None, on_scan=None: pytest.fail(
+        lambda on_start=None, on_scan=None, on_error=None: pytest.fail(
             "named tools must not walk discovery"
         ),
     )

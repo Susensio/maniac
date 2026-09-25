@@ -29,6 +29,7 @@ from maniac.cli.listing import (
     _render_list,
     _selected_states,
     _source_cell,
+    _source_label,
     _streaming_table,
     _StreamingList,
     _TerminalObserver,
@@ -60,7 +61,7 @@ def test_streaming_list_renders_checking_before_a_blocked_probe_finishes(
     inst = _installation()
     monkeypatch.setattr(
         "maniac.listing.inventory.resolution.enumerate_installations",
-        lambda on_start=None, on_scan=None: [(provider, inst)],
+        lambda on_start=None, on_scan=None, on_error=None: [(provider, inst)],
     )
     probe_started = threading.Event()
     release_probe = threading.Event()
@@ -663,6 +664,47 @@ def test_list_tables_cap_upstream_width_and_keep_ellipsis_stable() -> None:
     )
 
 
+def test_source_label_drops_the_directory_from_an_error_message() -> None:
+    """The Source column shows the file's own name and the reason, not the
+    full absolute path `MalformedToolMetadata` carries (ADR-0060) -- that
+    would eat the column's width budget before the reason ever renders."""
+    row = ToolRow(
+        "broken-tool",
+        "broken-tool",
+        "",
+        ActionState.ERROR,
+        PageSource.NONE,
+        None,
+        error="/home/user/.local/share/mise/installs/hx/.mise.backend.toml: bad toml",
+    )
+
+    assert _source_label(row) == ".mise.backend.toml: bad toml"
+
+
+def test_list_table_renders_a_malformed_metadata_error_row(tmp_path) -> None:
+    """A row whose own metadata file was malformed (ADR-0060) shows the
+    `error` state and names the file and problem in the Source column,
+    rather than being silently dropped."""
+    row = ToolRow(
+        "broken-tool",
+        "broken-tool",
+        "",
+        ActionState.ERROR,
+        PageSource.NONE,
+        None,
+        error=f"{tmp_path / 'package.json'}: bad JSON",
+    )
+
+    table = _list_table([row], terminal_width=160)
+    output = io.StringIO()
+    Console(file=output, force_terminal=True, no_color=True, width=160).print(table)
+    rendered = output.getvalue()
+
+    assert "error" in rendered
+    assert "package.json: bad JSON" in rendered
+    assert str(tmp_path) not in rendered
+
+
 def test_list_table_sizes_upstream_to_its_widest_value() -> None:
     """The reported defect: a 37-character identity was cut to 24."""
     widest = "redhat-developer/yaml-language-server"
@@ -922,7 +964,7 @@ def test_cli_streaming_discards_the_live_frames_for_one_final_render(
     monkeypatch.setattr("maniac.cli.listing.Live", FakeLive)
     monkeypatch.setattr(
         "maniac.listing.inventory.resolution.enumerate_installations",
-        lambda on_start=None, on_scan=None: (
+        lambda on_start=None, on_scan=None, on_error=None: (
             on_start and on_start(1),
             [(_FakeProvider(), _installation(binary="gum"))],
         )[-1],
@@ -957,7 +999,7 @@ def test_cli_streaming_keeps_siblings_apart_absent_proven_shared_target(
     provider = _FakeProvider()
     monkeypatch.setattr(
         "maniac.listing.inventory.resolution.enumerate_installations",
-        lambda on_start=None, on_scan=None: [
+        lambda on_start=None, on_scan=None, on_error=None: [
             (provider, _installation(binary=binary, package="pandoc"))
             for binary in ("pandoc", "pandoc-lua", "pandoc-server")
         ],
@@ -992,7 +1034,9 @@ def test_cli_verbose_list_disables_streaming(
     provider = _FakeProvider()
     monkeypatch.setattr(
         "maniac.listing.inventory.resolution.enumerate_installations",
-        lambda on_start=None, on_scan=None: [(provider, _installation(binary="gum"))],
+        lambda on_start=None, on_scan=None, on_error=None: [
+            (provider, _installation(binary="gum"))
+        ],
     )
 
     result = runner.invoke(app, ["--verbose", "list"])
@@ -1116,7 +1160,7 @@ def test_cli_streaming_error_keeps_provisional_rows_and_propagates(
         def stop(self) -> None:
             return None
 
-    def enumerate_installations(on_start=None, on_scan=None):
+    def enumerate_installations(on_start=None, on_scan=None, on_error=None):
         assert on_start is not None
         on_start(2)
         return [
@@ -1278,7 +1322,7 @@ def test_cli_list_pipe_emits_exactly_the_filtered_set(
 
     monkeypatch.setattr(
         "maniac.listing.inventory.resolution.enumerate_installations",
-        lambda on_start=None, on_scan=None: [
+        lambda on_start=None, on_scan=None, on_error=None: [
             (available_provider, _installation(binary="gum")),
             (missing_provider, _installation(binary="ghost")),
         ],
@@ -1309,7 +1353,9 @@ def test_cli_list_pipe_unverified_emits_exactly_the_filtered_set(
     )
     monkeypatch.setattr(
         "maniac.listing.inventory.resolution.enumerate_installations",
-        lambda on_start=None, on_scan=None: [(_FakeProvider(), _installation())],
+        lambda on_start=None, on_scan=None, on_error=None: [
+            (_FakeProvider(), _installation())
+        ],
     )
 
     res = runner.invoke(app, ["list", "--unverified"])
@@ -1328,7 +1374,7 @@ def test_cli_list_pipe_available_waits_for_upstream_classification(
     source = RepoSource(name="fzf", target="junegunn/fzf", is_local=False)
     monkeypatch.setattr(
         "maniac.listing.inventory.resolution.enumerate_installations",
-        lambda on_start=None, on_scan=None: [
+        lambda on_start=None, on_scan=None, on_error=None: [
             (
                 _FakeProvider(source=source),
                 _installation(binary="fzf", version="0.74.3"),
@@ -1836,7 +1882,7 @@ def test_cli_list_pipe_emits_bare_names(
     monkeypatch.setattr(cli_module, "Config", lambda: _config(tmp_path))
     monkeypatch.setattr(
         "maniac.listing.inventory.resolution.enumerate_installations",
-        lambda on_start=None, on_scan=None: [
+        lambda on_start=None, on_scan=None, on_error=None: [
             (_FakeProvider(), _installation(binary="gum"))
         ],
     )
@@ -1855,7 +1901,7 @@ def test_cli_list_tty_shows_table(
     monkeypatch.setattr(cli_module, "Config", lambda: _config(tmp_path))
     monkeypatch.setattr(
         "maniac.listing.inventory.resolution.enumerate_installations",
-        lambda on_start=None, on_scan=None: (
+        lambda on_start=None, on_scan=None, on_error=None: (
             on_start and on_start(1),
             [(_FakeProvider(), _installation(binary="gum"))],
         )[-1],

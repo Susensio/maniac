@@ -24,6 +24,7 @@ from typing import Any
 
 from .. import manifest
 from ..config import Config
+from ..exceptions import MalformedToolMetadata
 from ..logging import logger
 from ..models import Installation, RepoSource
 from ..sources import resolution
@@ -93,30 +94,48 @@ class InventoryObserver:
 def _build_inventory(
     tools: list[str] | None, observer: InventoryObserver
 ) -> tuple[list[Candidate], bool]:
-    """Return requested or discovered candidates and whether discovery ran."""
+    """Return requested or discovered candidates and whether discovery ran.
+
+    A tool whose own metadata file `resolution` found unreadable
+    (`MalformedToolMetadata`, ADR-0060) still gets a row -- `Candidate.error`
+    carries why, so one broken tool never drops the rest of the inventory.
+    """
     if tools:
         # No `resolution.discover_repo(tool)` fallback when `found` is None:
         # it shares `find_installation`'s own bin-path resolution.
         candidates = []
         for tool in dict.fromkeys(tools):
-            found = resolution.find_installation(tool)
+            try:
+                found = resolution.find_installation(tool)
+            except MalformedToolMetadata as e:
+                candidates.append(
+                    Candidate(tool=tool, provider=None, installation=None, error=str(e))
+                )
+                continue
             provider, inst = found if found else (None, None)
             candidates.append(
                 Candidate(tool=tool, provider=provider, installation=inst)
             )
         return candidates, False
 
+    errors: dict[str, str] = {}
     discovered = sorted(
         resolution.enumerate_installations(
             on_start=observer.discovery_started,
             on_scan=observer.discovery_scanned,
+            on_error=lambda name, e: errors.__setitem__(name, str(e)),
         ),
         key=lambda item: item[1].binary,
     )
-    return [
+    candidates = [
         Candidate(tool=inst.binary, provider=provider, installation=inst)
         for provider, inst in discovered
-    ], True
+    ] + [
+        Candidate(tool=name, provider=None, installation=None, error=error)
+        for name, error in errors.items()
+    ]
+    candidates.sort(key=lambda candidate: candidate.tool)
+    return candidates, True
 
 
 def _skeleton_row(candidate: Candidate) -> ToolRow:
@@ -125,9 +144,10 @@ def _skeleton_row(candidate: Candidate) -> ToolRow:
         tool=candidate.tool,
         package=candidate.package,
         provider=candidate.provider_name,
-        state=ActionState.MISSING,
+        state=ActionState.ERROR if candidate.error else ActionState.MISSING,
         source=PageSource.NONE,
         upstream=None,
+        error=candidate.error,
     )
 
 
@@ -147,6 +167,7 @@ def _classified_row(
         page_uri=classified.page_uri,
         owning_package=classified.owning_package,
         drift=classified.drift,
+        error=classified.error,
     )
 
 
@@ -159,8 +180,38 @@ def _classify_and_resolve(
     the row regardless of what `classify` decides; only the remote page
     probe that follows stays gated on local evidence
     (`is_upstream_eligible`).
+
+    A candidate discovery already marked broken (`candidate.error`, ADR-0060)
+    short-circuits here rather than being classified as an ordinary miss.
+    Source resolution can raise the same `MalformedToolMetadata` this late
+    -- a provider's repository field lives in the same file its version
+    came from, read again for a different question -- and is caught the
+    same way.
     """
-    upstream = resolve_upstream(candidate, config=cfg)
+    if candidate.error is not None:
+        return (
+            LocalClassification(
+                state=ActionState.ERROR,
+                source=PageSource.NONE,
+                managed=False,
+                page_path=None,
+                error=candidate.error,
+            ),
+            None,
+        )
+    try:
+        upstream = resolve_upstream(candidate, config=cfg)
+    except MalformedToolMetadata as e:
+        return (
+            LocalClassification(
+                state=ActionState.ERROR,
+                source=PageSource.NONE,
+                managed=False,
+                page_path=None,
+                error=str(e),
+            ),
+            None,
+        )
     return classify(candidate, cfg, entries), upstream
 
 

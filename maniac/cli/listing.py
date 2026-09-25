@@ -39,6 +39,7 @@ _STATE_COLOR: dict[ActionState, str] = {
     ActionState.OUTDATED: "yellow",
     ActionState.AVAILABLE: "yellow",
     ActionState.MISSING: "red",
+    ActionState.ERROR: "bold red",
 }
 
 _STATE_COLUMN_WIDTH = max(
@@ -181,7 +182,16 @@ def _tool_column_width(labels: list[str]) -> int:
 
 
 def _source_label(row: ToolRow) -> str:
-    """The text `_source_cell` renders: a provable owning package, else the source."""
+    """The text `_source_cell` renders: an error, a provable owning package, else the source.
+
+    `row.error` is `MalformedToolMetadata`'s full `"<path>: <reason>"`
+    (ADR-0060) -- kept whole for `install`'s unconstrained output, but shown
+    here as just the file's own name and the reason: the Source column caps
+    at `_SOURCE_COLUMN_MAX_WIDTH`, and an absolute path would eat that
+    budget and leave the reason itself the first thing an ellipsis cuts.
+    """
+    if row.error is not None:
+        return row.error.rsplit("/", 1)[-1]
     if row.source is PageSource.SYSTEM and row.owning_package is not None:
         return row.owning_package
     return row.source.value

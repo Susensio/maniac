@@ -7,6 +7,7 @@
 | outdated   | a page resolves, and positive evidence says it documents another version |
 | available  | nothing resolves, but a page can be had without an LLM                   |
 | missing    | nothing resolves and no free page is known                               |
+| error      | this tool's own metadata file is present but malformed (ADR-0060)        |
 
 The unit is a binary a provider detected (`resolution.enumerate_installations`),
 not a manpath scan, since that is what bounds what a bulk install could act on.

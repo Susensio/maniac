@@ -761,6 +761,31 @@ def test_cli_install_multiple_all_fail_exits_nonzero(
     assert "2/2 tool(s) did not install" in res.output
 
 
+def test_cli_install_reports_malformed_tool_metadata_and_exits_nonzero(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A tool whose own metadata file is present but malformed (ADR-0060)
+    fails visibly at `install`'s boundary, naming the file and problem,
+    rather than being silently skipped or guessed at."""
+    from maniac.exceptions import MalformedToolMetadata
+
+    def _raise(*args: object, **kwargs: object):
+        raise MalformedToolMetadata(Path("/x/package.json"), "invalid JSON")
+
+    monkeypatch.setattr(
+        "maniac.sources.loginpath.which_login",
+        lambda name: Path("/bin/toolone"),
+    )
+    monkeypatch.setattr(
+        "maniac.orchestration.context.resolution.find_installation", _raise
+    )
+    res = runner.invoke(app, ["install", "toolone"])
+    assert res.exit_code == 1
+    assert "Install failed for toolone" in res.output
+    assert "/x/package.json" in res.output
+    assert "invalid JSON" in res.output
+
+
 def test_cli_install_multiple_partial_success_exits_nonzero(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

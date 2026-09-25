@@ -20,6 +20,9 @@ class ActionState(Enum):
     OUTDATED = "outdated"
     AVAILABLE = "available"
     MISSING = "missing"
+    ERROR = "error"
+    """This tool's own metadata file is present but malformed (ADR-0060) --
+    distinct from MISSING, which means nothing is wrong, just nothing found."""
 
 
 class PageSource(Enum):
@@ -48,6 +51,9 @@ class Candidate:
     tool: str
     provider: "Provider | None"
     installation: "Installation | None"
+    error: str | None = None
+    """Set when discovery itself raised `MalformedToolMetadata` (ADR-0060)
+    for this tool, before any provider or installation could be resolved."""
 
     @property
     def package(self) -> str:
@@ -79,6 +85,9 @@ class ToolRow:
     """Manifest has an entry for this tool, but its manpath link is broken --
     a page deleted by hand, `output_dir`/`backup_dir` cleaned, or another
     installer overwriting the link (ADR-0046's structural scan)."""
+    error: str | None = None
+    """Set together with `state is ActionState.ERROR`: the file and reason
+    a provider could not read this tool's own metadata (ADR-0060)."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,6 +101,7 @@ class LocalClassification:
     page_uri: str | None = None
     owning_package: str | None = None
     drift: bool = False
+    error: str | None = None
 
 
 RowSnapshot = tuple[ToolRow, ...]
