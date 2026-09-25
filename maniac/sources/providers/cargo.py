@@ -99,7 +99,7 @@ def _crates_by_binary(crates2_path: Path) -> dict[str, tuple[str, str]]:
     except FileNotFoundError:
         return {}
     except (OSError, json.JSONDecodeError, UnicodeDecodeError) as e:
-        raise MalformedToolMetadata(crates2_path, f"cargo .crates2.json: {e}") from e
+        raise MalformedToolMetadata(crates2_path, str(e)) from e
     installs = data.get("installs")
     if not isinstance(installs, dict):
         return {}
@@ -153,7 +153,7 @@ def _declared_repository(manifest: Path) -> str | None:
     except FileNotFoundError:
         return None
     except (OSError, tomllib.TOMLDecodeError, UnicodeDecodeError) as e:
-        raise MalformedToolMetadata(manifest, f"crate Cargo.toml: {e}") from e
+        raise MalformedToolMetadata(manifest, str(e)) from e
     package = data.get("package")
     if not isinstance(package, dict):
         return None

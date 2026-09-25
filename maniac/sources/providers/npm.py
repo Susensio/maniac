@@ -70,7 +70,7 @@ def read_package_json(root: Path) -> dict:
     except FileNotFoundError:
         return {}
     except (OSError, json.JSONDecodeError, UnicodeDecodeError) as e:
-        raise MalformedToolMetadata(path, f"npm package.json: {e}") from e
+        raise MalformedToolMetadata(path, str(e)) from e
     return data if isinstance(data, dict) else {}
 
 

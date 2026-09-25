@@ -141,9 +141,7 @@ def _read_backend_record(root: Path) -> tuple[str, str] | None:
     except FileNotFoundError:
         return None
     except (OSError, tomllib.TOMLDecodeError, UnicodeDecodeError) as e:
-        raise MalformedToolMetadata(
-            backend_path, f"mise .mise.backend.toml: {e}"
-        ) from e
+        raise MalformedToolMetadata(backend_path, str(e)) from e
     full = data.get("full")
     if not isinstance(full, str) or ":" not in full:
         return None

@@ -115,9 +115,7 @@ def find_distribution_metadata(
         except FileNotFoundError:
             continue
         except (OSError, UnicodeDecodeError) as e:
-            raise MalformedToolMetadata(
-                metadata_path, f"pipx dist-info METADATA: {e}"
-            ) from e
+            raise MalformedToolMetadata(metadata_path, str(e)) from e
         return email.message_from_string(text)
     return None
 

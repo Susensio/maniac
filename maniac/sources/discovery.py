@@ -65,7 +65,7 @@ def _check_mise_toml(cfg_path: Path, tool_id: str, binary_name: str) -> str | No
     except FileNotFoundError:
         return None
     except (OSError, tomllib.TOMLDecodeError) as e:
-        raise MalformedToolMetadata(cfg_path, f"mise config: {e}") from e
+        raise MalformedToolMetadata(cfg_path, str(e)) from e
 
     aliases = data.get("tool_alias", {})
     for alias_name, alias_target in aliases.items():
@@ -150,7 +150,7 @@ def _load_mise_registry_uncached(cache_path: Path) -> dict[str, str]:
         UnicodeDecodeError,
         zstandard.ZstdError,
     ) as e:
-        raise MalformedToolMetadata(cache_path, f"Mise registry cache: {e}") from e
+        raise MalformedToolMetadata(cache_path, str(e)) from e
 
 
 _load_mise_registry = _MiseRegistryLoader()
@@ -178,9 +178,7 @@ def _read_mise_registry_archive(cache_path: Path) -> bytes | None:
         except FileNotFoundError:
             pass
         except OSError as e:
-            raise MalformedToolMetadata(
-                cache_path, f"cannot read Mise registry cache: {e}"
-            ) from e
+            raise MalformedToolMetadata(cache_path, str(e)) from e
 
     try:
         request = Request(MISE_REGISTRY_URL, headers={"User-Agent": "maniac/0.1"})
@@ -209,9 +207,7 @@ def _read_mise_registry_archive(cache_path: Path) -> bytes | None:
         except FileNotFoundError:
             return None
         except OSError as read_error:
-            raise MalformedToolMetadata(
-                cache_path, f"cannot read Mise registry cache: {read_error}"
-            ) from read_error
+            raise MalformedToolMetadata(cache_path, str(read_error)) from read_error
 
 
 def _mise_registry_cache_path(config: Config) -> Path:
