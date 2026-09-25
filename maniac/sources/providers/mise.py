@@ -1,15 +1,12 @@
 """Mise-installed binaries under `~/.local/share/mise/installs/` (ADR-0015)."""
 
 import json
-import os
-import shutil
-import subprocess
 import tomllib
-from functools import cache
 from pathlib import Path
 
 from ...config import Config
 from ...exceptions import MalformedToolMetadata, ProjectScopedInstall
+from ...logging import logger
 from ...models import Installation, RemoteRepoSource, RepoSource
 from .. import discovery
 from ..manpages import find_install_root_manpages
@@ -19,9 +16,6 @@ from .npm import read_package_json
 
 _INSTALLS_MARKER = "/.local/share/mise/installs/"
 _DIRECT_BACKENDS = ("aqua", "github")
-
-# Guards against `mise` hanging rather than the ordinary ~170ms cost.
-_MISE_QUERY_TIMEOUT = 5
 
 # Backend name -> the delegate provider's install root, relative to mise's
 # own install root, for a backend whose on-disk layout mise composes rather
@@ -176,16 +170,12 @@ def _install_identity(root: Path) -> tuple[str, str, str]:
     return ("", root.parent.name, version)
 
 
-@cache
-def _mise_global_install_identities() -> frozenset[tuple[str, str, str]]:
+def _load_mise_global_install_identities_uncached() -> frozenset[tuple[str, str, str]]:
     """Identities of installs `mise` reports globally active from `$HOME` (ADR-0061).
 
-    Every `MISE_*`/`__MISE_*` variable is scrubbed first: `MISE_CONFIG_FILE`
-    alone was measured to leak a project's config into a `$HOME` query.
-    `cwd=Path.home()` keeps the current directory's own `mise.toml` from
-    doing the same thing through discovery instead of environment. Cached
-    for the life of the process -- called once per judged Mise install, not
-    once per lookup.
+    Asks through `discovery._run_mise` -- one place for the env scrub, cwd,
+    timeout and error conversion, shared with the config-file lookups
+    `discovery.py` makes for the same `$HOME`-scoped reason.
 
     A binary already resolved through mise's own install tree is the
     evidence that `mise` itself should be reachable and working here, so
@@ -193,46 +183,44 @@ def _mise_global_install_identities() -> frozenset[tuple[str, str, str]]:
     absence -- absence is `mise` genuinely not being part of this machine,
     which contradicts an install already found under its tree.
     """
-    mise = shutil.which("mise")
-    if mise is None:
-        raise MalformedToolMetadata(
-            Path("mise"),
-            "mise binary not found on $PATH, but a mise-managed install exists",
-        )
-    env = {
-        key: value
-        for key, value in os.environ.items()
-        if not key.startswith(("MISE_", "__MISE_"))
-    }
     try:
-        result = subprocess.run(
-            [mise, "ls", "--current", "--json"],
-            cwd=Path.home(),
-            env=env,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            text=True,
-            timeout=_MISE_QUERY_TIMEOUT,
-            check=False,
-        )
-    except (OSError, subprocess.TimeoutExpired) as e:
-        raise MalformedToolMetadata(
-            Path(mise), f"mise ls --current --json failed: {e}"
-        ) from e
-    if result.returncode != 0:
-        raise MalformedToolMetadata(
-            Path(mise), f"mise ls --current --json exited {result.returncode}"
-        )
-    try:
-        data = json.loads(result.stdout)
-        install_paths = [
-            entry["install_path"] for entries in data.values() for entry in entries
-        ]
+        data = json.loads(discovery._run_mise("ls", "--current", "--json"))
+        install_paths: list[str] = []
+        for entries in data.values():
+            for entry in entries:
+                install_path = entry["install_path"]
+                if not isinstance(install_path, str):
+                    raise MalformedToolMetadata(
+                        Path("mise"),
+                        f"install_path is not a string: {install_path!r}",
+                    )
+                install_paths.append(install_path)
     except (json.JSONDecodeError, AttributeError, TypeError, KeyError) as e:
         raise MalformedToolMetadata(
-            Path(mise), f"unparseable mise ls --current --json output: {e}"
+            Path("mise"), f"unparseable mise ls --current --json output: {e}"
         ) from e
-    return frozenset(_install_identity(Path(path)) for path in install_paths)
+
+    identities: set[tuple[str, str, str]] = set()
+    for path in install_paths:
+        try:
+            identities.add(_install_identity(Path(path)))
+        except MalformedToolMetadata as e:
+            # One globally active install's own corrupt `.mise.backend.toml`
+            # must not fail every other install's judgment (item 7): isolated
+            # here so only this entry drops out of the globally-active set,
+            # rather than reading every entry's backend file up front.
+            logger.warning(
+                "Skipping globally active mise install with unreadable backend record",
+                path=path,
+                error=str(e),
+            )
+            continue
+    return frozenset(identities)
+
+
+_mise_global_install_identities = discovery._SingleFlightCache(
+    _load_mise_global_install_identities_uncached
+)
 
 
 def _read_backend_record(root: Path) -> tuple[str, str] | None:

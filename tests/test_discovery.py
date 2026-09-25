@@ -161,6 +161,61 @@ def test_mise_config_files_uses_mises_own_tracked_list_not_a_glob(
     _mise_config_files.cache_clear()
 
 
+def test_mise_config_files_skips_non_toml_tracked_files(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`mise config ls --json` also lists idiomatic version files mise
+    tracks the same way (`.tool-versions`, ...) -- not TOML, so `mise
+    config get -f` on one exits 1 with a parse error (measured). Only the
+    `.toml` entries are returned; `.tool-versions` is skipped as the normal
+    setup it is, not read."""
+    tracked = [
+        "/home/user/.config/mise/config.toml",
+        "/home/user/project/.tool-versions",
+    ]
+    monkeypatch.setattr(
+        discovery,
+        "_run_mise",
+        lambda *args: json.dumps([{"path": p} for p in tracked]),
+    )
+    _mise_config_files.cache_clear()
+
+    assert _mise_config_files() == (Path(tracked[0]),)
+    _mise_config_files.cache_clear()
+
+
+def test_mise_config_files_and_data_memoize_failure_single_flight(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failing `mise` call must not be retried once per mise tool looked
+    up in the same process (item 2) -- both the tracked-file list and one
+    file's data memoize a raised failure exactly like a returned value."""
+    calls = 0
+
+    def failing_run_mise(*args: str) -> str:
+        nonlocal calls
+        calls += 1
+        raise MalformedToolMetadata(Path("mise"), "mise exited 1")
+
+    monkeypatch.setattr(discovery, "_run_mise", failing_run_mise)
+    _mise_config_files.cache_clear()
+
+    for _ in range(5):
+        with pytest.raises(MalformedToolMetadata):
+            _mise_config_files()
+    assert calls == 1
+    _mise_config_files.cache_clear()
+
+    calls = 0
+    cfg = Path("/home/user/.config/mise/config.toml")
+    _mise_config_data.cache_clear()
+    for _ in range(5):
+        with pytest.raises(MalformedToolMetadata):
+            _mise_config_data(cfg)
+    assert calls == 1
+    _mise_config_data.cache_clear()
+
+
 def test_run_mise_raises_when_mise_binary_is_missing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -168,6 +223,35 @@ def test_run_mise_raises_when_mise_binary_is_missing(
 
     with pytest.raises(MalformedToolMetadata):
         _run_mise("config", "ls", "--json")
+
+
+def test_run_mise_scrubs_activation_vars_but_keeps_user_mise_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ADR-0061 Corrections: `MISE_CONFIG_DIR` and the rest of the user's
+    own `MISE_*` settings must reach `mise` -- only `__MISE_*` and
+    `MISE_SHELL`, what shell activation exports, are scrubbed."""
+    import subprocess
+
+    monkeypatch.setenv("MISE_CONFIG_DIR", "/home/user/.config/mise")
+    monkeypatch.setenv("__MISE_ORIG_PATH", "/project/.mise/bin")
+    monkeypatch.setenv("MISE_SHELL", "bash")
+    observed_env: dict[str, str] = {}
+
+    def fake_run(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        env = kwargs["env"]
+        assert isinstance(env, dict)
+        observed_env.update(env)
+        return subprocess.CompletedProcess(cmd, 0, stdout="")
+
+    monkeypatch.setattr(discovery.shutil, "which", lambda name: "/usr/bin/mise")
+    monkeypatch.setattr(discovery.subprocess, "run", fake_run)
+
+    _run_mise("config", "ls", "--json")
+
+    assert observed_env["MISE_CONFIG_DIR"] == "/home/user/.config/mise"
+    assert "__MISE_ORIG_PATH" not in observed_env
+    assert "MISE_SHELL" not in observed_env
 
 
 def test_discover_repo_fallback(monkeypatch, tmp_path: Path) -> None:
@@ -574,6 +658,29 @@ def test_malformed_mise_registry_content_self_heals_on_rebuild(
     assert registry == {"ripgrep": "BurntSushi/ripgrep"}
     assert calls == 2
 
+    _load_mise_registry.cache_clear()
+
+
+def test_malformed_mise_registry_unlink_failure_raises_malformed_tool_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`missing_ok=True` only swallows `FileNotFoundError` -- a corrupt cache
+    file that exists but cannot be removed (e.g. an unwritable directory)
+    must not escape as a bare `OSError` past the per-tool boundary (item 6b).
+    """
+    corrupt = _compressed_mise_registry({"registry/broken.toml": b"\xff"})
+    monkeypatch.setattr(
+        discovery, "_read_mise_registry_archive", lambda cache_path: corrupt
+    )
+
+    def _refuse_unlink(self: Path, missing_ok: bool = False) -> None:
+        raise PermissionError("not permitted")
+
+    monkeypatch.setattr(Path, "unlink", _refuse_unlink)
+
+    _load_mise_registry.cache_clear()
+    with pytest.raises(MalformedToolMetadata):
+        _load_mise_registry(Path("registry.tar.zst"))
     _load_mise_registry.cache_clear()
 
 

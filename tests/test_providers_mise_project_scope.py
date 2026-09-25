@@ -34,9 +34,9 @@ def test_detect_claims_a_globally_active_install(
 ) -> None:
     bin_path = _make_mise_install(tmp_path, "ripgrep", "14.1.0", "rg")
     root = tmp_path / ".local" / "share" / "mise" / "installs" / "ripgrep" / "14.1.0"
-    monkeypatch.setattr(mise.shutil, "which", lambda name: "/usr/bin/mise")
+    monkeypatch.setattr(mise.discovery.shutil, "which", lambda name: "/usr/bin/mise")
     monkeypatch.setattr(
-        mise.subprocess,
+        mise.discovery.subprocess,
         "run",
         _fake_run(json.dumps({"ripgrep": [{"install_path": str(root)}]})),
     )
@@ -57,9 +57,9 @@ def test_detect_refuses_a_project_only_install(
     """
     bin_path = _make_mise_install(tmp_path, "ripgrep", "13.0.0", "rg")
     root = tmp_path / ".local" / "share" / "mise" / "installs" / "ripgrep" / "13.0.0"
-    monkeypatch.setattr(mise.shutil, "which", lambda name: "/usr/bin/mise")
+    monkeypatch.setattr(mise.discovery.shutil, "which", lambda name: "/usr/bin/mise")
     monkeypatch.setattr(
-        mise.subprocess,
+        mise.discovery.subprocess,
         "run",
         _fake_run(json.dumps({"ripgrep": [{"install_path": "/other/root"}]})),
     )
@@ -100,9 +100,9 @@ def test_detect_matches_globally_active_install_by_identity_not_raw_path(
     (registry_root.parent / ".mise.backend.toml").write_text(
         'full = "aqua:yadm-dev/yadm"\n', encoding="utf-8"
     )
-    monkeypatch.setattr(mise.shutil, "which", lambda name: "/usr/bin/mise")
+    monkeypatch.setattr(mise.discovery.shutil, "which", lambda name: "/usr/bin/mise")
     monkeypatch.setattr(
-        mise.subprocess,
+        mise.discovery.subprocess,
         "run",
         _fake_run(json.dumps({"yadm": [{"install_path": str(registry_root)}]})),
     )
@@ -113,16 +113,18 @@ def test_detect_matches_globally_active_install_by_identity_not_raw_path(
     assert inst.package == "aqua-yadm-dev-yadm"
 
 
-def test_mise_query_scrubs_mise_and_dunder_mise_variables(
+def test_mise_query_keeps_user_mise_config_but_scrubs_activation_vars(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """`MISE_CONFIG_FILE` alone was measured to leak a project config into a
-    `$HOME` query (ADR-0061) -- every `MISE_*`/`__MISE_*` variable is
-    scrubbed before the call, not only that one.
+    """ADR-0061 Corrections: only what shell activation exports is scrubbed
+    -- every `__MISE_*` variable and `MISE_SHELL`. The user's own `MISE_*`
+    settings (`MISE_CONFIG_DIR` here) are their configuration and must reach
+    `mise`, since dropping them made a `$HOME` query see no global tools at
+    all (measured).
     """
-    monkeypatch.setenv("MISE_CONFIG_FILE", "/project/mise.toml")
+    monkeypatch.setenv("MISE_CONFIG_DIR", "/home/user/.config/mise")
     monkeypatch.setenv("__MISE_ORIG_PATH", "/project/.mise/bin")
-    monkeypatch.setenv("MISE_DATA_DIR", "/project/.mise-data")
+    monkeypatch.setenv("MISE_SHELL", "bash")
     observed_env: dict[str, str] = {}
     observed_cwd: Path | None = None
 
@@ -136,14 +138,14 @@ def test_mise_query_scrubs_mise_and_dunder_mise_variables(
         observed_cwd = cwd
         return subprocess.CompletedProcess(cmd, 0, stdout="{}")
 
-    monkeypatch.setattr(mise.shutil, "which", lambda name: "/usr/bin/mise")
-    monkeypatch.setattr(mise.subprocess, "run", fake_run)
+    monkeypatch.setattr(mise.discovery.shutil, "which", lambda name: "/usr/bin/mise")
+    monkeypatch.setattr(mise.discovery.subprocess, "run", fake_run)
 
     assert mise._mise_global_install_identities() == frozenset()
 
-    assert "MISE_CONFIG_FILE" not in observed_env
+    assert observed_env["MISE_CONFIG_DIR"] == "/home/user/.config/mise"
     assert "__MISE_ORIG_PATH" not in observed_env
-    assert "MISE_DATA_DIR" not in observed_env
+    assert "MISE_SHELL" not in observed_env
     assert observed_cwd == Path.home()
 
 
@@ -157,8 +159,8 @@ def test_mise_query_runs_once_across_many_lookups(
         calls += 1
         return subprocess.CompletedProcess(cmd, 0, stdout="{}")
 
-    monkeypatch.setattr(mise.shutil, "which", lambda name: "/usr/bin/mise")
-    monkeypatch.setattr(mise.subprocess, "run", fake_run)
+    monkeypatch.setattr(mise.discovery.shutil, "which", lambda name: "/usr/bin/mise")
+    monkeypatch.setattr(mise.discovery.subprocess, "run", fake_run)
 
     for _ in range(5):
         mise._mise_global_install_identities()
@@ -172,7 +174,7 @@ def test_missing_mise_binary_raises_malformed_tool_metadata(
     """A mise-managed install was already found, so a missing `mise` binary
     contradicts that evidence -- ADR-0060 absence does not apply.
     """
-    monkeypatch.setattr(mise.shutil, "which", lambda name: None)
+    monkeypatch.setattr(mise.discovery.shutil, "which", lambda name: None)
 
     with pytest.raises(MalformedToolMetadata):
         mise._mise_global_install_identities()
@@ -181,8 +183,8 @@ def test_missing_mise_binary_raises_malformed_tool_metadata(
 def test_mise_query_failure_raises_malformed_tool_metadata(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(mise.shutil, "which", lambda name: "/usr/bin/mise")
-    monkeypatch.setattr(mise.subprocess, "run", _fake_run("", returncode=1))
+    monkeypatch.setattr(mise.discovery.shutil, "which", lambda name: "/usr/bin/mise")
+    monkeypatch.setattr(mise.discovery.subprocess, "run", _fake_run("", returncode=1))
 
     with pytest.raises(MalformedToolMetadata):
         mise._mise_global_install_identities()
@@ -191,8 +193,85 @@ def test_mise_query_failure_raises_malformed_tool_metadata(
 def test_mise_query_unparseable_output_raises_malformed_tool_metadata(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(mise.shutil, "which", lambda name: "/usr/bin/mise")
-    monkeypatch.setattr(mise.subprocess, "run", _fake_run("not json"))
+    monkeypatch.setattr(mise.discovery.shutil, "which", lambda name: "/usr/bin/mise")
+    monkeypatch.setattr(mise.discovery.subprocess, "run", _fake_run("not json"))
 
     with pytest.raises(MalformedToolMetadata):
         mise._mise_global_install_identities()
+
+
+def test_mise_query_failure_is_memoized_across_many_lookups(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A missing/hanging `mise` must not re-pay its own timeout once per mise
+    tool looked up in the same process (item 2) -- a raised failure is
+    memoized exactly like a returned value.
+    """
+    calls = 0
+
+    def fake_run(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        nonlocal calls
+        calls += 1
+        return subprocess.CompletedProcess(cmd, 1, stdout="")
+
+    monkeypatch.setattr(mise.discovery.shutil, "which", lambda name: "/usr/bin/mise")
+    monkeypatch.setattr(mise.discovery.subprocess, "run", fake_run)
+
+    for _ in range(5):
+        with pytest.raises(MalformedToolMetadata):
+            mise._mise_global_install_identities()
+
+    assert calls == 1
+
+
+def test_null_install_path_raises_malformed_tool_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A non-string `install_path` in mise's own JSON (item 6a) is reported
+    through `MalformedToolMetadata`, not an escaping `TypeError` from
+    `Path(None)`.
+    """
+    monkeypatch.setattr(mise.discovery.shutil, "which", lambda name: "/usr/bin/mise")
+    monkeypatch.setattr(
+        mise.discovery.subprocess,
+        "run",
+        _fake_run(json.dumps({"ripgrep": [{"install_path": None}]})),
+    )
+
+    with pytest.raises(MalformedToolMetadata):
+        mise._mise_global_install_identities()
+
+
+def test_one_corrupt_backend_file_does_not_fail_other_global_installs(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """One globally active install's unreadable `.mise.backend.toml` (item 7)
+    is isolated to that install: it drops out of the globally-active set
+    rather than failing every other install's judgment.
+    """
+    corrupt_root = tmp_path / "corrupt" / "1.0.0"
+    corrupt_root.mkdir(parents=True)
+    (corrupt_root.parent / ".mise.backend.toml").write_text(
+        "not = [valid", encoding="utf-8"
+    )
+    good_root = tmp_path / "good" / "2.0.0"
+    good_root.mkdir(parents=True)
+
+    monkeypatch.setattr(mise.discovery.shutil, "which", lambda name: "/usr/bin/mise")
+    monkeypatch.setattr(
+        mise.discovery.subprocess,
+        "run",
+        _fake_run(
+            json.dumps(
+                {
+                    "corrupt": [{"install_path": str(corrupt_root)}],
+                    "good": [{"install_path": str(good_root)}],
+                }
+            )
+        ),
+    )
+
+    identities = mise._mise_global_install_identities()
+
+    assert ("", "good", "2.0.0") in identities
+    assert not any(identity[1] == "corrupt" for identity in identities)

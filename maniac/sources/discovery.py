@@ -16,7 +16,7 @@ import tarfile
 import tempfile
 import threading
 import tomllib
-from functools import cache
+from collections.abc import Callable
 from pathlib import Path
 from time import time
 from urllib.error import URLError
@@ -36,66 +36,72 @@ MISE_REGISTRY_TTL_SECONDS = 3_600
 _MISE_QUERY_TIMEOUT = 5
 
 
-class _MiseRegistryLoader:
-    """Process-local, per-cache-path single-flight registry loader.
+class _SingleFlightCache[T]:
+    """Process-local, per-key single-flight cache over any `mise`-backed loader.
 
     A load that fails is memoized too (`_failure`), not only a load that
-    succeeds -- offline plus a corrupt cache otherwise retried `urlopen`
-    (10s timeout) once per mise tool looked up in the same process
-    (confirmed: 5 lookups, 5 attempts).
+    succeeds -- offline plus a corrupt registry cache otherwise retried
+    `urlopen` (10s timeout) once per mise tool looked up in the same process
+    (confirmed: 5 lookups, 5 attempts), and a missing or hanging `mise`
+    otherwise re-paid its 5s timeout once per mise tool looked up the same
+    way. The per-key lock also makes concurrent callers for a cold key wait
+    on the first call rather than each re-running the loader.
     """
 
-    def __init__(self) -> None:
-        self._cache: dict[Path, dict[str, str]] = {}
-        self._failure: dict[Path, MalformedToolMetadata] = {}
-        self._locks: dict[Path, threading.Lock] = {}
+    def __init__(self, loader: Callable[..., T]) -> None:
+        self._loader = loader
+        self._cache: dict[tuple[object, ...], T] = {}
+        self._failure: dict[tuple[object, ...], MalformedToolMetadata] = {}
+        self._locks: dict[tuple[object, ...], threading.Lock] = {}
         self._guard = threading.Lock()
 
-    def __call__(self, cache_path: Path) -> dict[str, str]:
+    def __call__(self, *key: object) -> T:
         with self._guard:
-            cached = self._cache.get(cache_path)
-            if cached is not None:
-                return cached
-            failed = self._failure.get(cache_path)
+            if key in self._cache:
+                return self._cache[key]
+            failed = self._failure.get(key)
             if failed is not None:
                 raise failed
-            lock = self._locks.setdefault(cache_path, threading.Lock())
+            lock = self._locks.setdefault(key, threading.Lock())
 
         with lock:
             with self._guard:
-                cached = self._cache.get(cache_path)
-                if cached is not None:
-                    return cached
-                failed = self._failure.get(cache_path)
+                if key in self._cache:
+                    return self._cache[key]
+                failed = self._failure.get(key)
                 if failed is not None:
                     raise failed
 
             try:
-                registry = _load_mise_registry_uncached(cache_path)
+                value = self._loader(*key)
             except MalformedToolMetadata as e:
                 with self._guard:
-                    self._failure[cache_path] = e
+                    self._failure[key] = e
                 raise
             with self._guard:
-                self._cache[cache_path] = registry
-            return registry
+                self._cache[key] = value
+            return value
 
     def cache_clear(self) -> None:
         with self._guard:
             self._cache.clear()
             self._failure.clear()
+            self._locks.clear()
 
 
 def _run_mise(*args: str) -> str:
     """Run one `mise` subcommand from `$HOME` and return its stdout.
 
-    Every `MISE_*`/`__MISE_*` variable is scrubbed first -- `MISE_CONFIG_FILE`
-    alone was measured to leak a project's config into a `$HOME` query
-    (ADR-0061), same reasoning as `providers/mise.py`'s
-    `_mise_global_install_identities`. A mise-managed install already found
-    under mise's own tree is evidence mise itself should be reachable and
-    working here, so every failure mode raises rather than being treated as
-    ADR-0060 absence.
+    Only what shell activation exports is scrubbed first -- every `__MISE_*`
+    variable and `MISE_SHELL` (ADR-0061 Corrections). The user's own `MISE_*`
+    settings (`MISE_CONFIG_DIR`, `MISE_GLOBAL_CONFIG_FILE`, `MISE_DATA_DIR`,
+    `MISE_ENV`, ...) are their configuration, not activation state, and
+    dropping them made a `$HOME` query see no global tools at all (measured).
+    Shared by `providers/mise.py`'s `_mise_global_install_identities`, which
+    asks the same question the same way. A mise-managed install already
+    found under mise's own tree is evidence mise itself should be reachable
+    and working here, so every failure mode raises rather than being treated
+    as ADR-0060 absence.
     """
     mise = shutil.which("mise")
     if mise is None:
@@ -106,7 +112,7 @@ def _run_mise(*args: str) -> str:
     env = {
         key: value
         for key, value in os.environ.items()
-        if not key.startswith(("MISE_", "__MISE_"))
+        if not (key.startswith("__MISE_") or key == "MISE_SHELL")
     }
     try:
         result = subprocess.run(
@@ -130,15 +136,20 @@ def _run_mise(*args: str) -> str:
     return result.stdout
 
 
-@cache
-def _mise_config_files() -> tuple[Path, ...]:
-    """Config files mise itself tracks, from `mise config ls --json` at `$HOME`.
+def _load_mise_config_files_uncached() -> tuple[Path, ...]:
+    """TOML config files mise itself tracks, from `mise config ls --json` at `$HOME`.
 
     Mise's own answer, not a directory glob (ADR-0060's test): a stray
     `.toml` under mise's config directory that mise itself ignores must not
     turn into a broken read for every mise tool that falls back to config
-    inspection. Cached for the life of the process, same as
-    `_mise_global_install_identities`.
+    inspection.
+
+    `mise config ls --json` also lists idiomatic version files mise tracks
+    the same way (`.tool-versions`, `.nvmrc`, ...) -- ordinary, valid config
+    that isn't TOML, so `mise config get -f` on one exits 1 with a parse
+    error rather than returning anything `_mise_config_data` could read.
+    Only `.toml` entries are returned; a non-TOML entry is skipped as the
+    normal setup it is, not read.
     """
     try:
         data = json.loads(_run_mise("config", "ls", "--json"))
@@ -152,21 +163,30 @@ def _mise_config_files() -> tuple[Path, ...]:
         raise MalformedToolMetadata(
             Path("mise"), "unexpected mise config ls --json shape"
         )
-    return tuple(Path(entry["path"]) for entry in data)
+    return tuple(
+        Path(entry["path"]) for entry in data if entry["path"].endswith(".toml")
+    )
 
 
-@cache
-def _mise_config_data(cfg_path: Path) -> dict[str, object]:
-    """Mise's own resolved view of one tracked config file (`mise config get -f`).
+_mise_config_files = _SingleFlightCache(_load_mise_config_files_uncached)
 
-    Cached per path for the life of the process: `_resolve_from_mise` calls
-    this once per mise-config-fallback tool lookup, and every lookup in one
-    run shares the same tracked files.
+
+def _load_mise_config_data_uncached(cfg_path: Path) -> dict[str, object]:
+    """Mise's own answer for one tracked TOML config file's raw text, parsed
+    (`mise config get -f`).
+
+    `config get -f` prints the file's own text, not a view resolved or
+    merged across mise's config layers. Only reached for a path
+    `_mise_config_files` already filtered to `.toml`, so this never sees an
+    idiomatic version file mise can't parse as TOML.
     """
     try:
         return tomllib.loads(_run_mise("config", "get", "-f", str(cfg_path)))
     except tomllib.TOMLDecodeError as e:
         raise MalformedToolMetadata(cfg_path, str(e)) from e
+
+
+_mise_config_data = _SingleFlightCache(_load_mise_config_data_uncached)
 
 
 def _check_mise_config(cfg_path: Path, tool_id: str, binary_name: str) -> str | None:
@@ -274,7 +294,13 @@ def _load_mise_registry_uncached(cache_path: Path) -> dict[str, str]:
     try:
         return _parse_mise_registry(archive)
     except _MISE_REGISTRY_PARSE_ERRORS as e:
-        cache_path.unlink(missing_ok=True)
+        try:
+            cache_path.unlink(missing_ok=True)
+        except OSError as unlink_error:
+            raise MalformedToolMetadata(
+                cache_path,
+                f"cache was corrupt and could not be removed: {unlink_error}",
+            ) from unlink_error
         rebuilt = _read_mise_registry_archive(cache_path)
         if rebuilt is None:
             raise MalformedToolMetadata(
@@ -286,7 +312,7 @@ def _load_mise_registry_uncached(cache_path: Path) -> dict[str, str]:
             raise MalformedToolMetadata(cache_path, str(e2)) from e2
 
 
-_load_mise_registry = _MiseRegistryLoader()
+_load_mise_registry = _SingleFlightCache(_load_mise_registry_uncached)
 
 
 def _read_mise_registry_archive(cache_path: Path) -> bytes | None:
