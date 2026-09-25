@@ -433,6 +433,26 @@ def test_read_mise_registry_archive_raises_for_an_unreadable_fresh_cache(
         cache_path.chmod(0o644)
 
 
+def test_read_mise_registry_archive_raises_when_the_cache_cannot_even_be_stat_ed(
+    tmp_path: Path,
+) -> None:
+    """A cache path whose freshness check itself fails (e.g. a directory with
+    its execute bit stripped) is reported the same as an unreadable cache
+    file -- it must not escape as a bare, unwrapped `OSError` past the
+    `MalformedToolMetadata` boundary every caller catches (ADR-0060)."""
+    restricted = tmp_path / "restricted"
+    restricted.mkdir()
+    cache_path = restricted / "mise-registry.tar.zst"
+    cache_path.write_bytes(b"stale")
+    restricted.chmod(0o000)
+    try:
+        with pytest.raises(MalformedToolMetadata) as excinfo:
+            _read_mise_registry_archive(cache_path)
+        assert excinfo.value.path == cache_path
+    finally:
+        restricted.chmod(0o755)
+
+
 def test_mise_registry_download_sends_user_agent(monkeypatch, tmp_path: Path) -> None:
     observed_request: Request | None = None
     observed_timeout: int | None = None

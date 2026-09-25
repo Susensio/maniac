@@ -172,6 +172,8 @@ def _read_mise_registry_archive(cache_path: Path) -> bytes | None:
         )
     except FileNotFoundError:
         fresh = False
+    except OSError as e:
+        raise MalformedToolMetadata(cache_path, str(e)) from e
     if fresh:
         try:
             return cache_path.read_bytes()
