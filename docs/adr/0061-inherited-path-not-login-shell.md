@@ -61,3 +61,11 @@ An unclaimed binary is not refused: it falls to tier-3 synthesis, and its `--ver
 So inside a virtualenv, `install ruff` synthesizes a page from the venv copy's `--help`, and a later version change shows it `outdated`.
 `install` logs the resolved path.
 A Mise installation active only through a project's config is the one case refused outright, as the Decision states.
+
+2026-09-25: the Decision said the `$HOME` query removes "every `MISE_*` variable".
+That overshoots.
+`MISE_CONFIG_DIR`, `MISE_GLOBAL_CONFIG_FILE`, `MISE_DATA_DIR` and `MISE_ENV` are the user's own Mise configuration, and dropping them made Mise report no global tools at all (measured).
+Only what shell activation exports is removed: every `__MISE_*` variable and `MISE_SHELL`.
+The Consequences' "one `mise` call" also understated the cost.
+The Mise provider asks `mise ls --current`, and source resolution also asks `mise config ls` plus one `mise config get` per TOML config file.
+Each is cached per process, failures included.
