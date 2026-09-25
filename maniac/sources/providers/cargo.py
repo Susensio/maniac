@@ -100,9 +100,11 @@ def _crates_by_binary(crates2_path: Path) -> dict[str, tuple[str, str]]:
         return {}
     except (OSError, json.JSONDecodeError, UnicodeDecodeError) as e:
         raise MalformedToolMetadata(crates2_path, str(e)) from e
+    if not isinstance(data, dict):
+        raise MalformedToolMetadata(crates2_path, ".crates2.json is not a JSON object")
     installs = data.get("installs")
     if not isinstance(installs, dict):
-        return {}
+        raise MalformedToolMetadata(crates2_path, "installs is not a JSON object")
     crates: dict[str, tuple[str, str]] = {}
     for key, entry in installs.items():
         if not isinstance(entry, dict):

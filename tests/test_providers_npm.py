@@ -82,6 +82,22 @@ def test_detect_raises_malformed_tool_metadata_for_invalid_package_json(
     assert excinfo.value.path == package_json
 
 
+def test_read_package_json_raises_for_a_non_dict_document(tmp_path: Path) -> None:
+    """A parseable but wrong-shape `package.json` (e.g. a bare JSON array)
+    is reported rather than silently swallowed into `{}` -- the swallow hid
+    every field a caller reads from `read_package_json` behind a version
+    of `None` and a repository of `None`, indistinguishable from an
+    ordinary absent file."""
+    root = tmp_path / "pkg"
+    root.mkdir()
+    package_json = root / "package.json"
+    package_json.write_text("[1, 2, 3]", encoding="utf-8")
+
+    with pytest.raises(MalformedToolMetadata) as excinfo:
+        npm.read_package_json(root)
+    assert excinfo.value.path == package_json
+
+
 def test_detect_leaves_version_none_when_package_json_is_absent(
     tmp_path: Path,
 ) -> None:

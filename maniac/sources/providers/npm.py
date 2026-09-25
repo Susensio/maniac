@@ -71,7 +71,9 @@ def read_package_json(root: Path) -> dict:
         return {}
     except (OSError, json.JSONDecodeError, UnicodeDecodeError) as e:
         raise MalformedToolMetadata(path, str(e)) from e
-    return data if isinstance(data, dict) else {}
+    if not isinstance(data, dict):
+        raise MalformedToolMetadata(path, "package.json is not a JSON object")
+    return data
 
 
 def _repo_from_repository_field(value: object) -> str | None:

@@ -157,6 +157,25 @@ def test_detect_raises_malformed_tool_metadata_for_invalid_crates2_json(
     assert excinfo.value.path == crates2
 
 
+def test_detect_raises_malformed_tool_metadata_for_a_non_dict_installs(
+    tmp_path, monkeypatch
+) -> None:
+    """A parseable `.crates2.json` whose `installs` is the wrong shape (not
+    a JSON object) is reported rather than silently swallowed into `{}` --
+    the swallow made every crate under it indistinguishable from an
+    ordinary empty install list."""
+    cargo_home = _make_cargo_home(tmp_path, {})
+    crates2 = cargo_home / ".crates2.json"
+    crates2.write_text(json.dumps({"installs": [1, 2, 3]}), encoding="utf-8")
+    bin_path = cargo_home / "bin" / "hexyl"
+    bin_path.touch()
+    provider = _provider(tmp_path, monkeypatch, cargo_home)
+
+    with pytest.raises(MalformedToolMetadata) as excinfo:
+        provider.detect(bin_path)
+    assert excinfo.value.path == crates2
+
+
 def test_detect_returns_none_without_crates2_json(tmp_path, monkeypatch) -> None:
     """A missing .crates2.json is an ordinary case, unchanged by ADR-0060."""
     cargo_home = tmp_path / "cargo"
