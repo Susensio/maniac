@@ -188,6 +188,16 @@ def _load_mise_global_install_identities_uncached() -> frozenset[tuple[str, str,
         install_paths: list[str] = []
         for entries in data.values():
             for entry in entries:
+                source = entry.get("source", {})
+                if isinstance(source, dict) and source.get("type") == "environment":
+                    # ADR-0061 Corrections: `mise shell tool@v` sets
+                    # `MISE_<TOOL>_VERSION` for the session, which the $HOME
+                    # query keeps (only activation vars are scrubbed). Mise
+                    # then reports that session version as current, evidenced
+                    # by `source.type` here, not by pattern-matching the var
+                    # name -- an entry sourced from environment is a session
+                    # override, not a globally selected install.
+                    continue
                 install_path = entry["install_path"]
                 if not isinstance(install_path, str):
                     raise MalformedToolMetadata(

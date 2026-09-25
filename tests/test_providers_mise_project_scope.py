@@ -47,6 +47,46 @@ def test_detect_claims_a_globally_active_install(
     assert inst.package == "ripgrep"
 
 
+def test_environment_sourced_entry_is_not_globally_active(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`mise shell tool@v` pins a version for the session via
+    `MISE_<TOOL>_VERSION`, which the `$HOME` query's scrub does not remove
+    (it only drops activation vars). `mise ls --current --json` reports
+    that session version with `source.type == "environment"` -- judged on
+    that evidence, not the variable's name, so it must not count as
+    globally selected (ADR-0061 Corrections).
+    """
+    session_root = (
+        tmp_path / ".local" / "share" / "mise" / "installs" / "just" / "1.0.0"
+    )
+    monkeypatch.setattr(mise.discovery.shutil, "which", lambda name: "/usr/bin/mise")
+    monkeypatch.setattr(
+        mise.discovery.subprocess,
+        "run",
+        _fake_run(
+            json.dumps(
+                {
+                    "just": [
+                        {
+                            "install_path": str(session_root),
+                            "source": {
+                                "type": "environment",
+                                "key": "MISE_JUST_VERSION",
+                                "value": "1.0.0",
+                            },
+                        }
+                    ]
+                }
+            )
+        ),
+    )
+
+    identities = mise._mise_global_install_identities()
+
+    assert identities == frozenset()
+
+
 def test_detect_refuses_a_project_only_install(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
