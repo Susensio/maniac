@@ -41,6 +41,19 @@ class PageSource(Enum):
 
 
 @dataclass(frozen=True, slots=True)
+class ToolError:
+    """A tool's own broken evidence, carried as `MalformedToolMetadata` and
+    `ProjectScopedInstall` raise it (ADR-0060, ADR-0061): the file or
+    resolved root at fault, and why, kept apart so a renderer can show the
+    reason without the path first mangling it (`row.error` used to be one
+    pre-joined string, and `rsplit("/", 1)` on a reason that itself
+    contained a path lost the reason)."""
+
+    path: Path
+    reason: str
+
+
+@dataclass(frozen=True, slots=True)
 class Candidate:
     """One binary to report on, with the provider claim behind it, if any.
 
@@ -51,9 +64,10 @@ class Candidate:
     tool: str
     provider: "Provider | None"
     installation: "Installation | None"
-    error: str | None = None
-    """Set when discovery itself raised `MalformedToolMetadata` (ADR-0060)
-    for this tool, before any provider or installation could be resolved."""
+    error: ToolError | None = None
+    """Set when discovery itself raised `MalformedToolMetadata` or
+    `ProjectScopedInstall` (ADR-0060, ADR-0061) for this tool, before any
+    provider or installation could be resolved."""
 
     @property
     def package(self) -> str:
@@ -85,9 +99,10 @@ class ToolRow:
     """Manifest has an entry for this tool, but its manpath link is broken --
     a page deleted by hand, `output_dir`/`backup_dir` cleaned, or another
     installer overwriting the link (ADR-0046's structural scan)."""
-    error: str | None = None
+    error: ToolError | None = None
     """Set together with `state is ActionState.ERROR`: the file and reason
-    a provider could not read this tool's own metadata (ADR-0060)."""
+    a provider could not read this tool's own metadata, or a Mise install
+    refused as project-only (ADR-0060, ADR-0061)."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -101,7 +116,7 @@ class LocalClassification:
     page_uri: str | None = None
     owning_package: str | None = None
     drift: bool = False
-    error: str | None = None
+    error: ToolError | None = None
 
 
 RowSnapshot = tuple[ToolRow, ...]

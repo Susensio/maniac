@@ -19,7 +19,7 @@ from pathlib import Path
 
 from .. import manifest
 from ..config import Config
-from ..exceptions import ManiacError
+from ..exceptions import ManiacError, ProjectScopedInstall
 from ..installer import (
     InstallResult,
     PageRequest,
@@ -94,7 +94,14 @@ def run_install(
 
     _refuse_unmanaged_destination(cfg.man_dir / f"{tool_name}.1", cfg, force=force)
 
-    tool = resolve_tool(tool_name, config=cfg, bin_dir=bin_dir)
+    try:
+        tool = resolve_tool(tool_name, config=cfg, bin_dir=bin_dir)
+    except ProjectScopedInstall as e:
+        raise InstallRefused(
+            f"'{tool_name}' resolves to {e.path}, active only via a "
+            "project config -- not one of Mise's globally selected tools. "
+            "Install it globally (`mise use -g ...`) first."
+        ) from e
     if tool.provider is None:
         # ADR-0061: with $PATH inherited rather than login-shell-reconstructed,
         # the first hit can be a project-scoped shadow (a venv, a node_modules/.bin)

@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from maniac.exceptions import MalformedToolMetadata
+from maniac.exceptions import MalformedToolMetadata, ProjectScopedInstall
 from maniac.sources.providers import mise
 
 
@@ -56,6 +56,7 @@ def test_detect_refuses_a_project_only_install(
     resolve to.
     """
     bin_path = _make_mise_install(tmp_path, "ripgrep", "13.0.0", "rg")
+    root = tmp_path / ".local" / "share" / "mise" / "installs" / "ripgrep" / "13.0.0"
     monkeypatch.setattr(mise.shutil, "which", lambda name: "/usr/bin/mise")
     monkeypatch.setattr(
         mise.subprocess,
@@ -63,7 +64,53 @@ def test_detect_refuses_a_project_only_install(
         _fake_run(json.dumps({"ripgrep": [{"install_path": "/other/root"}]})),
     )
 
-    assert mise.MiseProvider().detect(bin_path) is None
+    with pytest.raises(ProjectScopedInstall) as excinfo:
+        mise.MiseProvider().detect(bin_path)
+    assert excinfo.value.tool == "rg"
+    assert excinfo.value.path == root
+
+
+def test_detect_matches_globally_active_install_by_identity_not_raw_path(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """An explicit-backend install directory (`aqua-yadm-dev-yadm`) and its
+    registry-name sibling (`yadm`) share one `.mise.backend.toml` identity
+    at the same version -- `mise ls --current` reports only the sibling's
+    path, and the explicit-backend binary must still be claimed rather than
+    refused as project-only (executed finding: `yadm`, `nufmt` on the
+    development machine).
+    """
+    bin_path = _make_mise_install(tmp_path, "aqua-yadm-dev-yadm", "3.5.0", "yadm")
+    explicit_root = (
+        tmp_path
+        / ".local"
+        / "share"
+        / "mise"
+        / "installs"
+        / "aqua-yadm-dev-yadm"
+        / "3.5.0"
+    )
+    registry_root = (
+        tmp_path / ".local" / "share" / "mise" / "installs" / "yadm" / "3.5.0"
+    )
+    (explicit_root.parent / ".mise.backend.toml").write_text(
+        'full = "aqua:yadm-dev/yadm"\n', encoding="utf-8"
+    )
+    registry_root.parent.mkdir(parents=True)
+    (registry_root.parent / ".mise.backend.toml").write_text(
+        'full = "aqua:yadm-dev/yadm"\n', encoding="utf-8"
+    )
+    monkeypatch.setattr(mise.shutil, "which", lambda name: "/usr/bin/mise")
+    monkeypatch.setattr(
+        mise.subprocess,
+        "run",
+        _fake_run(json.dumps({"yadm": [{"install_path": str(registry_root)}]})),
+    )
+
+    inst = mise.MiseProvider().detect(bin_path)
+
+    assert inst is not None
+    assert inst.package == "aqua-yadm-dev-yadm"
 
 
 def test_mise_query_scrubs_mise_and_dunder_mise_variables(
@@ -92,7 +139,7 @@ def test_mise_query_scrubs_mise_and_dunder_mise_variables(
     monkeypatch.setattr(mise.shutil, "which", lambda name: "/usr/bin/mise")
     monkeypatch.setattr(mise.subprocess, "run", fake_run)
 
-    assert mise._mise_global_install_roots() == frozenset()
+    assert mise._mise_global_install_identities() == frozenset()
 
     assert "MISE_CONFIG_FILE" not in observed_env
     assert "__MISE_ORIG_PATH" not in observed_env
@@ -114,7 +161,7 @@ def test_mise_query_runs_once_across_many_lookups(
     monkeypatch.setattr(mise.subprocess, "run", fake_run)
 
     for _ in range(5):
-        mise._mise_global_install_roots()
+        mise._mise_global_install_identities()
 
     assert calls == 1
 
@@ -128,7 +175,7 @@ def test_missing_mise_binary_raises_malformed_tool_metadata(
     monkeypatch.setattr(mise.shutil, "which", lambda name: None)
 
     with pytest.raises(MalformedToolMetadata):
-        mise._mise_global_install_roots()
+        mise._mise_global_install_identities()
 
 
 def test_mise_query_failure_raises_malformed_tool_metadata(
@@ -138,7 +185,7 @@ def test_mise_query_failure_raises_malformed_tool_metadata(
     monkeypatch.setattr(mise.subprocess, "run", _fake_run("", returncode=1))
 
     with pytest.raises(MalformedToolMetadata):
-        mise._mise_global_install_roots()
+        mise._mise_global_install_identities()
 
 
 def test_mise_query_unparseable_output_raises_malformed_tool_metadata(
@@ -148,4 +195,4 @@ def test_mise_query_unparseable_output_raises_malformed_tool_metadata(
     monkeypatch.setattr(mise.subprocess, "run", _fake_run("not json"))
 
     with pytest.raises(MalformedToolMetadata):
-        mise._mise_global_install_roots()
+        mise._mise_global_install_identities()

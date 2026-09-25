@@ -34,7 +34,7 @@ from maniac.cli.listing import (
     _StreamingList,
     _TerminalObserver,
 )
-from maniac.listing import ActionState, PageSource, ToolRow, compute_rows
+from maniac.listing import ActionState, PageSource, ToolError, ToolRow, compute_rows
 from maniac.models import RepoSource
 from maniac.sources.packages import ExternalPageFreshness, ExternalPageVerification
 
@@ -675,10 +675,40 @@ def test_source_label_drops_the_directory_from_an_error_message() -> None:
         ActionState.ERROR,
         PageSource.NONE,
         None,
-        error="/home/user/.local/share/mise/installs/hx/.mise.backend.toml: bad toml",
+        error=ToolError(
+            Path("/home/user/.local/share/mise/installs/hx/.mise.backend.toml"),
+            "bad toml",
+        ),
     )
 
     assert _source_label(row) == ".mise.backend.toml: bad toml"
+
+
+def test_source_label_keeps_a_reason_that_itself_contains_a_slash() -> None:
+    """A prior version pre-joined path and reason into one string and cut
+    everything before the last "/" -- when the `OSError` reason itself
+    names a path (confirmed: a directory in place of `.crates2.json`
+    renders `"[Errno 21] Is a directory: '/home/x/.crates2.json'"`), that
+    lost the reason entirely and kept only the trailing quote. Carrying
+    path and reason apart (`ToolError`) keeps the reason whole regardless
+    of what it contains."""
+    row = ToolRow(
+        "cargo-tool",
+        "cargo-tool",
+        "",
+        ActionState.ERROR,
+        PageSource.NONE,
+        None,
+        error=ToolError(
+            Path("/home/user/.cargo/.crates2.json"),
+            "[Errno 21] Is a directory: '/home/user/.cargo/.crates2.json'",
+        ),
+    )
+
+    assert (
+        _source_label(row)
+        == ".crates2.json: [Errno 21] Is a directory: '/home/user/.cargo/.crates2.json'"
+    )
 
 
 def test_list_table_renders_a_malformed_metadata_error_row(tmp_path) -> None:
@@ -692,7 +722,7 @@ def test_list_table_renders_a_malformed_metadata_error_row(tmp_path) -> None:
         ActionState.ERROR,
         PageSource.NONE,
         None,
-        error=f"{tmp_path / 'package.json'}: bad JSON",
+        error=ToolError(tmp_path / "package.json", "bad JSON"),
     )
 
     table = _list_table([row], terminal_width=160)
@@ -702,6 +732,33 @@ def test_list_table_renders_a_malformed_metadata_error_row(tmp_path) -> None:
 
     assert "error" in rendered
     assert "package.json: bad JSON" in rendered
+
+
+def test_list_table_renders_a_project_scoped_mise_refusal_row(tmp_path) -> None:
+    """A Mise install refused as project-only (ADR-0061) is a visible row
+    naming why, the same shape as a malformed-metadata row -- not silently
+    absent."""
+    root = tmp_path / "installs" / "ripgrep" / "13.0.0"
+    row = ToolRow(
+        "rg",
+        "rg",
+        "",
+        ActionState.ERROR,
+        PageSource.NONE,
+        None,
+        error=ToolError(
+            root,
+            "active only via a project config, not a globally selected mise tool",
+        ),
+    )
+
+    table = _list_table([row], terminal_width=160)
+    output = io.StringIO()
+    Console(file=output, force_terminal=True, no_color=True, width=160).print(table)
+    rendered = output.getvalue()
+
+    assert "error" in rendered
+    assert "13.0.0: active only via" in rendered
     assert str(tmp_path) not in rendered
 
 

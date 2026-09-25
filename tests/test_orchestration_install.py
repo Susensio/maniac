@@ -1077,6 +1077,40 @@ def test_run_install_refuses_under_no_synthesize_too(
         run_install("project-local-tool", no_synthesize=True)
 
 
+def test_run_install_refuses_a_project_scoped_mise_install(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """ADR-0061: a Mise install active only via a project's config is
+    refused outright, naming the tool and the resolved root -- not treated
+    as unclaimed and left to fall through to tier-3 synthesis, which would
+    document this project's version as the machine's global one."""
+    from maniac.exceptions import ProjectScopedInstall
+
+    root = tmp_path / "installs" / "ripgrep" / "13.0.0"
+    bin_path = tmp_path / "bin" / "rg"
+
+    def raise_project_scoped(name: str, bin_dir: str | None = None) -> None:
+        raise ProjectScopedInstall(name, root)
+
+    monkeypatch.setattr(pathcache, "which", lambda name: bin_path)
+    monkeypatch.setattr(
+        "maniac.orchestration.context.resolution.find_installation",
+        raise_project_scoped,
+    )
+    monkeypatch.setattr(
+        "maniac.orchestration.install.install_manpage",
+        lambda *args, **kwargs: pytest.fail("no tier should run on a refusal"),
+    )
+
+    with pytest.raises(InstallRefused) as excinfo:
+        run_install("rg")
+
+    message = str(excinfo.value)
+    assert "rg" in message
+    assert str(root) in message
+    assert "project config" in message
+
+
 def test_run_install_refusal_runs_no_tier(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

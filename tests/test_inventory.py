@@ -5,6 +5,7 @@ page probe behind local evidence are contracts of `maniac.listing`, so they
 are pinned here rather than through rendered output.
 """
 
+import json
 import threading
 import time
 from collections.abc import Callable
@@ -18,12 +19,13 @@ import structlog
 
 from maniac import manifest
 from maniac.config import Config
-from maniac.exceptions import MalformedToolMetadata
+from maniac.exceptions import MalformedToolMetadata, ProjectScopedInstall
 from maniac.listing import (
     ActionState,
     Candidate,
     LocalClassification,
     PageSource,
+    ToolError,
     ToolRow,
     classify,
     compute_rows,
@@ -141,7 +143,7 @@ def test_compute_rows_reports_a_discovery_error_row_beside_the_rest(
     assert by_tool["tool"].state is ActionState.AVAILABLE
     broken = by_tool["broken"]
     assert broken.state is ActionState.ERROR
-    assert broken.error == "/x/y.toml: invalid TOML"
+    assert broken.error == ToolError(Path("/x/y.toml"), "invalid TOML")
     assert broken.provider == ""
     assert broken.upstream is None
 
@@ -182,7 +184,7 @@ def test_compute_rows_reports_a_resolve_source_error_row_beside_the_rest(
     assert by_tool["ok-tool"].state is not ActionState.ERROR
     broken = by_tool["broken-tool"]
     assert broken.state is ActionState.ERROR
-    assert broken.error == "/x/pkg.json: invalid JSON"
+    assert broken.error == ToolError(Path("/x/pkg.json"), "invalid JSON")
 
 
 def test_compute_rows_reflects_a_manifest_write_between_invocations(
@@ -2119,10 +2121,12 @@ def test_resolve_upstream_mise_resolves_from_local_config_without_offline_flag(
     `MiseProvider` installation with a local config match still resolves
     from it, same as before the gate was lifted.
     """
-    mise_dir = tmp_path / "config" / "mise"
-    mise_dir.mkdir(parents=True)
-    (mise_dir / "config.toml").write_text(
-        "[tool_alias]\nripgrep = 'github:private/rg'\n", encoding="utf-8"
+    cfg_path = tmp_path / "config" / "mise" / "config.toml"
+    monkeypatch.setattr(discovery, "_mise_config_files", lambda: (cfg_path,))
+    monkeypatch.setattr(
+        discovery,
+        "_mise_config_data",
+        lambda path: {"tool_alias": {"ripgrep": "github:private/rg"}},
     )
     provider = mise_module.MiseProvider()
     inst = Installation(
@@ -2156,6 +2160,7 @@ def test_resolve_upstream_mise_registry_failure_degrades_to_none(
         raise URLError("network unreachable")
 
     monkeypatch.setattr("maniac.sources.discovery.urlopen", raising_urlopen)
+    monkeypatch.setattr(discovery, "_mise_config_files", lambda: ())
     discovery._load_mise_registry.cache_clear()
 
     provider = mise_module.MiseProvider()
@@ -2585,7 +2590,7 @@ def test_build_inventory_with_no_tools_keeps_one_broken_tool_and_the_rest(
     broken = candidates[0]
     assert broken.provider is None
     assert broken.installation is None
-    assert broken.error == "/x/y.toml: bad toml"
+    assert broken.error == ToolError(Path("/x/y.toml"), "bad toml")
 
 
 def test_build_inventory_with_tools_keeps_a_broken_tool_and_the_rest(
@@ -2607,7 +2612,168 @@ def test_build_inventory_with_tools_keeps_a_broken_tool_and_the_rest(
 
     assert discovered is False
     assert [c.tool for c in candidates] == ["bash", "broken"]
-    assert candidates[1].error == "/x/y.toml: bad toml"
+    assert candidates[1].error == ToolError(Path("/x/y.toml"), "bad toml")
+
+
+def test_build_inventory_with_no_tools_keeps_a_project_scoped_refusal_and_the_rest(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A Mise install refused as project-only (`ProjectScopedInstall`,
+    ADR-0061) still gets a row through discovery's own catch, same as a
+    malformed metadata file -- not silently absent."""
+    provider = _FakeProvider()
+    inst = _installation(binary="ok-tool")
+    root = Path("/home/x/.local/share/mise/installs/ripgrep/13.0.0")
+
+    def fake_enumerate(
+        on_start=None,
+        on_scan=None,
+        on_error: Callable[[str, MalformedToolMetadata | ProjectScopedInstall], None]
+        | None = None,
+    ):
+        assert on_error is not None
+        on_error("rg", ProjectScopedInstall("rg", root))
+        return [(provider, inst)]
+
+    monkeypatch.setattr(
+        "maniac.listing.inventory.resolution.enumerate_installations", fake_enumerate
+    )
+
+    candidates, discovered = _build_inventory(None, RecordingObserver())
+
+    assert discovered is True
+    assert [c.tool for c in candidates] == ["ok-tool", "rg"]
+    refused = candidates[1]
+    assert refused.provider is None
+    assert refused.installation is None
+    assert refused.error == ToolError(
+        root, "active only via a project config, not a globally selected mise tool"
+    )
+
+
+def test_build_inventory_with_tools_keeps_a_project_scoped_refusal_and_the_rest(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The named-tool path (`tools=[...]`) catches `ProjectScopedInstall`
+    the same way as the discovery path above."""
+    provider = _FakeProvider()
+    inst = _installation(binary="bash")
+    root = Path("/home/x/.local/share/mise/installs/ripgrep/13.0.0")
+
+    def fake_find_installation(name, bin_dir=None):
+        if name == "rg":
+            raise ProjectScopedInstall("rg", root)
+        return (provider, inst) if name == "bash" else None
+
+    monkeypatch.setattr(
+        "maniac.listing.inventory.resolution.find_installation", fake_find_installation
+    )
+
+    candidates, discovered = _build_inventory(["bash", "rg"], RecordingObserver())
+
+    assert discovered is False
+    assert [c.tool for c in candidates] == ["bash", "rg"]
+    assert candidates[1].error == ToolError(
+        root, "active only via a project config, not a globally selected mise tool"
+    )
+
+
+def test_compute_rows_drives_a_real_malformed_file_through_discovery(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`resolution.enumerate_installations`'s own try/except (not
+    `_build_inventory`'s named-tool catch, and not a fake standing in for
+    the whole function) is what turns a real broken `.crates2.json` into an
+    error row, walking a real `$PATH` and a real `CargoProvider.detect`."""
+    from maniac.sources.providers import cargo as cargo_module
+
+    cargo_module._crates_by_binary.cache_clear()
+    cargo_module._cargo_home.cache_clear()
+    cargo_home = tmp_path / "cargo"
+    bin_dir = cargo_home / "bin"
+    bin_dir.mkdir(parents=True)
+    (bin_dir / "hexyl").touch(mode=0o755)
+    crates2 = cargo_home / ".crates2.json"
+    crates2.write_text(json.dumps({"installs": "not-an-object"}), encoding="utf-8")
+    monkeypatch.setenv("CARGO_HOME", str(cargo_home))
+    monkeypatch.setenv("PATH", str(bin_dir))
+
+    rows = compute_rows(config=_config(tmp_path))
+
+    by_tool = {row.tool: row for row in rows}
+    assert by_tool["hexyl"].state is ActionState.ERROR
+    assert by_tool["hexyl"].error == ToolError(crates2, "installs is not a JSON object")
+    cargo_module._crates_by_binary.cache_clear()
+    cargo_module._cargo_home.cache_clear()
+
+
+def test_compute_rows_drives_a_real_malformed_file_through_named_tools(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Same as above through `compute_rows(tools=[...])` -- exercises
+    `resolution.find_installation` and `_build_inventory`'s named-tool
+    catch (ADR-0060) against a real broken file, not a faked resolver."""
+    from maniac.sources.providers import cargo as cargo_module
+
+    cargo_module._crates_by_binary.cache_clear()
+    cargo_module._cargo_home.cache_clear()
+    cargo_home = tmp_path / "cargo"
+    bin_dir = cargo_home / "bin"
+    bin_dir.mkdir(parents=True)
+    (bin_dir / "hexyl").touch(mode=0o755)
+    crates2 = cargo_home / ".crates2.json"
+    crates2.write_text(json.dumps({"installs": "not-an-object"}), encoding="utf-8")
+    monkeypatch.setenv("CARGO_HOME", str(cargo_home))
+    monkeypatch.setenv("PATH", str(bin_dir))
+
+    rows = compute_rows(["hexyl"], config=_config(tmp_path))
+
+    assert len(rows) == 1
+    assert rows[0].state is ActionState.ERROR
+    assert rows[0].error == ToolError(crates2, "installs is not a JSON object")
+    cargo_module._crates_by_binary.cache_clear()
+    cargo_module._cargo_home.cache_clear()
+
+
+def test_compute_rows_drives_a_real_source_resolution_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """An install root that detects cleanly but whose repository metadata
+    is broken (a real, unreadable `Cargo.toml` behind the crate's declared
+    source) raises `MalformedToolMetadata` at source-resolution time, not
+    detection time -- driven through `compute_rows` end to end, not a fake
+    provider standing in for `resolve_source`."""
+    from maniac.sources.providers import cargo as cargo_module
+
+    cargo_module._crates_by_binary.cache_clear()
+    cargo_module._cargo_home.cache_clear()
+    cargo_home = tmp_path / "cargo"
+    bin_dir = cargo_home / "bin"
+    bin_dir.mkdir(parents=True)
+    (bin_dir / "hexyl").touch(mode=0o755)
+    crates2 = cargo_home / ".crates2.json"
+    crates2.write_text(
+        json.dumps(
+            {"installs": {"hexyl 0.14.0 (registry+https://x)": {"bins": ["hexyl"]}}}
+        ),
+        encoding="utf-8",
+    )
+    index_dir = cargo_home / "registry" / "src" / "index.example"
+    manifest_dir = index_dir / "hexyl-0.14.0"
+    manifest_dir.mkdir(parents=True)
+    manifest_path = manifest_dir / "Cargo.toml"
+    manifest_path.write_text("[package\nbroken", encoding="utf-8")
+    monkeypatch.setenv("CARGO_HOME", str(cargo_home))
+    monkeypatch.setenv("PATH", str(bin_dir))
+
+    rows = compute_rows(["hexyl"], config=_config(tmp_path))
+
+    assert len(rows) == 1
+    assert rows[0].state is ActionState.ERROR
+    assert rows[0].error is not None
+    assert rows[0].error.path == manifest_path
+    cargo_module._crates_by_binary.cache_clear()
+    cargo_module._cargo_home.cache_clear()
 
 
 def test_build_inventory_with_tools_resolves_each_by_name(

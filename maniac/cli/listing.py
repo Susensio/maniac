@@ -184,14 +184,19 @@ def _tool_column_width(labels: list[str]) -> int:
 def _source_label(row: ToolRow) -> str:
     """The text `_source_cell` renders: an error, a provable owning package, else the source.
 
-    `row.error` is `MalformedToolMetadata`'s full `"<path>: <reason>"`
-    (ADR-0060) -- kept whole for `install`'s unconstrained output, but shown
-    here as just the file's own name and the reason: the Source column caps
-    at `_SOURCE_COLUMN_MAX_WIDTH`, and an absolute path would eat that
-    budget and leave the reason itself the first thing an ellipsis cuts.
+    `row.error` carries the path and reason apart (ADR-0060), so the reason
+    renders whole here regardless of what the path itself contains -- a
+    prior version joined them into one string and stripped everything
+    before the last "/", which also ate any "/" inside the reason (an
+    `OSError` naming the offending path in its own text, confirmed: a
+    directory in place of `.crates2.json` rendered `.crates2.json'`, the
+    reason lost). Only the file's own name is shown, not its absolute
+    path: the Source column caps at `_SOURCE_COLUMN_MAX_WIDTH`, and a full
+    path would eat that budget and leave the reason itself the first thing
+    an ellipsis cuts.
     """
     if row.error is not None:
-        return row.error.rsplit("/", 1)[-1]
+        return f"{row.error.path.name}: {row.error.reason}"
     if row.source is PageSource.SYSTEM and row.owning_package is not None:
         return row.owning_package
     return row.source.value

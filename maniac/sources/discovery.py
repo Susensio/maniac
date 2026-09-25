@@ -7,11 +7,16 @@ back up would close a cycle. Resolving a binary to a provider lives in
 """
 
 import io
+import json
+import os
 import re
+import shutil
+import subprocess
 import tarfile
 import tempfile
 import threading
 import tomllib
+from functools import cache
 from pathlib import Path
 from time import time
 from urllib.error import URLError
@@ -26,12 +31,23 @@ from ..logging import logger
 MISE_REGISTRY_URL = "https://mise.jdx.dev/registry/latest.tar.zst"
 MISE_REGISTRY_TTL_SECONDS = 3_600
 
+# Guards against `mise` hanging rather than the ordinary ~170ms cost
+# (matches `providers/mise.py`'s own query timeout, ADR-0061).
+_MISE_QUERY_TIMEOUT = 5
+
 
 class _MiseRegistryLoader:
-    """Process-local, per-cache-path single-flight registry loader."""
+    """Process-local, per-cache-path single-flight registry loader.
+
+    A load that fails is memoized too (`_failure`), not only a load that
+    succeeds -- offline plus a corrupt cache otherwise retried `urlopen`
+    (10s timeout) once per mise tool looked up in the same process
+    (confirmed: 5 lookups, 5 attempts).
+    """
 
     def __init__(self) -> None:
         self._cache: dict[Path, dict[str, str]] = {}
+        self._failure: dict[Path, MalformedToolMetadata] = {}
         self._locks: dict[Path, threading.Lock] = {}
         self._guard = threading.Lock()
 
@@ -40,6 +56,9 @@ class _MiseRegistryLoader:
             cached = self._cache.get(cache_path)
             if cached is not None:
                 return cached
+            failed = self._failure.get(cache_path)
+            if failed is not None:
+                raise failed
             lock = self._locks.setdefault(cache_path, threading.Lock())
 
         with lock:
@@ -47,8 +66,16 @@ class _MiseRegistryLoader:
                 cached = self._cache.get(cache_path)
                 if cached is not None:
                     return cached
+                failed = self._failure.get(cache_path)
+                if failed is not None:
+                    raise failed
 
-            registry = _load_mise_registry_uncached(cache_path)
+            try:
+                registry = _load_mise_registry_uncached(cache_path)
+            except MalformedToolMetadata as e:
+                with self._guard:
+                    self._failure[cache_path] = e
+                raise
             with self._guard:
                 self._cache[cache_path] = registry
             return registry
@@ -56,25 +83,114 @@ class _MiseRegistryLoader:
     def cache_clear(self) -> None:
         with self._guard:
             self._cache.clear()
+            self._failure.clear()
 
 
-def _check_mise_toml(cfg_path: Path, tool_id: str, binary_name: str) -> str | None:
-    """Inspect a mise TOML config file for tool aliases or tool repository definitions."""
+def _run_mise(*args: str) -> str:
+    """Run one `mise` subcommand from `$HOME` and return its stdout.
+
+    Every `MISE_*`/`__MISE_*` variable is scrubbed first -- `MISE_CONFIG_FILE`
+    alone was measured to leak a project's config into a `$HOME` query
+    (ADR-0061), same reasoning as `providers/mise.py`'s
+    `_mise_global_install_identities`. A mise-managed install already found
+    under mise's own tree is evidence mise itself should be reachable and
+    working here, so every failure mode raises rather than being treated as
+    ADR-0060 absence.
+    """
+    mise = shutil.which("mise")
+    if mise is None:
+        raise MalformedToolMetadata(
+            Path("mise"),
+            "mise binary not found on $PATH, but a mise-managed install exists",
+        )
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if not key.startswith(("MISE_", "__MISE_"))
+    }
     try:
-        data = tomllib.loads(cfg_path.read_text(encoding="utf-8"))
-    except FileNotFoundError:
-        return None
-    except (OSError, tomllib.TOMLDecodeError, UnicodeDecodeError) as e:
+        result = subprocess.run(
+            [mise, *args],
+            cwd=Path.home(),
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=_MISE_QUERY_TIMEOUT,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as e:
+        raise MalformedToolMetadata(
+            Path(mise), f"mise {' '.join(args)} failed: {e}"
+        ) from e
+    if result.returncode != 0:
+        raise MalformedToolMetadata(
+            Path(mise), f"mise {' '.join(args)} exited {result.returncode}"
+        )
+    return result.stdout
+
+
+@cache
+def _mise_config_files() -> tuple[Path, ...]:
+    """Config files mise itself tracks, from `mise config ls --json` at `$HOME`.
+
+    Mise's own answer, not a directory glob (ADR-0060's test): a stray
+    `.toml` under mise's config directory that mise itself ignores must not
+    turn into a broken read for every mise tool that falls back to config
+    inspection. Cached for the life of the process, same as
+    `_mise_global_install_identities`.
+    """
+    try:
+        data = json.loads(_run_mise("config", "ls", "--json"))
+    except json.JSONDecodeError as e:
+        raise MalformedToolMetadata(
+            Path("mise"), f"unparseable mise config ls --json output: {e}"
+        ) from e
+    if not isinstance(data, list) or not all(
+        isinstance(entry, dict) and isinstance(entry.get("path"), str) for entry in data
+    ):
+        raise MalformedToolMetadata(
+            Path("mise"), "unexpected mise config ls --json shape"
+        )
+    return tuple(Path(entry["path"]) for entry in data)
+
+
+@cache
+def _mise_config_data(cfg_path: Path) -> dict[str, object]:
+    """Mise's own resolved view of one tracked config file (`mise config get -f`).
+
+    Cached per path for the life of the process: `_resolve_from_mise` calls
+    this once per mise-config-fallback tool lookup, and every lookup in one
+    run shares the same tracked files.
+    """
+    try:
+        return tomllib.loads(_run_mise("config", "get", "-f", str(cfg_path)))
+    except tomllib.TOMLDecodeError as e:
         raise MalformedToolMetadata(cfg_path, str(e)) from e
 
+
+def _check_mise_config(cfg_path: Path, tool_id: str, binary_name: str) -> str | None:
+    """Inspect mise's own answer for one tracked config file's tool aliases
+    or tool repository definitions (`_mise_config_data`, ADR-0060)."""
+    data = _mise_config_data(cfg_path)
+
     aliases = data.get("tool_alias", {})
+    if not isinstance(aliases, dict):
+        raise MalformedToolMetadata(cfg_path, "tool_alias is not a table")
     for alias_name, alias_target in aliases.items():
-        if alias_name in (tool_id, binary_name):
-            if alias_target.startswith("github:"):
-                return alias_target.split(":", 1)[1]
-            return alias_target
+        if alias_name not in (tool_id, binary_name):
+            continue
+        if not isinstance(alias_target, str):
+            raise MalformedToolMetadata(
+                cfg_path, f"tool_alias.{alias_name} is not a string"
+            )
+        if alias_target.startswith("github:"):
+            return alias_target.split(":", 1)[1]
+        return alias_target
 
     tools = data.get("tools", {})
+    if not isinstance(tools, dict):
+        raise MalformedToolMetadata(cfg_path, "tools is not a table")
     for raw_tool_key, val in tools.items():
         if raw_tool_key.startswith("github:"):
             repo = raw_tool_key.split(":", 1)[1]
@@ -94,7 +210,7 @@ def _check_mise_toml(cfg_path: Path, tool_id: str, binary_name: str) -> str | No
 def _resolve_from_mise(
     tool_id: str, binary_name: str, *, config: Config, offline: bool = False
 ) -> str | None:
-    """Infer a repository from Mise configuration files, then the registry.
+    """Infer a repository from Mise's own configuration, then its registry.
 
     `tool_id` is looked up as-is -- no fallback to `binary_name` in the
     registry query. Both must be installation-derived (ADR-0008): the caller
@@ -104,16 +220,14 @@ def _resolve_from_mise(
 
     `offline=True` skips `_query_mise_registry`, the one step here that can
     reach the network (`_read_mise_registry_archive`'s `urlopen`, on a cache
-    miss or a stale TTL). Filesystem configuration and backend resolution are
-    still attempted in either mode; callers that leave it false permit the
-    registry fallback and its cache refresh.
+    miss or a stale TTL). Mise config resolution is a local subprocess call
+    to `mise` itself and is attempted in either mode; callers that leave it
+    false permit the registry fallback and its cache refresh.
     """
-    mise_cfg_dir = config.config_dir / "mise"
-    if mise_cfg_dir.exists():
-        for cfg_path in mise_cfg_dir.glob("**/*.toml"):
-            found = _check_mise_toml(cfg_path, tool_id, binary_name)
-            if found:
-                return found
+    for cfg_path in _mise_config_files():
+        found = _check_mise_config(cfg_path, tool_id, binary_name)
+        if found:
+            return found
 
     if offline:
         return None
@@ -135,22 +249,41 @@ def _query_mise_registry(tool: str, *, config: Config) -> str | None:
     return _load_mise_registry(_mise_registry_cache_path(config)).get(tool)
 
 
+_MISE_REGISTRY_PARSE_ERRORS = (
+    OSError,
+    tarfile.TarError,
+    tomllib.TOMLDecodeError,
+    UnicodeDecodeError,
+    zstandard.ZstdError,
+)
+
+
 def _load_mise_registry_uncached(cache_path: Path) -> dict[str, str]:
-    """Load short names, aliases, and bins from Mise's cached registry archive."""
+    """Load short names, aliases, and bins from Mise's cached registry archive.
+
+    A cache file `_read_mise_registry_archive` returned as fine to read can
+    still hold content that will not parse -- the read only checks the file
+    is reachable, not that it is a valid zstd-compressed tar. That is
+    maniac's own disposable state too (ADR-0060 Corrections): deleted and
+    rebuilt once here; only a rebuild that also fails to parse is reported.
+    """
     archive = _read_mise_registry_archive(cache_path)
     if archive is None:
         return {}
 
     try:
         return _parse_mise_registry(archive)
-    except (
-        OSError,
-        tarfile.TarError,
-        tomllib.TOMLDecodeError,
-        UnicodeDecodeError,
-        zstandard.ZstdError,
-    ) as e:
-        raise MalformedToolMetadata(cache_path, str(e)) from e
+    except _MISE_REGISTRY_PARSE_ERRORS as e:
+        cache_path.unlink(missing_ok=True)
+        rebuilt = _read_mise_registry_archive(cache_path)
+        if rebuilt is None:
+            raise MalformedToolMetadata(
+                cache_path, f"cache was corrupt and could not be rebuilt: {e}"
+            ) from e
+        try:
+            return _parse_mise_registry(rebuilt)
+        except _MISE_REGISTRY_PARSE_ERRORS as e2:
+            raise MalformedToolMetadata(cache_path, str(e2)) from e2
 
 
 _load_mise_registry = _MiseRegistryLoader()
@@ -162,9 +295,12 @@ def _read_mise_registry_archive(cache_path: Path) -> bytes | None:
     A cache file that vanishes mid-check (`FileNotFoundError`) is an
     ordinary race with a concurrent write, treated the same as never having
     had one. Any other read failure -- permissions, an I/O error -- means
-    the cache is present but broken, reported rather than silently routed
-    around by falling through to a network refetch (ADR-0060).
+    maniac's own cache is corrupt or unreadable. This is maniac's own
+    disposable state, not the user's environment (ADR-0060 Corrections): it
+    is deleted and rebuilt below rather than reported immediately, and only
+    a rebuild that itself fails (e.g. offline) surfaces as an error.
     """
+    corrupt = False
     try:
         fresh = (
             cache_path.is_file()
@@ -172,15 +308,25 @@ def _read_mise_registry_archive(cache_path: Path) -> bytes | None:
         )
     except FileNotFoundError:
         fresh = False
-    except OSError as e:
-        raise MalformedToolMetadata(cache_path, str(e)) from e
+    except OSError:
+        corrupt = True
+        fresh = False
     if fresh:
         try:
             return cache_path.read_bytes()
         except FileNotFoundError:
             pass
-        except OSError as e:
-            raise MalformedToolMetadata(cache_path, str(e)) from e
+        except OSError:
+            corrupt = True
+
+    if corrupt:
+        try:
+            cache_path.unlink(missing_ok=True)
+        except OSError:
+            # Best-effort: a directory this broken (e.g. unreadable itself)
+            # fails the rebuild attempt below the same way, which is what
+            # decides whether this surfaces.
+            pass
 
     try:
         request = Request(MISE_REGISTRY_URL, headers={"User-Agent": "maniac/0.1"})
@@ -207,6 +353,10 @@ def _read_mise_registry_archive(cache_path: Path) -> bytes | None:
         try:
             return cache_path.read_bytes()
         except FileNotFoundError:
+            if corrupt:
+                raise MalformedToolMetadata(
+                    cache_path, f"cache was corrupt and could not be rebuilt: {e}"
+                ) from e
             return None
         except OSError as read_error:
             raise MalformedToolMetadata(cache_path, str(read_error)) from read_error

@@ -9,8 +9,7 @@ from functools import cache
 from pathlib import Path
 
 from ...config import Config
-from ...exceptions import MalformedToolMetadata
-from ...logging import logger
+from ...exceptions import MalformedToolMetadata, ProjectScopedInstall
 from ...models import Installation, RemoteRepoSource, RepoSource
 from .. import discovery
 from ..manpages import find_install_root_manpages
@@ -65,14 +64,11 @@ class MiseProvider:
             # ADR-0061: this install exists, but mise only activates it because
             # of a project's own config -- from $HOME it is not among mise's
             # globally selected tools, so a page for it would document a
-            # binary this machine doesn't otherwise resolve to.
-            logger.info(
-                "Mise install is active only via a project config; refusing "
-                "as not-global",
-                tool=bin_path.name,
-                root=str(root),
-            )
-            return None
+            # binary this machine doesn't otherwise resolve to. Refused
+            # outright rather than returned as unclaimed (ADR-0061's
+            # Corrections): unclaimed falls to tier-3 synthesis, which would
+            # document this project's version as the machine's global one.
+            raise ProjectScopedInstall(bin_path.name, root)
         return Installation(
             binary=bin_path.name,
             bin_path=bin_path,
@@ -151,13 +147,38 @@ class MiseProvider:
 
 
 def _is_globally_active(root: Path) -> bool:
-    """Whether `mise` reports `root` among its globally selected installs."""
-    return str(root) in _mise_global_install_roots()
+    """Whether `mise` reports an install with `root`'s identity globally active.
+
+    Compared on identity (backend, package, version), not the raw root
+    path: an explicit-backend install (`installs/aqua-yadm-dev-yadm/3.5.0`)
+    and its registry-name sibling (`installs/yadm/3.5.0`) are the same
+    tool at the same version, but `mise ls --current` reports only one of
+    the two paths -- whichever the binary that produced the record
+    resolved through. A raw-path comparison judged the other name-form
+    project-only every time it did not match by coincidence.
+    """
+    return _install_identity(root) in _mise_global_install_identities()
+
+
+def _install_identity(root: Path) -> tuple[str, str, str]:
+    """`(backend, package, version)` for a mise install root.
+
+    Falls back to `("", <install-dir-name>, version)` when no
+    `.mise.backend.toml` names a backend -- the install directory name is
+    already installation-derived evidence (ADR-0008), same as
+    `_resolve_from_mise`'s registry key.
+    """
+    version = root.name
+    backend_record = _read_backend_record(root)
+    if backend_record is not None:
+        backend, package = backend_record
+        return (backend, package, version)
+    return ("", root.parent.name, version)
 
 
 @cache
-def _mise_global_install_roots() -> frozenset[str]:
-    """Install roots `mise` reports globally active from `$HOME` (ADR-0061).
+def _mise_global_install_identities() -> frozenset[tuple[str, str, str]]:
+    """Identities of installs `mise` reports globally active from `$HOME` (ADR-0061).
 
     Every `MISE_*`/`__MISE_*` variable is scrubbed first: `MISE_CONFIG_FILE`
     alone was measured to leak a project's config into a `$HOME` query.
@@ -204,13 +225,14 @@ def _mise_global_install_roots() -> frozenset[str]:
         )
     try:
         data = json.loads(result.stdout)
-        return frozenset(
+        install_paths = [
             entry["install_path"] for entries in data.values() for entry in entries
-        )
+        ]
     except (json.JSONDecodeError, AttributeError, TypeError, KeyError) as e:
         raise MalformedToolMetadata(
             Path(mise), f"unparseable mise ls --current --json output: {e}"
         ) from e
+    return frozenset(_install_identity(Path(path)) for path in install_paths)
 
 
 def _read_backend_record(root: Path) -> tuple[str, str] | None:

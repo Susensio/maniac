@@ -12,11 +12,16 @@ from dataclasses import replace
 from pathlib import Path
 
 from ..config import Config
-from ..exceptions import MalformedToolMetadata
+from ..exceptions import MalformedToolMetadata, ProjectScopedInstall
 from ..models import Installation, RepoSource
 from .pathcache import path_dirs, resolve_bin_path
 from .providers.base import Provider
 from .providers.registry import registry
+
+# Both name a claim `_detect_via_registry` could not complete (ADR-0060,
+# ADR-0061): a tool's own metadata file unreadable, or a Mise install
+# refused as project-only. Every catch below treats them alike.
+_DiscoveryError = (MalformedToolMetadata, ProjectScopedInstall)
 
 
 def find_installation(
@@ -57,7 +62,8 @@ def discover_repo(
 def enumerate_installations(
     on_start: Callable[[int], None] | None = None,
     on_scan: Callable[[], None] | None = None,
-    on_error: Callable[[str, MalformedToolMetadata], None] | None = None,
+    on_error: Callable[[str, MalformedToolMetadata | ProjectScopedInstall], None]
+    | None = None,
 ) -> list[tuple[Provider, Installation]]:
     """Claim each first-PATH binary once, preserving PATH precedence.
 
@@ -79,11 +85,13 @@ def enumerate_installations(
     once per candidate processed in that loop.
 
     A candidate whose provider raises `MalformedToolMetadata` (ADR-0060: its
-    own metadata file is present but unreadable) is reported through
-    `on_error` -- `(name, error)` -- and dropped from the result rather than
-    aborting every other candidate's enumeration. A later `$PATH` shadow
-    that also errors is silently dropped instead: it never wins regardless,
-    and does not have its own row to report an error against.
+    own metadata file is present but unreadable) or `ProjectScopedInstall`
+    (ADR-0061: a Mise install active only via a project's config) is
+    reported through `on_error` -- `(name, error)` -- and dropped from the
+    result rather than aborting every other candidate's enumeration. A
+    later `$PATH` shadow that also errors is silently dropped instead: it
+    never wins regardless, and does not have its own row to report an
+    error against.
 
     A later `$PATH` occurrence of a claimed name never wins, but a provider
     that claims it too is retained on the winner's `Installation.losers`
@@ -115,7 +123,7 @@ def enumerate_installations(
     for name, bin_path in seen.items():
         try:
             claim = _detect_via_registry(bin_path)
-        except MalformedToolMetadata as e:
+        except _DiscoveryError as e:
             if on_error is not None:
                 on_error(name, e)
             if on_scan is not None:
@@ -127,7 +135,7 @@ def enumerate_installations(
             for shadow_path in shadowed.get(name, ()):
                 try:
                     shadow_claim = _detect_via_registry(shadow_path)
-                except MalformedToolMetadata:
+                except _DiscoveryError:
                     continue
                 if shadow_claim is not None:
                     losers.append(shadow_claim[1])

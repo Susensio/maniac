@@ -438,6 +438,7 @@ def test_resolve_source_falls_back_to_the_registry_keyed_on_the_directory_name(
     provider = mise.MiseProvider()
     inst = provider.detect(bin_path)
     assert inst is not None
+    monkeypatch.setattr(mise.discovery, "_mise_config_files", lambda: ())
     monkeypatch.setattr(
         mise.discovery, "_load_mise_registry", lambda cache_path: {"nufmt": "x/y"}
     )
@@ -465,10 +466,12 @@ def test_resolve_source_offline_skips_the_registry_but_keeps_local_config(
     provider = mise.MiseProvider()
     inst = provider.detect(bin_path)
     assert inst is not None
-    mise_dir = tmp_path / "config" / "mise"
-    mise_dir.mkdir(parents=True)
-    (mise_dir / "config.toml").write_text(
-        "[tool_alias]\nripgrep = 'github:private/rg'\n", encoding="utf-8"
+    cfg_path = tmp_path / "config" / "mise" / "config.toml"
+    monkeypatch.setattr(mise.discovery, "_mise_config_files", lambda: (cfg_path,))
+    monkeypatch.setattr(
+        mise.discovery,
+        "_mise_config_data",
+        lambda path: {"tool_alias": {"ripgrep": "github:private/rg"}},
     )
 
     def fail_if_called(*args: object, **kwargs: object) -> None:
@@ -497,6 +500,7 @@ def test_resolve_source_offline_returns_none_rather_than_query_the_registry(
     inst = provider.detect(bin_path)
     assert inst is not None
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "empty-config"))
+    monkeypatch.setattr(mise.discovery, "_mise_config_files", lambda: ())
 
     def fail_if_called(*args: object, **kwargs: object) -> None:
         raise AssertionError("registry fallback must not run when offline")

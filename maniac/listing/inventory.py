@@ -24,7 +24,7 @@ from typing import Any
 
 from .. import manifest
 from ..config import Config
-from ..exceptions import MalformedToolMetadata
+from ..exceptions import MalformedToolMetadata, ProjectScopedInstall
 from ..logging import logger
 from ..models import Installation, RepoSource
 from ..sources import resolution
@@ -35,8 +35,14 @@ from .models import (
     LocalClassification,
     PageSource,
     RowSnapshot,
+    ToolError,
     ToolRow,
 )
+
+# Both name a tool's own broken evidence (ADR-0060, ADR-0061): a metadata
+# file that cannot be read, or a Mise install that exists but is refused as
+# project-only. Every discovery-time catch here treats them alike.
+_DiscoveryError = (MalformedToolMetadata, ProjectScopedInstall)
 from .upstream import (
     ProbeKey,
     ProbePage,
@@ -97,8 +103,10 @@ def _build_inventory(
     """Return requested or discovered candidates and whether discovery ran.
 
     A tool whose own metadata file `resolution` found unreadable
-    (`MalformedToolMetadata`, ADR-0060) still gets a row -- `Candidate.error`
-    carries why, so one broken tool never drops the rest of the inventory.
+    (`MalformedToolMetadata`, ADR-0060), or a Mise install refused as
+    project-only (`ProjectScopedInstall`, ADR-0061), still gets a row --
+    `Candidate.error` carries why, so one broken or refused tool never
+    drops the rest of the inventory.
     """
     if tools:
         # No `resolution.discover_repo(tool)` fallback when `found` is None:
@@ -107,9 +115,14 @@ def _build_inventory(
         for tool in dict.fromkeys(tools):
             try:
                 found = resolution.find_installation(tool)
-            except MalformedToolMetadata as e:
+            except _DiscoveryError as e:
                 candidates.append(
-                    Candidate(tool=tool, provider=None, installation=None, error=str(e))
+                    Candidate(
+                        tool=tool,
+                        provider=None,
+                        installation=None,
+                        error=ToolError(e.path, e.reason),
+                    )
                 )
                 continue
             provider, inst = found if found else (None, None)
@@ -118,12 +131,14 @@ def _build_inventory(
             )
         return candidates, False
 
-    errors: dict[str, str] = {}
+    errors: dict[str, ToolError] = {}
     discovered = sorted(
         resolution.enumerate_installations(
             on_start=observer.discovery_started,
             on_scan=observer.discovery_scanned,
-            on_error=lambda name, e: errors.__setitem__(name, str(e)),
+            on_error=lambda name, e: errors.__setitem__(
+                name, ToolError(e.path, e.reason)
+            ),
         ),
         key=lambda item: item[1].binary,
     )
@@ -181,12 +196,12 @@ def _classify_and_resolve(
     probe that follows stays gated on local evidence
     (`is_upstream_eligible`).
 
-    A candidate discovery already marked broken (`candidate.error`, ADR-0060)
-    short-circuits here rather than being classified as an ordinary miss.
-    Source resolution can raise the same `MalformedToolMetadata` this late
-    -- a provider's repository field lives in the same file its version
-    came from, read again for a different question -- and is caught the
-    same way.
+    A candidate discovery already marked broken or refused (`candidate.error`,
+    ADR-0060, ADR-0061) short-circuits here rather than being classified as
+    an ordinary miss. Source resolution can raise the same
+    `MalformedToolMetadata` this late -- a provider's repository field lives
+    in the same file its version came from, read again for a different
+    question -- and is caught the same way.
     """
     if candidate.error is not None:
         return (
@@ -208,7 +223,7 @@ def _classify_and_resolve(
                 source=PageSource.NONE,
                 managed=False,
                 page_path=None,
-                error=str(e),
+                error=ToolError(e.path, e.reason),
             ),
             None,
         )

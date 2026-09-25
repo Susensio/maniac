@@ -29,6 +29,7 @@ from .models import (
     LocalClassification,
     PageSource,
     RowSnapshot,
+    ToolError,
     ToolRow,
 )
 
@@ -39,6 +40,7 @@ __all__ = [
     "LocalClassification",
     "PageSource",
     "RowSnapshot",
+    "ToolError",
     "ToolRow",
     "classify",
     "compute_rows",
