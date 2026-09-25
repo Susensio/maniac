@@ -108,7 +108,9 @@ def run_install(
         # the first hit can be a project-scoped shadow (a venv, a node_modules/.bin)
         # that no installer claims -- tiers 1-2 are unreachable for it, and any
         # tier-3 page below documents exactly this resolved binary, not a global one.
-        logger.info(
+        # `warning`, not `info`: this is the reason a refusal or a
+        # synthesized-from-shadow page happens, and default logging is WARNING.
+        logger.warning(
             "Binary resolves outside any known installer",
             tool=tool_name,
             resolved_path=str(bin_path),

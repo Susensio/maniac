@@ -600,7 +600,8 @@ def test_run_install_names_the_resolved_path_of_an_unclaimed_binary(
 ) -> None:
     """ADR-0061: running inside a venv now resolves `ruff` to the venv copy
     rather than losing it to the login-`$PATH` refusal -- no installer
-    claims it, and the resolved path is logged so the user can see why.
+    claims it, and the resolved path is logged at `warning` (visible at
+    default logging level) so the user can see why.
     """
     from maniac.models import PipelineResult
 
@@ -630,10 +631,48 @@ def test_run_install_names_the_resolved_path_of_an_unclaimed_binary(
 
     assert {
         "event": "Binary resolves outside any known installer",
-        "log_level": "info",
+        "log_level": "warning",
         "tool": "ruff",
         "resolved_path": str(venv_ruff),
     } in logged
+
+
+def test_unclaimed_binary_resolved_path_is_visible_at_default_log_level(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`capture_logs()` bypasses structlog's own level filter, so it alone
+    cannot prove the resolved path is visible by default (item 5) -- this
+    drives the real `setup_logging(verbose=False)` filtering bound logger
+    (default WARNING) and checks the rendered line actually reaches stdout.
+    """
+    from maniac.logging import setup_logging
+    from maniac.models import PipelineResult
+
+    venv_ruff = tmp_path / ".venv" / "bin" / "ruff"
+    monkeypatch.setattr(pathcache, "which", lambda name: venv_ruff)
+    monkeypatch.setattr(
+        "maniac.orchestration.context.resolution.find_installation",
+        lambda name, bin_dir=None: None,
+    )
+    monkeypatch.setattr(
+        "maniac.orchestration.pipeline.synthesize",
+        lambda tool, **kwargs: PipelineResult(
+            tool_name=tool.tool_name,
+            repo_source=None,
+            command_count=1,
+            doc_file_count=0,
+            context_path=None,
+            markdown_path=tmp_path / f"{tool.tool_name}.1.md",
+            roff_path=None,
+            installed_path=None,
+            markdown_content="# doc",
+        ),
+    )
+
+    setup_logging(verbose=False)
+    run_install("ruff")
+
+    assert str(venv_ruff) in capsys.readouterr().out
 
 
 def test_run_install_tier2_skipped_without_an_installed_version(
