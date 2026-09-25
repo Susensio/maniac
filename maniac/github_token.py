@@ -1,13 +1,11 @@
 """Resolve a GitHub API token, memoized once per process.
 
 `gh auth token` spawns a subprocess, and a single `list` run makes dozens
-of GitHub requests -- paying that cost per request would be unacceptable,
-same reasoning as `sources/loginpath.py`'s `login_path()`. A failed lookup
-memoizes too: `gh`'s credential can be keyring-backed, and a keyring needs
-a session bus that a container, CI runner or sandbox does not have, so one
-transient unavailability disables authentication for the rest of the
-process rather than retrying -- again matching `login_path()`, which
-treats a one-shot answer as final.
+of GitHub requests -- paying that cost per request would be unacceptable.
+A failed lookup memoizes too: `gh`'s credential can be keyring-backed, and
+a keyring needs a session bus that a container, CI runner or sandbox does
+not have, so one transient unavailability disables authentication for the
+rest of the process rather than retrying.
 """
 
 import os

@@ -263,7 +263,7 @@ def test_cli_source_docs(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_cli_install_dry_run(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setattr(
-        "maniac.sources.loginpath.which_login",
+        "maniac.sources.pathcache.which",
         lambda name: Path(f"/bin/{name}"),
     )
     monkeypatch.setattr(
@@ -294,7 +294,7 @@ def test_cli_install_exits_nonzero_when_synthesis_produces_no_page(
     from maniac.models import PipelineResult
 
     monkeypatch.setattr(
-        "maniac.sources.loginpath.which_login",
+        "maniac.sources.pathcache.which",
         lambda name: Path(f"/bin/{name}"),
     )
 
@@ -396,8 +396,8 @@ def test_cli_install_reuses_config_for_existing_destination(
 def test_cli_install_exits_nonzero_for_unreachable_binary(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """ADR-0048: ADR-0020's unreachable-binary refusal still produces no page."""
-    monkeypatch.setattr("maniac.sources.loginpath.which_login", lambda name: None)
+    """ADR-0048: ADR-0061's unreachable-binary refusal still produces no page."""
+    monkeypatch.setattr("maniac.sources.pathcache.which", lambda name: None)
     monkeypatch.setattr(
         "maniac.orchestration.context.resolution.find_installation",
         lambda name, bin_dir=None: None,
@@ -406,7 +406,7 @@ def test_cli_install_exits_nonzero_for_unreachable_binary(
     result = runner.invoke(app, ["install", "project-local-tool"])
 
     assert result.exit_code != 0
-    assert "login shell" in result.output
+    assert "$PATH" in result.output
 
 
 def test_cli_install_exits_nonzero_when_no_synthesize_finds_nothing(
@@ -414,7 +414,7 @@ def test_cli_install_exits_nonzero_when_no_synthesize_finds_nothing(
 ) -> None:
     """ADR-0048: `--no-synthesize` finding nothing at tiers 1-2 is still no page."""
     monkeypatch.setattr(
-        "maniac.sources.loginpath.which_login",
+        "maniac.sources.pathcache.which",
         lambda name: Path(f"/bin/{name}"),
     )
     monkeypatch.setattr(
@@ -437,7 +437,7 @@ def test_cli_install_dry_run_exits_nonzero_when_no_tier_would_answer(
     just the fact that it wrote nothing -- finding no tier to preview is
     still no page, the same as a real run finding none."""
     monkeypatch.setattr(
-        "maniac.sources.loginpath.which_login",
+        "maniac.sources.pathcache.which",
         lambda name: Path(f"/bin/{name}"),
     )
     monkeypatch.setattr(
@@ -461,7 +461,7 @@ def test_cli_install_always_installs(
     from maniac.models import PipelineResult
 
     monkeypatch.setattr(
-        "maniac.sources.loginpath.which_login",
+        "maniac.sources.pathcache.which",
         lambda name: Path(f"/bin/{name}"),
     )
     observed: dict[str, object] = {}
@@ -750,7 +750,7 @@ def test_cli_install_multiple_all_fail_exits_nonzero(
         raise ManiacError("boom")
 
     monkeypatch.setattr(
-        "maniac.sources.loginpath.which_login",
+        "maniac.sources.pathcache.which",
         lambda name: Path(f"/bin/{name}"),
     )
     monkeypatch.setattr("maniac.orchestration.pipeline.synthesize", _raise)
@@ -773,7 +773,7 @@ def test_cli_install_reports_malformed_tool_metadata_and_exits_nonzero(
         raise MalformedToolMetadata(Path("/x/package.json"), "invalid JSON")
 
     monkeypatch.setattr(
-        "maniac.sources.loginpath.which_login",
+        "maniac.sources.pathcache.which",
         lambda name: Path("/bin/toolone"),
     )
     monkeypatch.setattr(
@@ -794,7 +794,7 @@ def test_cli_install_multiple_partial_success_exits_nonzero(
     from maniac.models import PipelineResult
 
     monkeypatch.setattr(
-        "maniac.sources.loginpath.which_login",
+        "maniac.sources.pathcache.which",
         lambda name: Path(f"/bin/{name}"),
     )
 

@@ -14,8 +14,7 @@ from pathlib import Path
 from ..config import Config
 from ..exceptions import MalformedToolMetadata
 from ..models import Installation, RepoSource
-from . import loginpath
-from .pathcache import resolve_bin_path
+from .pathcache import path_dirs, resolve_bin_path
 from .providers.base import Provider
 from .providers.registry import registry
 
@@ -70,9 +69,8 @@ def enumerate_installations(
     binary that actually runs when two providers claim the same name
     (ADR-0016's tie-break).
 
-    Walks `loginpath.login_path().dirs` (ADR-0020) rather than the `$PATH`
-    MANIAC inherited, so the answer describes the machine rather than the
-    shell that happened to invoke this.
+    Walks the inherited `$PATH` (ADR-0061) -- the answer describes the
+    environment MANIAC is run in, same as `resolve_bin_path`.
 
     `on_start`/`on_scan`, both `None` by default, split the work into two
     phases to instrument: `on_start` fires once with the candidate count,
@@ -94,7 +92,7 @@ def enumerate_installations(
     """
     seen: dict[str, Path] = {}
     shadowed: dict[str, list[Path]] = {}
-    for entry in loginpath.login_path().dirs:
+    for entry in path_dirs():
         try:
             children = list(os.scandir(entry))
         except OSError:

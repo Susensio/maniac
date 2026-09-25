@@ -49,6 +49,15 @@ from .manifest_support import record_entry
 
 
 @pytest.fixture(autouse=True)
+def _every_mise_install_is_global(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Fabricated mise installs below aren't judged for project-scope here
+    (ADR-0061's own tests cover that) -- default every root to globally
+    active so `MiseProvider.detect()` behaves as before.
+    """
+    monkeypatch.setattr(mise_module, "_is_globally_active", lambda root: True)
+
+
+@pytest.fixture(autouse=True)
 def _no_real_man(monkeypatch: pytest.MonkeyPatch) -> None:
     """Every test stays off the development machine's real `man` database
     (mirrors `tests/test_compare.py:216`'s monkeypatch of the same function);

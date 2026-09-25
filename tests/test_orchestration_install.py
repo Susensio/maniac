@@ -4,6 +4,7 @@ from collections import Counter
 from pathlib import Path
 
 import pytest
+import structlog
 
 from maniac import lifecycle, manifest
 from maniac.config import Config
@@ -18,7 +19,7 @@ from maniac.orchestration.install import (
     _try_repository,
     run_install,
 )
-from maniac.sources import loginpath
+from maniac.sources import pathcache
 from maniac.sources.providers.base import Provider, SourceResolver
 from maniac.sources.providers.registry import registry
 
@@ -26,12 +27,13 @@ from .manifest_support import record_entry
 
 
 @pytest.fixture(autouse=True)
-def _reachable_from_the_login_path(monkeypatch: pytest.MonkeyPatch) -> None:
+def _reachable_on_path(monkeypatch: pytest.MonkeyPatch) -> None:
     """Every test below names a tool nothing on this machine's `$PATH` has --
-    default `which_login` to "found" so ADR-0020's new refusal (tested on
-    its own below) doesn't fire for tests about tier selection instead.
+    default `which` to "found" so ADR-0061's unreachable-binary refusal
+    (tested on its own below) doesn't fire for tests about tier selection
+    instead.
     """
-    monkeypatch.setattr(loginpath, "which_login", lambda name: Path(f"/bin/{name}"))
+    monkeypatch.setattr(pathcache, "which", lambda name: Path(f"/bin/{name}"))
 
 
 class _FakeProvider:
@@ -593,6 +595,47 @@ def test_run_install_reports_repository_docs_only_synthesis(
     assert outcome.detail == "synthesized from repo docs only"
 
 
+def test_run_install_names_the_resolved_path_of_an_unclaimed_binary(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """ADR-0061: running inside a venv now resolves `ruff` to the venv copy
+    rather than losing it to the login-`$PATH` refusal -- no installer
+    claims it, and the resolved path is logged so the user can see why.
+    """
+    from maniac.models import PipelineResult
+
+    venv_ruff = tmp_path / ".venv" / "bin" / "ruff"
+    monkeypatch.setattr(pathcache, "which", lambda name: venv_ruff)
+    monkeypatch.setattr(
+        "maniac.orchestration.context.resolution.find_installation",
+        lambda name, bin_dir=None: None,
+    )
+    monkeypatch.setattr(
+        "maniac.orchestration.pipeline.synthesize",
+        lambda tool, **kwargs: PipelineResult(
+            tool_name=tool.tool_name,
+            repo_source=None,
+            command_count=1,
+            doc_file_count=0,
+            context_path=None,
+            markdown_path=tmp_path / f"{tool.tool_name}.1.md",
+            roff_path=None,
+            installed_path=None,
+            markdown_content="# doc",
+        ),
+    )
+
+    with structlog.testing.capture_logs() as logged:
+        run_install("ruff")
+
+    assert {
+        "event": "Binary resolves outside any known installer",
+        "log_level": "info",
+        "tool": "ruff",
+        "resolved_path": str(venv_ruff),
+    } in logged
+
+
 def test_run_install_tier2_skipped_without_an_installed_version(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -993,14 +1036,14 @@ def test_no_synthesize_installs_a_tier_1_page_with_no_llm_call(
     assert outcome.tier is Tier.INSTALL_ROOT
 
 
-def test_run_install_refuses_a_binary_the_login_path_cannot_reach(
+def test_run_install_refuses_a_binary_not_on_path(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """ADR-0020: a manpage installs globally and permanently, so a binary
-    reachable only from the current environment is refused, and the refusal
-    names why rather than declining quietly.
+    """ADR-0061: a manpage installs globally and permanently, so a binary
+    `$PATH` cannot reach at all is refused, and the refusal names why
+    rather than declining quietly.
     """
-    monkeypatch.setattr(loginpath, "which_login", lambda name: None)
+    monkeypatch.setattr(pathcache, "which", lambda name: None)
     monkeypatch.setattr(
         "maniac.orchestration.context.resolution.find_installation",
         lambda name, bin_dir=None: None,
@@ -1011,7 +1054,7 @@ def test_run_install_refuses_a_binary_the_login_path_cannot_reach(
 
     message = str(excinfo.value)
     assert "project-local-tool" in message
-    assert "login shell" in message
+    assert "$PATH" in message
     assert "global" in message
 
 
@@ -1022,9 +1065,9 @@ def test_run_install_refuses_under_no_synthesize_too(
 
     The check asks whether MANIAC should serve this binary at all, which is
     prior to which tier would answer -- so restricting to tiers 1-2 cannot
-    reach a binary the login `$PATH` cannot.
+    reach a binary `$PATH` cannot.
     """
-    monkeypatch.setattr(loginpath, "which_login", lambda name: None)
+    monkeypatch.setattr(pathcache, "which", lambda name: None)
     monkeypatch.setattr(
         "maniac.orchestration.context.resolution.find_installation",
         lambda name, bin_dir=None: None,
@@ -1052,7 +1095,7 @@ def test_run_install_refusal_runs_no_tier(
         "maniac.orchestration.install.install_manpage",
         lambda *args, **kwargs: pytest.fail("no tier should run on a refusal"),
     )
-    monkeypatch.setattr(loginpath, "which_login", lambda name: None)
+    monkeypatch.setattr(pathcache, "which", lambda name: None)
 
     with pytest.raises(InstallRefused):
         run_install("tool")
@@ -1120,12 +1163,12 @@ def test_run_install_explicit_bin_dir_bypasses_the_refusal(
 ) -> None:
     """An explicit `bin_dir` is stated intent (mirrors `resolve_bin_path`'s
     own precedence): reachability is judged there directly, never routed
-    through the login `$PATH` at all.
+    through `$PATH` at all.
     """
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     (bin_dir / "tool").touch(mode=0o755)
-    monkeypatch.setattr(loginpath, "which_login", lambda name: None)
+    monkeypatch.setattr(pathcache, "which", lambda name: None)
 
     page = tmp_path / "tool.1"
     page.write_text(".TH TOOL 1\n", encoding="utf-8")

@@ -5,8 +5,8 @@ import pytest
 import structlog
 
 from maniac.sources.docs import cache
-from maniac.sources.loginpath import login_path
 from maniac.sources.pathcache import resolve_cached
+from maniac.sources.providers.mise import _mise_global_install_roots
 
 
 @pytest.fixture(autouse=True)
@@ -51,12 +51,13 @@ def _clear_resolve_cache() -> None:
     for different underlying filesystem state (unlikely given `tmp_path` is
     unique per test, but cheap to rule out).
 
-    `login_path` is cleared alongside it for the same reason: also
-    process-lifetime, and a test that patches `$SHELL` or `os.environ` would
-    otherwise see a prior test's cached result instead of its own.
+    `_mise_global_install_roots` is cleared alongside it for the same
+    reason: also process-lifetime, and a test that patches `mise` or
+    `os.environ` would otherwise see a prior test's cached result instead
+    of its own.
     """
     resolve_cached.cache_clear()
-    login_path.cache_clear()
+    _mise_global_install_roots.cache_clear()
 
 
 @pytest.fixture(autouse=True)

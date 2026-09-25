@@ -14,6 +14,16 @@ from maniac.sources.providers.npm import NpmProvider
 from maniac.sources.providers.registry import registry
 
 
+@pytest.fixture(autouse=True)
+def _every_mise_install_is_global(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every test below builds a fabricated install and cares about something
+    other than project-scoping -- default to "globally active" so ADR-0061's
+    project-scope refusal (tested on its own in
+    `tests/test_providers_mise_project_scope.py`) doesn't fire here instead.
+    """
+    monkeypatch.setattr(mise, "_is_globally_active", lambda root: True)
+
+
 def _make_mise_install(tmp_path: Path, tool: str, version: str, real_name: str) -> Path:
     """Build `<tmp>/.local/share/mise/installs/<tool>/<version>/.../<real_name>`."""
     root = tmp_path / ".local" / "share" / "mise" / "installs" / tool / version

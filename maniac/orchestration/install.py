@@ -28,6 +28,7 @@ from ..installer import (
     _remove_recorded_manpage,
     install_manpage,
 )
+from ..logging import logger
 from ..manifest import Tier, manpage_owner
 from ..models import PipelineResult
 from ..sources.candidates import select_install_root, select_repository
@@ -75,25 +76,35 @@ def run_install(
     only path that can call an LLM, is imported nowhere in that branch, not
     merely left uncalled.
 
-    Before any tier runs (ADR-0020): a binary the login `$PATH` cannot reach
-    -- with no explicit `bin_dir` naming where it lives instead -- is refused
+    Before any tier runs (ADR-0061): a binary not on `$PATH` at all -- with
+    no explicit `bin_dir` naming where it lives instead -- is refused
     outright. A page installs into a global manpath and persists; a binary
-    reachable only from the current environment does not, so nothing here
-    should record one for it.
+    MANIAC cannot locate at all does not, so nothing here should record one
+    for it.
     """
     cfg = config or Config()
 
-    if resolve_bin_path(tool_name, bin_dir) is None:
+    bin_path = resolve_bin_path(tool_name, bin_dir)
+    if bin_path is None:
         raise InstallRefused(
-            f"'{tool_name}' is reachable only from the current "
-            "environment, not the login shell's $PATH -- and a manpage "
-            "would be installed globally and permanently. Install it "
-            "where the login shell can reach it first (ADR-0020)."
+            f"'{tool_name}' is not on $PATH -- and a manpage would be "
+            "installed globally and permanently. Install it somewhere "
+            "$PATH can reach first."
         )
 
     _refuse_unmanaged_destination(cfg.man_dir / f"{tool_name}.1", cfg, force=force)
 
     tool = resolve_tool(tool_name, config=cfg, bin_dir=bin_dir)
+    if tool.provider is None:
+        # ADR-0061: with $PATH inherited rather than login-shell-reconstructed,
+        # the first hit can be a project-scoped shadow (a venv, a node_modules/.bin)
+        # that no installer claims -- tiers 1-2 are unreachable for it, and any
+        # tier-3 page below documents exactly this resolved binary, not a global one.
+        logger.info(
+            "Binary resolves outside any known installer",
+            tool=tool_name,
+            resolved_path=str(bin_path),
+        )
 
     outcome = _try_install_root(tool, force=force, dry_run=dry_run)
     if outcome is not None:

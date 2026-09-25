@@ -64,7 +64,7 @@ def _check_mise_toml(cfg_path: Path, tool_id: str, binary_name: str) -> str | No
         data = tomllib.loads(cfg_path.read_text(encoding="utf-8"))
     except FileNotFoundError:
         return None
-    except (OSError, tomllib.TOMLDecodeError) as e:
+    except (OSError, tomllib.TOMLDecodeError, UnicodeDecodeError) as e:
         raise MalformedToolMetadata(cfg_path, str(e)) from e
 
     aliases = data.get("tool_alias", {})

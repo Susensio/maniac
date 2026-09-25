@@ -1,10 +1,16 @@
 """Mise-installed binaries under `~/.local/share/mise/installs/` (ADR-0015)."""
 
+import json
+import os
+import shutil
+import subprocess
 import tomllib
+from functools import cache
 from pathlib import Path
 
 from ...config import Config
 from ...exceptions import MalformedToolMetadata
+from ...logging import logger
 from ...models import Installation, RemoteRepoSource, RepoSource
 from .. import discovery
 from ..manpages import find_install_root_manpages
@@ -14,6 +20,9 @@ from .npm import read_package_json
 
 _INSTALLS_MARKER = "/.local/share/mise/installs/"
 _DIRECT_BACKENDS = ("aqua", "github")
+
+# Guards against `mise` hanging rather than the ordinary ~170ms cost.
+_MISE_QUERY_TIMEOUT = 5
 
 # Backend name -> the delegate provider's install root, relative to mise's
 # own install root, for a backend whose on-disk layout mise composes rather
@@ -52,6 +61,18 @@ class MiseProvider:
             return None
         tool_id, version = parts[idx + 1], parts[idx + 2]
         root = Path(*parts[: idx + 3])
+        if not _is_globally_active(root):
+            # ADR-0061: this install exists, but mise only activates it because
+            # of a project's own config -- from $HOME it is not among mise's
+            # globally selected tools, so a page for it would document a
+            # binary this machine doesn't otherwise resolve to.
+            logger.info(
+                "Mise install is active only via a project config; refusing "
+                "as not-global",
+                tool=bin_path.name,
+                root=str(root),
+            )
+            return None
         return Installation(
             binary=bin_path.name,
             bin_path=bin_path,
@@ -127,6 +148,69 @@ class MiseProvider:
         except (OSError, ValueError):
             return False
         return (latest / relative_page).exists()
+
+
+def _is_globally_active(root: Path) -> bool:
+    """Whether `mise` reports `root` among its globally selected installs."""
+    return str(root) in _mise_global_install_roots()
+
+
+@cache
+def _mise_global_install_roots() -> frozenset[str]:
+    """Install roots `mise` reports globally active from `$HOME` (ADR-0061).
+
+    Every `MISE_*`/`__MISE_*` variable is scrubbed first: `MISE_CONFIG_FILE`
+    alone was measured to leak a project's config into a `$HOME` query.
+    `cwd=Path.home()` keeps the current directory's own `mise.toml` from
+    doing the same thing through discovery instead of environment. Cached
+    for the life of the process -- called once per judged Mise install, not
+    once per lookup.
+
+    A binary already resolved through mise's own install tree is the
+    evidence that `mise` itself should be reachable and working here, so
+    every failure mode below raises rather than treating this as ADR-0060
+    absence -- absence is `mise` genuinely not being part of this machine,
+    which contradicts an install already found under its tree.
+    """
+    mise = shutil.which("mise")
+    if mise is None:
+        raise MalformedToolMetadata(
+            Path("mise"),
+            "mise binary not found on $PATH, but a mise-managed install exists",
+        )
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if not key.startswith(("MISE_", "__MISE_"))
+    }
+    try:
+        result = subprocess.run(
+            [mise, "ls", "--current", "--json"],
+            cwd=Path.home(),
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=_MISE_QUERY_TIMEOUT,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as e:
+        raise MalformedToolMetadata(
+            Path(mise), f"mise ls --current --json failed: {e}"
+        ) from e
+    if result.returncode != 0:
+        raise MalformedToolMetadata(
+            Path(mise), f"mise ls --current --json exited {result.returncode}"
+        )
+    try:
+        data = json.loads(result.stdout)
+        return frozenset(
+            entry["install_path"] for entries in data.values() for entry in entries
+        )
+    except (json.JSONDecodeError, AttributeError, TypeError, KeyError) as e:
+        raise MalformedToolMetadata(
+            Path(mise), f"unparseable mise ls --current --json output: {e}"
+        ) from e
 
 
 def _read_backend_record(root: Path) -> tuple[str, str] | None:
