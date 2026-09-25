@@ -52,3 +52,12 @@ Launched with a minimal `$PATH` (cron, an IDE, a service), maniac sees only what
 That is a valid environment, and per ADR-0060 it is described, not compensated for.
 
 Each `list`/`install` touching a Mise tool pays one `mise` call from `$HOME` (~170ms measured), cached per process.
+
+## Corrections
+
+2026-09-25: the Consequences said that inside an activated virtualenv `install ruff` "is refused as unclaimed".
+That was false.
+An unclaimed binary is not refused: it falls to tier-3 synthesis, and its `--version` is recorded (carried forward from ADR-0020).
+So inside a virtualenv, `install ruff` synthesizes a page from the venv copy's `--help`, and a later version change shows it `outdated`.
+`install` logs the resolved path.
+A Mise installation active only through a project's config is the one case refused outright, as the Decision states.
