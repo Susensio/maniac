@@ -84,7 +84,7 @@ def test_environment_sourced_entry_is_not_globally_active(
 
     identities = mise._mise_global_install_identities()
 
-    assert identities == frozenset()
+    assert identities.identities == frozenset()
 
 
 def test_detect_refuses_a_project_only_install(
@@ -153,6 +153,50 @@ def test_detect_matches_globally_active_install_by_identity_not_raw_path(
     assert inst.package == "aqua-yadm-dev-yadm"
 
 
+def test_detect_raises_malformed_metadata_when_sibling_report_was_skipped(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The sibling case (item 7, executed finding: `installs/aqua-yadm-dev-yadm`
+    vs. reported `installs/yadm`): `mise ls --current` reports the
+    registry-name sibling, but *its* `.mise.backend.toml` is corrupt, so its
+    identity can't be computed and compared against the explicit-backend
+    install being judged. The judged identity is genuinely absent from the
+    (incomplete) globally-active set, but the true cause is the corrupt
+    metadata, not "not globally selected" -- `NotGloballySelected` would
+    misreport a sibling case as if it were a real project-only install.
+    """
+    bin_path = _make_mise_install(tmp_path, "aqua-yadm-dev-yadm", "3.5.0", "yadm")
+    explicit_root = (
+        tmp_path
+        / ".local"
+        / "share"
+        / "mise"
+        / "installs"
+        / "aqua-yadm-dev-yadm"
+        / "3.5.0"
+    )
+    registry_root = (
+        tmp_path / ".local" / "share" / "mise" / "installs" / "yadm" / "3.5.0"
+    )
+    (explicit_root.parent / ".mise.backend.toml").write_text(
+        'full = "aqua:yadm-dev/yadm"\n', encoding="utf-8"
+    )
+    registry_root.parent.mkdir(parents=True)
+    (registry_root.parent / ".mise.backend.toml").write_text(
+        "not = [valid", encoding="utf-8"
+    )
+    monkeypatch.setattr(mise.discovery.shutil, "which", lambda name: "/usr/bin/mise")
+    monkeypatch.setattr(
+        mise.discovery.subprocess,
+        "run",
+        _fake_run(json.dumps({"yadm": [{"install_path": str(registry_root)}]})),
+    )
+
+    with pytest.raises(MalformedToolMetadata) as excinfo:
+        mise.MiseProvider().detect(bin_path)
+    assert excinfo.value.path == registry_root.parent / ".mise.backend.toml"
+
+
 def test_mise_query_keeps_user_mise_config_but_scrubs_activation_vars(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -181,7 +225,7 @@ def test_mise_query_keeps_user_mise_config_but_scrubs_activation_vars(
     monkeypatch.setattr(mise.discovery.shutil, "which", lambda name: "/usr/bin/mise")
     monkeypatch.setattr(mise.discovery.subprocess, "run", fake_run)
 
-    assert mise._mise_global_install_identities() == frozenset()
+    assert mise._mise_global_install_identities().identities == frozenset()
 
     assert observed_env["MISE_CONFIG_DIR"] == "/home/user/.config/mise"
     assert "__MISE_ORIG_PATH" not in observed_env
@@ -311,7 +355,9 @@ def test_one_corrupt_backend_file_does_not_fail_other_global_installs(
         ),
     )
 
-    identities = mise._mise_global_install_identities()
+    installs = mise._mise_global_install_identities()
 
-    assert ("", "good", "2.0.0") in identities
-    assert not any(identity[1] == "corrupt" for identity in identities)
+    assert ("", "good", "2.0.0") in installs.identities
+    assert not any(identity[1] == "corrupt" for identity in installs.identities)
+    assert installs.skipped
+    assert installs.skipped[0][0] == corrupt_root.parent / ".mise.backend.toml"

@@ -3,6 +3,7 @@
 import json
 import tomllib
 from pathlib import Path
+from typing import NamedTuple
 
 from ...config import Config
 from ...exceptions import MalformedToolMetadata, NotGloballySelected
@@ -150,8 +151,21 @@ def _is_globally_active(root: Path) -> bool:
     the two paths -- whichever the binary that produced the record
     resolved through. A raw-path comparison judged the other name-form
     project-only every time it did not match by coincidence.
+
+    Raises `MalformedToolMetadata` -- naming the unreadable backend file --
+    instead of returning `False` when `root`'s identity isn't among the
+    globally active set but some other globally reported install was
+    skipped over its own unreadable `.mise.backend.toml` (item 7): that
+    skip is why identity comparison could miss `root`'s sibling, so the
+    true cause is the corrupt file, not "not globally selected".
     """
-    return _install_identity(root) in _mise_global_install_identities()
+    installs = _mise_global_install_identities()
+    if _install_identity(root) in installs.identities:
+        return True
+    if installs.skipped:
+        path, reason = installs.skipped[0]
+        raise MalformedToolMetadata(path, reason)
+    return False
 
 
 def _install_identity(root: Path) -> tuple[str, str, str]:
@@ -170,7 +184,21 @@ def _install_identity(root: Path) -> tuple[str, str, str]:
     return ("", root.parent.name, version)
 
 
-def _load_mise_global_install_identities_uncached() -> frozenset[tuple[str, str, str]]:
+class _MiseGlobalInstalls(NamedTuple):
+    """`_load_mise_global_install_identities_uncached`'s result.
+
+    `skipped` is `(backend_path, reason)` for each globally reported
+    install whose own `.mise.backend.toml` could not be read -- kept so a
+    later judgment that misses `root`'s identity can tell "genuinely not
+    selected" apart from "couldn't tell, that install's metadata is
+    corrupt" (item 7).
+    """
+
+    identities: frozenset[tuple[str, str, str]]
+    skipped: tuple[tuple[Path, str], ...]
+
+
+def _load_mise_global_install_identities_uncached() -> _MiseGlobalInstalls:
     """Identities of installs `mise` reports globally active from `$HOME` (ADR-0061).
 
     Asks through `discovery._run_mise` -- one place for the env scrub, cwd,
@@ -211,6 +239,7 @@ def _load_mise_global_install_identities_uncached() -> frozenset[tuple[str, str,
         ) from e
 
     identities: set[tuple[str, str, str]] = set()
+    skipped: list[tuple[Path, str]] = []
     for path in install_paths:
         try:
             identities.add(_install_identity(Path(path)))
@@ -218,14 +247,17 @@ def _load_mise_global_install_identities_uncached() -> frozenset[tuple[str, str,
             # One globally active install's own corrupt `.mise.backend.toml`
             # must not fail every other install's judgment (item 7): isolated
             # here so only this entry drops out of the globally-active set,
-            # rather than reading every entry's backend file up front.
+            # rather than reading every entry's backend file up front. Its
+            # error is kept (not just logged) so a later judgment that
+            # misses can raise the true cause instead of `NotGloballySelected`.
             logger.warning(
                 "Skipping globally active mise install with unreadable backend record",
                 path=path,
                 error=str(e),
             )
+            skipped.append((e.path, e.reason))
             continue
-    return frozenset(identities)
+    return _MiseGlobalInstalls(identities=frozenset(identities), skipped=tuple(skipped))
 
 
 _mise_global_install_identities = discovery._SingleFlightCache(
