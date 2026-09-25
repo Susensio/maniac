@@ -9,6 +9,11 @@ Settled decisions live in `docs/adr/`; defects with a line to sit beside are mar
 - Distinguish a wrong documentation repository from one that legitimately has no manpage.
   Flag-inventory overlap and whether the repository contains implementation source are possible evidence, but absence is a normal synthesis fallback and must not be treated as proof of misresolution.
 
+- Serve only global tools when run inside an activated project environment.
+  Since ADR-0061, inside an activated virtualenv `install ruff` resolves the venv copy first, finds it unclaimed and synthesizes a page from its `--help` (ADR-0061 Corrections), where the intent is that maniac always works with global tools.
+  Mise project pins are already refused on Mise's own evidence (`mise ls --current` from `$HOME`); venv, conda and direnv entries have no equivalent yet.
+  Next step: find evidence-based detection that a first `$PATH` hit belongs to an activated environment (e.g. under `$VIRTUAL_ENV`/`$CONDA_PREFIX`, which name their roots), and decide between refusing it and resolving past it to a global claimed copy, the latter an explicit exception to ADR-0020's no-positional-fall-through rule carried by ADR-0061.
+
 ## Refactors and architecture
 
 - Surface `Installation.losers` to the user.
