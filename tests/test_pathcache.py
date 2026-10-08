@@ -67,12 +67,12 @@ def test_the_shell_is_handed_the_bootstrap_path_not_the_inherited_one(
 ) -> None:
     """Independent of any `/etc/profile`: Debian's overwrites `PATH`, so the
     test above would pass there even if the inherited `$PATH` leaked, while
-    Arch's appends to whatever it was given. A stand-in shell that echoes
-    its own `$PATH` shows what maniac hands over."""
+    Arch's appends to whatever it was given. A stand-in shell that runs the
+    command without reading any profile shows what maniac hands over."""
     venv_bin = tmp_path / ".venv" / "bin"
     monkeypatch.setenv("PATH", f"{venv_bin}{os.pathsep}{os.environ['PATH']}")
     monkeypatch.setenv(
-        "SHELL", str(_script(tmp_path / "echo-shell", 'printf "%s\\n" "$PATH"\n'))
+        "SHELL", str(_script(tmp_path / "plain-shell", 'exec /bin/sh -c "$2"\n'))
     )
 
     assert pathcache.path_dirs() == [
@@ -167,13 +167,54 @@ def test_a_failing_profile_is_reported_with_its_last_stderr_line(home: Path) -> 
         pathcache.path_dirs()
 
 
+def test_a_shell_that_never_runs_the_command_is_reported(
+    home: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Exits 0 without running what it was given -- a profile that `exit`s
+    or `exec`s into something else looks the same."""
+    monkeypatch.setenv("SHELL", str(_script(tmp_path / "mute-shell", "exit 0\n")))
+
+    with pytest.raises(BrokenLoginShell, match="did not run"):
+        pathcache.path_dirs()
+
+
 def test_a_shell_that_prints_no_path_is_reported(
     home: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    monkeypatch.setenv("SHELL", str(_script(tmp_path / "mute-shell", "exit 0\n")))
+    """Runs the command, but `printenv PATH` reports nothing."""
+    shell = _script(
+        tmp_path / "pathless-shell",
+        'exec /bin/sh -c "$(printf %s "$2" | sed "s/printenv PATH/true/")"\n',
+    )
+    monkeypatch.setenv("SHELL", str(shell))
 
     with pytest.raises(BrokenLoginShell, match="printed no"):
         pathcache.path_dirs()
+
+
+@pytest.mark.parametrize(
+    "profile",
+    [
+        'echo "Welcome back"\n',
+        "printf 'no trailing newline'\n",
+        "trap 'echo goodbye' EXIT\n",
+        'echo "Welcome back"; trap \'echo "/not/a/dir"\' EXIT\n',
+    ],
+    ids=["greeting", "no-newline", "exit-trap", "both-sides"],
+)
+def test_a_profile_that_prints_does_not_leak_into_path(
+    home: Path, profile: str
+) -> None:
+    """Issue #1: a greeting, `fortune` or motd printed by the profile became
+    part of the first `$PATH` entry, and output after the command (an EXIT
+    trap) would land in the last."""
+    _profile(home, profile + 'PATH="$HOME/bin:$PATH"; export PATH\n')
+
+    dirs = pathcache.path_dirs()
+
+    assert dirs[0] == home / "bin"
+    assert all("\n" not in str(d) for d in dirs)
+    assert Path("/not/a/dir") not in dirs
 
 
 def test_a_hanging_profile_is_reported(
@@ -194,7 +235,8 @@ def test_the_shell_is_spawned_once_per_process_even_from_many_threads(
     spawns = tmp_path / "spawns"
     shell = _script(
         tmp_path / "counting-shell",
-        f'echo x >> "{spawns}"\nsleep 0.2\necho "$HOME/bin"\n',
+        f'echo x >> "{spawns}"\nsleep 0.2\n'
+        'PATH="$HOME/bin:$PATH" exec /bin/sh -c "$2"\n',
     )
     monkeypatch.setenv("SHELL", str(shell))
 
@@ -210,7 +252,9 @@ def test_the_shell_is_spawned_once_per_process_even_from_many_threads(
     pathcache.which("anything")
 
     assert spawns.read_text(encoding="utf-8").count("x") == 1
-    assert results == [[home / "bin"]] * 8
+    assert len(results) == 8
+    assert results[0][0] == home / "bin"
+    assert all(result == results[0] for result in results)
 
 
 def test_a_failure_is_memoized_but_raised_fresh_each_time(

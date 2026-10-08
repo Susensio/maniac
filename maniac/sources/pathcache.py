@@ -17,6 +17,7 @@ the `$PATH` maniac happened to inherit.
 """
 
 import os
+import secrets
 import subprocess
 import threading
 from functools import cache
@@ -86,13 +87,21 @@ def _spawn_login_shell() -> str:
     whole rc file, `exec` into another shell included. `printenv`, not
     `echo $PATH`, because fish prints its list space-separated under `echo`.
     `cwd=$HOME` keeps a directory-triggered activation from re-entering.
+
+    The answer is read only between two markers carrying a per-call nonce:
+    a profile may print (a greeting, `fortune`, a motd) before the command
+    runs, and an EXIT trap it set prints after, and either would otherwise
+    become part of a `$PATH` entry (issue #1). `echo` and `;` mean the same
+    in sh, bash, zsh and fish (checked against each).
     """
     shell = os.environ.get("SHELL")
     if not shell:
         raise BrokenLoginShell(None, "$SHELL is unset; set it to your login shell")
+    nonce = secrets.token_hex(8)
+    begin, end = f"maniac-path-begin-{nonce}", f"maniac-path-end-{nonce}"
     try:
         result = subprocess.run(
-            [shell, "-lc", "printenv PATH"],
+            [shell, "-lc", f"echo {begin}; printenv PATH; echo {end}"],
             cwd=Path.home(),
             env=_login_shell_env(),
             stdin=subprocess.DEVNULL,
@@ -117,7 +126,15 @@ def _spawn_login_shell() -> str:
         raise BrokenLoginShell(
             shell, f"exited {result.returncode} reading $PATH{detail}"
         )
-    path = (result.stdout or "").strip()
+    _, began, after_begin = (result.stdout or "").partition(begin + "\n")
+    path, ended, _ = after_begin.partition(end)
+    if not (began and ended):
+        raise BrokenLoginShell(
+            shell,
+            "did not run the command it was given; check that your login "
+            "profile does not `exit` or `exec` another program",
+        )
+    path = path.strip()
     if not path:
         raise BrokenLoginShell(
             shell, "printed no $PATH; check that your login profile exports one"
