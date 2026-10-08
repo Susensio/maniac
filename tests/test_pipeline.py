@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import cast
 
 import pytest
+import structlog
 
 from maniac.config import Config
 from maniac.exceptions import CrawlerError, GenerationError
@@ -278,11 +279,6 @@ def test_synthesize_from_root_help_only(
 def test_synthesize_reports_its_source_material(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    messages: list[tuple[str, dict[str, object]]] = []
-    monkeypatch.setattr(
-        "maniac.orchestration.pipeline.logger.warning",
-        lambda event, **kwargs: messages.append((event, kwargs)),
-    )
     _help_tree(
         monkeypatch,
         {
@@ -295,38 +291,37 @@ def test_synthesize_reports_its_source_material(
         lambda source, cache_dir, **kwargs: _one_doc_file(True),
     )
 
-    synthesize(_resolved(output_dir=tmp_path), dry_run=True)
+    with structlog.testing.capture_logs() as logged:
+        synthesize(_resolved(output_dir=tmp_path), dry_run=True)
 
-    assert (
-        "Synthesis source material found",
-        {
-            "tool": "testtool",
-            "commands": 2,
-            "subcommands": 1,
-            "repository": "org/testtool",
-            "repository_docs": 1,
-            "repository_docs_version_matched": True,
-        },
-    ) in messages
+    assert {
+        "event": "Synthesis source material found",
+        "log_level": "warning",
+        "tool": "testtool",
+        "commands": 2,
+        "subcommands": 1,
+        "repository": "org/testtool",
+        "repository_docs": 1,
+        "repository_docs_version_matched": True,
+    } in logged
 
 
 def test_synthesize_warns_when_only_root_help_is_available(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    messages: list[str] = []
-    monkeypatch.setattr(
-        "maniac.orchestration.pipeline.logger.warning",
-        lambda event, **kwargs: messages.append(event),
-    )
     _help_tree(monkeypatch, {"> testtool --help": "Usage: testtool"})
     monkeypatch.setattr(
         "maniac.orchestration.pipeline.fetch_and_extract_docs",
         lambda source, cache_dir, **kwargs: ([], False),
     )
 
-    synthesize(_resolved(output_dir=tmp_path), dry_run=True)
+    with structlog.testing.capture_logs() as logged:
+        synthesize(_resolved(output_dir=tmp_path), dry_run=True)
 
-    assert "Limited source material: synthesizing from root --help only" in messages
+    assert (
+        "Limited source material: synthesizing from root --help only",
+        "warning",
+    ) in [(entry["event"], entry["log_level"]) for entry in logged]
 
 
 def test_synthesize_from_repository_docs_without_help(
