@@ -105,12 +105,19 @@ def _litellm_error_types() -> tuple[type[Exception], ...]:
 
 
 def clean_manpage_markdown(text: str, tool_name: str) -> str:
-    """Unwrap code fences if present and ensure valid manpage metadata header."""
+    """Unwrap the response's own outer code fence, if any, and ensure the header.
+
+    Only the outermost fence goes: the opening line, and the last line when
+    it is a bare closing fence. Code blocks inside the page (EXAMPLES) are
+    content -- dropping every fence line collapsed each block into a single
+    run-on paragraph.
+    """
     cleaned = text.strip()
 
     if cleaned.startswith("```"):
-        lines = cleaned.splitlines()
-        lines = [line for line in lines if not line.strip().startswith("```")]
+        lines = cleaned.splitlines()[1:]
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
         cleaned = "\n".join(lines).strip()
 
     expected_header = f"% {tool_name.upper()}(1) | User Commands"

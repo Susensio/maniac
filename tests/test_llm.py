@@ -20,6 +20,16 @@ def test_clean_manpage_markdown_wrapped_fences() -> None:
     assert not cleaned.endswith("```")
 
 
+def test_clean_manpage_markdown_keeps_code_blocks_inside_a_wrapped_page() -> None:
+    """Only the response's outer fence is a wrapper; an EXAMPLES block is
+    content, and losing its fences merges its lines into one paragraph."""
+    page = "% TOOL(1) | User Commands\n\n# EXAMPLES\n\n```\ntool a\ntool b\n```"
+    wrapped = f"```markdown\n{page}\n```"
+
+    assert clean_manpage_markdown(wrapped, "tool") == page
+    assert clean_manpage_markdown(page, "tool") == page
+
+
 def test_clean_manpage_markdown_missing_header() -> None:
     missing = "# NAME\ntool - description"
     cleaned = clean_manpage_markdown(missing, "mytool")
