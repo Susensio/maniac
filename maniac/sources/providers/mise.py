@@ -1,6 +1,7 @@
 """Mise-installed binaries under `~/.local/share/mise/installs/` (ADR-0015)."""
 
 import json
+import os
 import tomllib
 from pathlib import Path
 from typing import NamedTuple
@@ -139,6 +140,43 @@ class MiseProvider:
         except (OSError, ValueError):
             return False
         return (latest / relative_page).exists()
+
+
+def shim_target(bin_path: Path) -> Path | None:
+    """The binary a Mise shim dispatches to from `$HOME`, or None if not a shim (ADR-0063).
+
+    A shim is a `$PATH` entry in a `shims` directory that resolves to the
+    `mise` executable itself: mise picks the version per working directory
+    when it runs. From `$HOME` -- the scope a global page describes -- it
+    runs the first `mise bin-paths` directory holding that name, which is
+    the file returned here, so it can be detected and run like any other.
+
+    Raises `NotGloballySelected` for a shim no globally active tool provides
+    (mise writes shims for every installed version, project-only ones
+    included), and `MalformedToolMetadata` when `mise` itself fails: a shim
+    already found is evidence mise should work here.
+    """
+    if bin_path.parent.name != "shims" or resolve_cached(bin_path).name != "mise":
+        return None
+    for directory in _mise_global_bin_paths():
+        candidate = directory / bin_path.name
+        try:
+            if candidate.is_file() and os.access(candidate, os.X_OK):
+                return candidate
+        except OSError:
+            continue
+    raise NotGloballySelected(bin_path.name, bin_path)
+
+
+def _load_mise_global_bin_paths_uncached() -> tuple[Path, ...]:
+    """`mise bin-paths` from `$HOME`: the globally active tools' bin dirs, in order."""
+    output = discovery._run_mise("bin-paths")
+    return tuple(Path(line) for line in output.splitlines() if line.strip())
+
+
+_mise_global_bin_paths = discovery._SingleFlightCache(
+    _load_mise_global_bin_paths_uncached
+)
 
 
 def _is_globally_active(root: Path) -> bool:

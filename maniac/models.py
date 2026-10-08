@@ -172,7 +172,9 @@ class Installation:
     """A binary as a provider (ADR-0015) detected it: where it lives and who installed it."""
 
     binary: str  # "hx"
-    bin_path: Path  # ~/.local/bin/hx, the symlink or real file
+    bin_path: (
+        Path  # ~/.local/bin/hx: the file that runs (a Mise shim's target, ADR-0063)
+    )
     real_path: Path  # what it resolves to
     provider: str  # "mise"
     package: str  # identity in the provider's namespace

@@ -8,7 +8,10 @@ import structlog
 from maniac.sources import pathcache
 from maniac.sources.docs import cache
 from maniac.sources.pathcache import resolve_cached
-from maniac.sources.providers.mise import _mise_global_install_identities
+from maniac.sources.providers.mise import (
+    _mise_global_bin_paths,
+    _mise_global_install_identities,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -60,6 +63,7 @@ def _clear_resolve_cache() -> None:
     """
     resolve_cached.cache_clear()
     _mise_global_install_identities.cache_clear()
+    _mise_global_bin_paths.cache_clear()
 
 
 @pytest.fixture(autouse=True)

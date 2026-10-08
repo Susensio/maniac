@@ -16,6 +16,7 @@ from ..exceptions import MalformedToolMetadata, NotGloballySelected
 from ..models import Installation, RepoSource
 from .pathcache import path_dirs, resolve_bin_path
 from .providers.base import Provider
+from .providers.mise import shim_target
 from .providers.registry import registry
 
 # Both name a claim `_detect_via_registry` could not complete (ADR-0060,
@@ -150,7 +151,15 @@ def enumerate_installations(
 
 
 def _detect_via_registry(bin_path: Path) -> tuple[Provider, Installation] | None:
-    """Return the first registered provider that claims one PATH candidate."""
+    """Return the first registered provider that claims one PATH candidate.
+
+    A Mise shim is replaced by the binary it dispatches to from `$HOME`
+    first (ADR-0063): the shim itself is the `mise` executable, which no
+    provider owns, and what it runs depends on the directory it runs in.
+    """
+    target = shim_target(bin_path)
+    if target is not None:
+        bin_path = target
     for provider in registry.candidates_for(bin_path):
         inst = provider.detect(bin_path)
         if inst is not None:
