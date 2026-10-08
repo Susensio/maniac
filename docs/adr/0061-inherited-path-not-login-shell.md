@@ -1,6 +1,6 @@
 # ADR-0061: Resolve tools through the inherited PATH instead of a login shell's
 
-Status: Accepted
+Status: Superseded in part by [ADR-0062](0062-login-path-on-a-conventional-setup.md) (resolution source; the Mise global-selection check stands)
 Date: 2026-09-25
 Supersedes: [ADR-0020](0020-login-shell-path-refuse-contextual.md), [ADR-0044](0044-xdg-config-home-passthrough.md)
 

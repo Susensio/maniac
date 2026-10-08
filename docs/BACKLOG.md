@@ -9,10 +9,10 @@ Settled decisions live in `docs/adr/`; defects with a line to sit beside are mar
 - Distinguish a wrong documentation repository from one that legitimately has no manpage.
   Flag-inventory overlap and whether the repository contains implementation source are possible evidence, but absence is a normal synthesis fallback and must not be treated as proof of misresolution.
 
-- Serve only global tools when run inside an activated project environment.
-  Since ADR-0061, inside an activated virtualenv `install ruff` resolves the venv copy first, finds it unclaimed and synthesizes a page from its `--help` (ADR-0061 Corrections), where the intent is that maniac always works with global tools.
-  Mise project pins are already refused on Mise's own evidence (`mise ls --current` from `$HOME`); venv, conda and direnv entries have no equivalent yet.
-  Next step: find evidence-based detection that a first `$PATH` hit belongs to an activated environment (e.g. under `$VIRTUAL_ENV`/`$CONDA_PREFIX`, which name their roots), and decide between refusing it and resolving past it to a global claimed copy, the latter an explicit exception to ADR-0020's no-positional-fall-through rule carried by ADR-0061.
+- Recognise Mise shims as a provider claim.
+  ADR-0062's conventional Mise setup (`mise activate --shims` in the login profile) puts `~/.local/share/mise/shims/` first on the login `$PATH`, and no provider claims a shim, so a shimmed tool resolves as unclaimed and falls to tier-3 synthesis instead of tiers 1-2.
+  Next step: resolve a shim to the install it runs from `$HOME` (`mise which <tool>`, with the same activation scrub as `_run_mise`) and claim that, keeping the global-selection check (ADR-0061).
+  Shims dispatch per cwd, so the resolved install, not the shim, is what `--help` and `--version` must run.
 
 ## Refactors and architecture
 
@@ -34,6 +34,9 @@ Settled decisions live in `docs/adr/`; defects with a line to sit beside are mar
 
 ## Features and discovery
 
+- Support setups that build `$PATH` outside the login profile.
+  ADR-0062 assumes a conventional setup; a valid one that exports `$PATH` only from an interactive rc file (Mise's front-page `mise activate` in `.bashrc`, behind Debian's interactive guard) has its global tools silently missing from the login `$PATH`.
+  Next step: find evidence that tells such a setup apart from a machine without those tools (e.g. a provider's global install root existing while nothing on the login `$PATH` reaches it), then decide whether to fall back (an `-ilc` read is unsafe: rc files may `exec`) or to report it with the fix.
 - Extract bounded documentation from installed package roots (system packages are out of scope, ADR-0059): recognized local docs, Info pages, package metadata as supplementary context, and absolute-path help.
   Preserve each source's provenance.
 - Add tldr-pages as an examples source, preferring an installed tealdeer cache before its release zip and recording provenance in generated output.
