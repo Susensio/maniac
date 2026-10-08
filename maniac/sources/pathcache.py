@@ -171,11 +171,19 @@ def which(binary_name: str) -> Path | None:
     wrapper from a genuinely different build that shadows a managed one, so
     trying the next entry would attribute one binary's documentation to
     another with no evidence for it.
+
+    An entry that cannot be examined (a directory this user may not search)
+    is passed over, as a shell does and as `enumerate_installations`' bulk
+    walk already did -- it cannot be the binary that runs, so it is not the
+    first hit either.
     """
     for directory in path_dirs():
         candidate = directory / binary_name
-        if candidate.is_file() and os.access(candidate, os.X_OK):
-            return candidate
+        try:
+            if candidate.is_file() and os.access(candidate, os.X_OK):
+                return candidate
+        except OSError:
+            continue
     return None
 
 

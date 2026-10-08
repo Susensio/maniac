@@ -232,3 +232,22 @@ def test_a_failure_is_memoized_but_raised_fresh_each_time(
     assert spawns.read_text(encoding="utf-8").count("x") == 1
     assert raised[0] is not raised[1]
     assert str(raised[0]) == str(raised[1])
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root can search any directory")
+def test_which_passes_over_a_path_entry_it_cannot_search(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A shell skips a `$PATH` directory it may not search; so does `which`,
+    rather than letting `PermissionError` end the whole resolution."""
+    locked = tmp_path / "locked"
+    locked.mkdir()
+    reachable = tmp_path / "reachable"
+    reachable.mkdir()
+    tool = _script(reachable / "tool", "exit 0\n")
+    monkeypatch.setenv("PATH", f"{locked}{os.pathsep}{reachable}")
+    locked.chmod(0)
+    try:
+        assert pathcache.which("tool") == tool
+    finally:
+        locked.chmod(0o755)

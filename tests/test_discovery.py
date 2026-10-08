@@ -257,6 +257,7 @@ def test_run_mise_scrubs_activation_vars_but_keeps_user_mise_config(
 def test_discover_repo_fallback(monkeypatch, tmp_path: Path) -> None:
     """A binary nothing on disk resolves to is unresolvable, not a bare-name guess."""
     monkeypatch.setattr(discovery, "_load_mise_registry", dict)
+    monkeypatch.setenv("PATH", str(tmp_path))
     assert (
         discover_repo("nonexistent_unknown_tool", bin_dir=tmp_path, config=Config())
         is None
