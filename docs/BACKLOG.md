@@ -11,9 +11,6 @@ Settled decisions live in `docs/adr/`; defects with a line to sit beside are mar
 
 ## Refactors and architecture
 
-- Surface `Installation.losers` to the user.
-  Losing later-`$PATH` claims are retained on the model but reach no output: `maniac list` rows (`ToolRow`) carry no `Installation`, and there is no diagnostic command.
-  Next step: decide the surface -- a `list` column/flag or a new diagnostic command.
 - Retain competing providers claiming the same `bin_path` at one `$PATH` entry.
   `_detect_via_registry` stops at the first matching provider, and it is also the single-name lookup path for `find_installation`/`discover_repo`, so collecting all claims changes that hot path's cost.
 - Cut `maniac list` below ~10s warm (measured 2026-09-24 at 0ae53ad).
@@ -29,6 +26,12 @@ Settled decisions live in `docs/adr/`; defects with a line to sit beside are mar
 
 ## Features and discovery
 
+- Seed synthesis with an outdated, human-written page of the same software.
+  A page documenting another version carries structure, prose and examples that `--help` lacks: a losing `$PATH` copy's own page (`Installation.losers`, retained for this and shown nowhere), an upstream page at a non-matching tag (refused by tier 2, ADR-0016), a displaced vendor page.
+  Give it to the model labelled with the version it documents; the current `--help` wins wherever they disagree, and options it no longer lists are dropped.
+  Only human-written pages qualify: one maniac synthesized (provenance signature, `Tier.SYNTHESIS`) or help2man generated (`is_help2man_content`) is derived from the same help and docs the model already gets, so it is no better a seed than none and would carry the last model's errors forward.
+  A loser's page needs proof of the same software first -- the same package or repository as the winner, as ADR-0055 requires -- since a shared name is not evidence.
+  Next step: decide how the seed is recorded in provenance; the recorded version stays the current binary's under ADR-0019.
 - Support setups that build `$PATH` outside the login profile.
   ADR-0062 assumes a conventional setup; a valid one that exports `$PATH` only from an interactive rc file (Mise's front-page `mise activate` in `.bashrc`, behind Debian's interactive guard) has its global tools silently missing from the login `$PATH`.
   Next step: find evidence that tells such a setup apart from a machine without those tools (e.g. a provider's global install root existing while nothing on the login `$PATH` reaches it), then decide whether to fall back (an `-ilc` read is unsafe: rc files may `exec`) or to report it with the fix.
