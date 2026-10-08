@@ -14,6 +14,7 @@ from pathlib import Path
 
 from .. import manifest
 from ..config import Config
+from ..exceptions import ManiacError
 from ..sources.candidates import select_install_root
 from ..sources.crawler import get_version
 from ..sources.manpages import (
@@ -21,8 +22,9 @@ from ..sources.manpages import (
     find_installed_manpage_path,
 )
 from ..sources.packages import ExternalPageFreshness, verify_external_page
-from ..sources.pathcache import resolve_cached, which
+from ..sources.pathcache import resolve_cached
 from ..sources.providers.base import DirectPageProvider
+from ..sources.resolution import binary_path
 from ..sources.roff import verify_page_header
 from .models import ActionState, Candidate, LocalClassification, PageSource
 
@@ -93,13 +95,18 @@ def _installed_source(
 
 
 def _unclaimed_version(tool: str, cfg: Config) -> str | None:
-    """`--version` of the binary the login `$PATH` resolves `tool` to (ADR-0062).
+    """`--version` of the binary that runs for `tool` from `$HOME` (ADR-0062, ADR-0063).
 
     Run by path, never by bare name: `subprocess` would search the inherited
     `$PATH`, so inside an activated venv the venv's copy would answer for the
     global binary the page documents.
     """
-    path = which(tool)
+    try:
+        path = binary_path(tool)
+    except ManiacError:
+        # A shim that runs nothing from $HOME, or mise failing behind one:
+        # no binary to ask, so no version evidence (never `outdated`).
+        return None
     return get_version([str(path)], config=cfg) if path is not None else None
 
 

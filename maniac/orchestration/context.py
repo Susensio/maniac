@@ -14,7 +14,7 @@ from pathlib import Path
 
 from ..config import Config
 from ..models import Installation, RepoSource
-from ..sources import documentation, pathcache, resolution
+from ..sources import documentation, resolution
 from ..sources.providers.base import Provider
 from ..sources.providers.registry import registry
 
@@ -36,8 +36,9 @@ class ResolvedTool:
     provider: Provider | None = None
     installation: Installation | None = None
     bin_path: Path | None = None
-    """The binary that runs: the claimed installation's file, else the
-    `$PATH` hit (ADR-0062's login `$PATH`, or `bin_dir`)."""
+    """The binary that runs: the claimed installation's file, else
+    `resolution.binary_path` (ADR-0062's login `$PATH` or `bin_dir`, a
+    Mise shim replaced by its target, ADR-0063)."""
 
     @property
     def command(self) -> str:
@@ -95,12 +96,12 @@ def resolve_tool(
     found = resolution.find_installation(tool_name, bin_dir=bin_dir)
     provider, installation = found if found is not None else (None, None)
     return ResolvedTool(
-        # What runs: the claimed file, which for a Mise shim is its global
-        # target rather than the shim (ADR-0063); else the `$PATH` hit.
+        # What runs: the claimed file, else the unclaimed binary -- for a
+        # Mise shim either way its `$HOME` target, never the shim (ADR-0063).
         bin_path=(
             installation.bin_path
             if installation is not None
-            else pathcache.resolve_bin_path(tool_name, bin_dir)
+            else resolution.binary_path(tool_name, bin_dir)
         ),
         tool_name=tool_name,
         config=config,

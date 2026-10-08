@@ -14,7 +14,11 @@ from pathlib import Path
 import pytest
 
 from maniac.config import Config
-from maniac.exceptions import MalformedToolMetadata, NotGloballySelected
+from maniac.exceptions import (
+    MalformedToolMetadata,
+    NotGloballySelected,
+    ShimRunsNothing,
+)
 from maniac.orchestration.context import resolve_tool
 from maniac.sources import resolution
 from maniac.sources.providers import mise
@@ -115,18 +119,70 @@ def test_a_shim_resolves_to_the_first_global_bin_dir_holding_its_name(
     assert env["MISE_CONFIG_DIR"] == "/config/mise"
 
 
-def test_a_shim_no_global_tool_provides_is_not_globally_selected(
+def test_a_shim_that_runs_nothing_from_home_is_not_globally_selected(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Mise writes shims for project-only installs too; from `$HOME` there
-    is nothing for this one to run."""
+    """Mise writes shims for project-only installs too; from `$HOME`, with
+    no global tool and nothing later on `$PATH`, it runs nothing."""
     shim = _shim(tmp_path, "cowsay", _mise_binary(tmp_path))
     _use(monkeypatch, _FakeMise([], {}))
+    monkeypatch.setenv("PATH", str(shim.parent))
 
-    with pytest.raises(NotGloballySelected) as raised:
+    with pytest.raises(ShimRunsNothing) as raised:
         mise.shim_target(shim)
+    assert isinstance(raised.value, NotGloballySelected)
     assert raised.value.tool == "cowsay"
     assert raised.value.path == shim
+
+
+def test_a_shim_no_global_tool_provides_falls_through_like_mise_does(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Measured: with no global version, the shim runs the next binary of
+    that name on `$PATH`, outside the shims directory -- so that one, found
+    on the login `$PATH`, is what a global page documents."""
+    shim = _shim(tmp_path, "cowsay", _mise_binary(tmp_path))
+    later = _executable(tmp_path / "later" / "cowsay")
+    _executable(tmp_path / "even-later" / "cowsay")
+    _use(monkeypatch, _FakeMise([], {}))
+    monkeypatch.setenv(
+        "PATH",
+        os.pathsep.join(
+            [str(shim.parent), str(later.parent), str(tmp_path / "even-later")]
+        ),
+    )
+
+    assert mise.shim_target(shim) == later
+
+
+def test_list_leaves_out_a_shim_that_runs_nothing_but_a_named_lookup_says_why(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`list` with no names shows the machine's tools: a project-only
+    tool's shim reaches nothing from `$HOME`, so it gets no row. Asked for
+    by name, it is still refused with the reason."""
+    mise_bin = _mise_binary(tmp_path)
+    _shim(tmp_path, "project-only", mise_bin)
+    shim_dir = _shim(tmp_path, "cowsay", mise_bin).parent
+    cowsay_bin = _npm_install(tmp_path, "cowsay", "1.5.0", "cowsay")
+    _use(
+        monkeypatch,
+        _FakeMise(
+            [cowsay_bin],
+            {"npm:cowsay": [{"install_path": str(cowsay_bin.parent.parent)}]},
+        ),
+    )
+    monkeypatch.setenv("PATH", str(shim_dir))
+    errors: list[str] = []
+
+    claims = resolution.enumerate_installations(
+        on_error=lambda name, error: errors.append(name)
+    )
+
+    assert [inst.binary for _, inst in claims] == ["cowsay"]
+    assert errors == []
+    with pytest.raises(NotGloballySelected):
+        resolution.find_installation("project-only")
 
 
 def test_mise_failing_behind_a_shim_is_malformed_metadata(
@@ -232,3 +288,21 @@ def test_a_session_pinned_shim_target_is_still_refused(
 
     with pytest.raises(NotGloballySelected):
         resolution.find_installation("cowsay")
+
+
+def test_an_unclaimed_fallthrough_target_is_what_runs_not_the_shim(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """No provider claims the binary a shim fell through to, so nothing
+    hands back an `Installation.bin_path` -- the shim must still not be what
+    runs, or `--help` from a project would answer with that project's
+    version. Caught live against real mise."""
+    shim = _shim(tmp_path, "cowsay", _mise_binary(tmp_path))
+    later = _executable(tmp_path / "later" / "cowsay")
+    _use(monkeypatch, _FakeMise([], {}))
+    monkeypatch.setenv("PATH", os.pathsep.join([str(shim.parent), str(later.parent)]))
+
+    tool = resolve_tool("cowsay", config=Config())
+
+    assert tool.provider is None
+    assert tool.executable == str(later)

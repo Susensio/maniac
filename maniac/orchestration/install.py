@@ -112,7 +112,7 @@ def run_install(
         logger.warning(
             "Binary resolves outside any known installer",
             tool=tool_name,
-            resolved_path=str(bin_path),
+            resolved_path=str(tool.bin_path),
         )
 
     outcome = _try_install_root(tool, force=force, dry_run=dry_run)

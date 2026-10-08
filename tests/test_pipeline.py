@@ -192,7 +192,7 @@ def test_resolve_tool_is_the_direct_synthesis_entry(
         lambda name, bin_dir=None: (provider, inst),
     )
     monkeypatch.setattr(
-        "maniac.orchestration.context.pathcache.which",
+        "maniac.sources.pathcache.which",
         lambda name: tmp_path / "bin" / name,
     )
     _help_tree(monkeypatch, {"> testtool --help": "Usage: testtool"})

@@ -12,7 +12,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from ..config import Config
-from ..exceptions import MalformedToolMetadata, NotGloballySelected
+from ..exceptions import MalformedToolMetadata, NotGloballySelected, ShimRunsNothing
 from ..models import Installation, RepoSource
 from .pathcache import path_dirs, resolve_bin_path
 from .providers.base import Provider
@@ -23,6 +23,22 @@ from .providers.registry import registry
 # ADR-0061): a tool's own metadata file unreadable, or a Mise install
 # refused as not globally selected. Every catch below treats them alike.
 _DiscoveryError = (MalformedToolMetadata, NotGloballySelected)
+
+
+def binary_path(binary_name: str, bin_dir: str | Path | None = None) -> Path | None:
+    """The file that actually runs for `binary_name` from `$HOME`, or None.
+
+    `resolve_bin_path`'s answer, with a Mise shim replaced by what it
+    dispatches to (ADR-0063) -- a shim picks its version by working
+    directory, so running it from maniac's own would answer for whichever
+    project maniac happens to be in. Every caller that runs or detects a
+    binary by name goes through this, claimed or not. Raises what
+    `shim_target` raises.
+    """
+    found = resolve_bin_path(binary_name, bin_dir)
+    if found is None:
+        return None
+    return shim_target(found) or found
 
 
 def find_installation(
@@ -36,7 +52,7 @@ def find_installation(
     need the install root and version directly, not only what
     `resolve_source` derives from them.
     """
-    bin_path = resolve_bin_path(binary_name, bin_dir)
+    bin_path = binary_path(binary_name, bin_dir)
     return _detect_via_registry(bin_path) if bin_path is not None else None
 
 
@@ -126,6 +142,12 @@ def enumerate_installations(
     for name, bin_path in seen.items():
         try:
             claim = _detect_via_registry(bin_path)
+        except ShimRunsNothing:
+            # From $HOME this name reaches no binary at all (ADR-0063
+            # Corrections) -- not a tool of this machine, so no row.
+            if on_scan is not None:
+                on_scan()
+            continue
         except _DiscoveryError as e:
             if on_error is not None:
                 on_error(name, e)
@@ -136,6 +158,9 @@ def enumerate_installations(
             provider, inst = claim
             losers: list[Installation] = []
             for shadow_path in shadowed.get(name, ()):
+                if shadow_path == inst.bin_path:
+                    # The binary a shim fell through to is the winner itself.
+                    continue
                 try:
                     shadow_claim = _detect_via_registry(shadow_path)
                 except _DiscoveryError:

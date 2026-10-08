@@ -1595,7 +1595,9 @@ def test_classify_outdated_when_unclaimed_binarys_own_version_differs(
         lambda man_bin, tool_name: installed,
     )
     resolved = tmp_path / "bin" / "tool"
-    monkeypatch.setattr("maniac.listing.classification.which", lambda name: resolved)
+    monkeypatch.setattr(
+        "maniac.listing.classification.binary_path", lambda name: resolved
+    )
     asked: list[list[str]] = []
     monkeypatch.setattr(
         "maniac.listing.classification.get_version",
@@ -1632,7 +1634,9 @@ def test_classify_ok_when_unclaimed_binarys_own_version_matches(
         lambda man_bin, tool_name: installed,
     )
     resolved = tmp_path / "bin" / "tool"
-    monkeypatch.setattr("maniac.listing.classification.which", lambda name: resolved)
+    monkeypatch.setattr(
+        "maniac.listing.classification.binary_path", lambda name: resolved
+    )
     asked: list[list[str]] = []
     monkeypatch.setattr(
         "maniac.listing.classification.get_version",
@@ -1671,7 +1675,8 @@ def test_classify_ok_when_unclaimed_binarys_version_is_unavailable(
         lambda man_bin, tool_name: installed,
     )
     monkeypatch.setattr(
-        "maniac.listing.classification.which", lambda name: tmp_path / "bin" / name
+        "maniac.listing.classification.binary_path",
+        lambda name: tmp_path / "bin" / name,
     )
     monkeypatch.setattr(
         "maniac.listing.classification.get_version", lambda cmd, **kwargs: None

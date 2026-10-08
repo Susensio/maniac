@@ -67,3 +67,17 @@ class NotGloballySelected(ManiacError):
         # the caller's own message (`orchestration/install.py`'s refusal).
         self.reason = "not a globally selected mise tool"
         super().__init__(f"{tool}: {self.reason} ({root})")
+
+
+class ShimRunsNothing(NotGloballySelected):
+    """A Mise shim that runs nothing from `$HOME` (ADR-0063 Corrections).
+
+    No globally active tool provides it and no other binary of that name
+    is on the login `$PATH` for mise to fall through to -- typically the
+    shim of a project-only tool. Named, it is refused like any project-only
+    install; `list` with no names leaves it out, since from `$HOME` the name
+    reaches no binary at all.
+    """
+
+    def __init__(self, tool: str, shim: Path) -> None:
+        super().__init__(tool, shim)

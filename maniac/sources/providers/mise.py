@@ -7,12 +7,12 @@ from pathlib import Path
 from typing import NamedTuple
 
 from ...config import Config
-from ...exceptions import MalformedToolMetadata, NotGloballySelected
+from ...exceptions import MalformedToolMetadata, NotGloballySelected, ShimRunsNothing
 from ...logging import logger
 from ...models import Installation, RemoteRepoSource, RepoSource
 from .. import discovery
 from ..manpages import find_install_root_manpages
-from ..pathcache import resolve_cached
+from ..pathcache import path_dirs, resolve_cached
 from .base import SourceResolver
 from .npm import read_package_json
 
@@ -151,21 +151,38 @@ def shim_target(bin_path: Path) -> Path | None:
     runs the first `mise bin-paths` directory holding that name, which is
     the file returned here, so it can be detected and run like any other.
 
-    Raises `NotGloballySelected` for a shim no globally active tool provides
-    (mise writes shims for every installed version, project-only ones
-    included), and `MalformedToolMetadata` when `mise` itself fails: a shim
-    already found is evidence mise should work here.
+    When no global tool provides the name, mise falls through to the next
+    binary of that name on `$PATH`, outside its shims directory (measured:
+    ADR-0063 Corrections), so that binary is the target. With nothing to
+    fall through to either -- mise writes shims for every installed version,
+    project-only ones included -- it raises `ShimRunsNothing`.
+    `MalformedToolMetadata` when `mise` itself fails: a shim already found
+    is evidence mise should work here.
     """
     if bin_path.parent.name != "shims" or resolve_cached(bin_path).name != "mise":
         return None
     for directory in _mise_global_bin_paths():
-        candidate = directory / bin_path.name
-        try:
-            if candidate.is_file() and os.access(candidate, os.X_OK):
-                return candidate
-        except OSError:
+        candidate = _executable_in(directory, bin_path.name)
+        if candidate is not None:
+            return candidate
+    for directory in path_dirs():
+        if directory == bin_path.parent:
             continue
-    raise NotGloballySelected(bin_path.name, bin_path)
+        candidate = _executable_in(directory, bin_path.name)
+        if candidate is not None:
+            return candidate
+    raise ShimRunsNothing(bin_path.name, bin_path)
+
+
+def _executable_in(directory: Path, name: str) -> Path | None:
+    """`directory / name` when it is an executable file this user can reach."""
+    candidate = directory / name
+    try:
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            return candidate
+    except OSError:
+        return None
+    return None
 
 
 def _load_mise_global_bin_paths_uncached() -> tuple[Path, ...]:
