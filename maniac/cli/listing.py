@@ -28,7 +28,7 @@ from ..listing import (
     group_rows,
 )
 from ..models import RepoSource
-from . import app, console, get_config
+from . import app, console, get_config, require_login_path
 from .render import _repo_cell
 
 # Traffic-light by what remains to be done: green needs nothing, yellow
@@ -667,6 +667,7 @@ def list_tools(
     ] = False,
 ) -> None:
     """Report each binary's manpage reachability states."""
+    require_login_path()
     states = _selected_states(
         outdated=outdated,
         unverified=unverified,

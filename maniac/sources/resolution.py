@@ -75,8 +75,9 @@ def enumerate_installations(
     binary that actually runs when two providers claim the same name
     (ADR-0016's tie-break).
 
-    Walks the inherited `$PATH` (ADR-0061) -- the answer describes the
-    environment MANIAC is run in, same as `resolve_bin_path`.
+    Walks the login shell's `$PATH` (ADR-0062) -- the answer describes the
+    machine, not the environment MANIAC happened to be run in, same as
+    `resolve_bin_path`.
 
     `on_start`/`on_scan`, both `None` by default, split the work into two
     phases to instrument: `on_start` fires once with the candidate count,

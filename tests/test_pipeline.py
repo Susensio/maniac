@@ -190,6 +190,10 @@ def test_resolve_tool_is_the_direct_synthesis_entry(
         "maniac.orchestration.context.resolution.find_installation",
         lambda name, bin_dir=None: (provider, inst),
     )
+    monkeypatch.setattr(
+        "maniac.orchestration.context.pathcache.which",
+        lambda name: tmp_path / "bin" / name,
+    )
     _help_tree(monkeypatch, {"> testtool --help": "Usage: testtool"})
     observed: dict[str, object] = {}
 

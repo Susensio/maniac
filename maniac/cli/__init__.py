@@ -30,6 +30,22 @@ def get_config(ctx: typer.Context) -> Config:
     return cast(Config, ctx.obj)
 
 
+def require_login_path() -> None:
+    """Stop once, up front, when the login shell cannot report `$PATH` (ADR-0062).
+
+    Every binary resolves through it, so a broken one would otherwise fail
+    each tool in turn with the same message; ADR-0060 says report it and exit.
+    """
+    from ..exceptions import BrokenLoginShell
+    from ..sources.pathcache import path_dirs
+
+    try:
+        path_dirs()
+    except BrokenLoginShell as e:
+        console.print(f"[bold red]Cannot read $PATH from your {e}[/bold red]")
+        raise typer.Exit(1) from e
+
+
 @app.callback()
 def main(
     ctx: typer.Context,

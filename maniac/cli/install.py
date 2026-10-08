@@ -12,7 +12,7 @@ import typer
 
 from ..exceptions import ManiacError
 from ..orchestration.install import InstallOutcome, InstallRefused
-from . import app, console, get_config
+from . import app, console, get_config, require_login_path
 from .options import (
     DryRunOption,
     ForceOption,
@@ -78,6 +78,7 @@ def install(
         return
 
     cfg = get_config(ctx)
+    require_login_path()
 
     from ..orchestration.install import run_install
 

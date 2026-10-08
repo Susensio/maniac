@@ -143,7 +143,9 @@ def _crawl_help(tool: ResolvedTool) -> dict[str, str]:
     """Crawled command tree, empty when the binary's `--help` yielded nothing usable."""
     logger.info("Extracting CLI help and subcommands", tool=tool.tool_name)
     try:
-        return find_subcommands([tool.executable], config=tool.config)
+        return find_subcommands(
+            [tool.command], config=tool.config, executable=tool.executable
+        )
     except CrawlerError as error:
         # Repository documentation can still be enough to synthesize a page.
         logger.warning(

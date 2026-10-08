@@ -259,8 +259,15 @@ def find_subcommands(
     visited_outputs: set[str] | None = None,
     timeout: int | None = None,
     config: Config | None = None,
+    executable: str | None = None,
 ) -> dict[str, str]:
-    """Recursively discover and extract help text for commands and subcommands."""
+    """Recursively discover and extract help text for commands and subcommands.
+
+    `executable`, when given, is what actually runs in place of `cmd[0]`
+    (ADR-0062: the resolved path, so `subprocess` cannot pick another copy
+    off the inherited `$PATH`). `cmd` stays the name the user knows: it
+    keys the result and is what help text prefixes subcommands with.
+    """
     if isinstance(cmd, str):
         cmd = cmd.split()
     results = {} if results is None else results
@@ -272,7 +279,8 @@ def find_subcommands(
         return results
 
     try:
-        help_text = get_help(cmd, timeout=timeout, config=cfg)
+        run = [executable, *cmd[1:]] if executable is not None else cmd
+        help_text = get_help(run, timeout=timeout, config=cfg)
     except CrawlerError:
         if not results:
             raise
@@ -292,6 +300,7 @@ def find_subcommands(
             visited_outputs=visited_outputs,
             timeout=timeout,
             config=cfg,
+            executable=executable,
         )
 
     return results

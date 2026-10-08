@@ -1,9 +1,11 @@
+import os
 from collections.abc import Generator
 from pathlib import Path
 
 import pytest
 import structlog
 
+from maniac.sources import pathcache
 from maniac.sources.docs import cache
 from maniac.sources.pathcache import resolve_cached
 from maniac.sources.providers.mise import _mise_global_install_identities
@@ -79,3 +81,25 @@ def _no_real_xdg_writes(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None
         ("XDG_STATE_HOME", "state"),
     ):
         monkeypatch.setenv(variable, str(tmp_path / subdir))
+
+
+@pytest.fixture(autouse=True)
+def _login_path_is_the_test_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> Generator[None, None, None]:
+    """Resolve through the test's own `$PATH`, never a real login shell.
+
+    Production reads `$PATH` from `$SHELL -lc` at `$HOME` (ADR-0062), which
+    here would be the developer's real profile. Tests that place binaries
+    set `PATH` with `monkeypatch.setenv`; this hands that value back as the
+    login shell's answer, read at call time. `test_pathcache.py` exercises
+    the real spawn through the original it imports before this applies.
+    The memoized answer is cleared around every test for the same reason
+    `resolve_cached` is.
+    """
+    pathcache.clear_login_path()
+    monkeypatch.setattr(
+        pathcache, "_spawn_login_shell", lambda: os.environ.get("PATH", "")
+    )
+    yield
+    pathcache.clear_login_path()

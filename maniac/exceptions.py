@@ -29,6 +29,22 @@ class MalformedToolMetadata(ManiacError):
         super().__init__(f"{path}: {reason}")
 
 
+class BrokenLoginShell(ManiacError):
+    """The login shell could not report `$PATH` (ADR-0060, ADR-0062).
+
+    maniac resolves every binary through `$SHELL -lc 'printenv PATH'` at
+    `$HOME`; when that fails, nothing can be resolved, so it stops with the
+    reason instead of guessing at a `$PATH`. `shell` is None when `$SHELL`
+    itself is unset.
+    """
+
+    def __init__(self, shell: str | None, reason: str) -> None:
+        self.shell = shell
+        self.reason = reason
+        who = f"login shell {shell}" if shell else "login shell"
+        super().__init__(f"{who}: {reason}")
+
+
 class NotGloballySelected(ManiacError):
     """A Mise installation exists but is not among Mise's globally selected
     tools (`mise ls --current` from $HOME, ADR-0061).

@@ -11,7 +11,7 @@ from maniac.config import Config
 from maniac.installer import InstallResult
 from maniac.manifest import Entry
 from maniac.models import DocFile, Installation, RepoSource
-from maniac.orchestration.context import ResolvedTool
+from maniac.orchestration.context import ResolvedTool, resolve_tool
 from maniac.orchestration.install import (
     InstallRefused,
     Tier,
@@ -595,18 +595,36 @@ def test_run_install_reports_repository_docs_only_synthesis(
     assert outcome.detail == "synthesized from repo docs only"
 
 
+def test_resolved_tool_runs_the_login_path_binary_not_the_bare_name(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """ADR-0062: `--help`/`--version` run through `subprocess`, which searches
+    the inherited `$PATH` -- inside an activated venv a bare `ruff` would
+    crawl the venv's copy while resolution chose the login `$PATH`'s."""
+    global_ruff = tmp_path / "global" / "ruff"
+    monkeypatch.setattr(pathcache, "which", lambda name: global_ruff)
+    monkeypatch.setattr(
+        "maniac.orchestration.context.resolution.find_installation",
+        lambda name, bin_dir=None: None,
+    )
+
+    tool = resolve_tool("ruff", config=Config(cache_dir=tmp_path / "cache"))
+
+    assert tool.executable == str(global_ruff)
+
+
 def test_run_install_names_the_resolved_path_of_an_unclaimed_binary(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """ADR-0061: running inside a venv now resolves `ruff` to the venv copy
-    rather than losing it to the login-`$PATH` refusal -- no installer
-    claims it, and the resolved path is logged at `warning` (visible at
-    default logging level) so the user can see why.
+    """An unclaimed first hit on the login `$PATH` (a wrapper script, a
+    hand-copied binary) reaches tier 3 -- no installer claims it, and the
+    resolved path is logged at `warning` (visible at default logging level)
+    so the user can see why.
     """
     from maniac.models import PipelineResult
 
-    venv_ruff = tmp_path / ".venv" / "bin" / "ruff"
-    monkeypatch.setattr(pathcache, "which", lambda name: venv_ruff)
+    unclaimed_ruff = tmp_path / "bin" / "overrides" / "ruff"
+    monkeypatch.setattr(pathcache, "which", lambda name: unclaimed_ruff)
     monkeypatch.setattr(
         "maniac.orchestration.context.resolution.find_installation",
         lambda name, bin_dir=None: None,
@@ -633,7 +651,7 @@ def test_run_install_names_the_resolved_path_of_an_unclaimed_binary(
         "event": "Binary resolves outside any known installer",
         "log_level": "warning",
         "tool": "ruff",
-        "resolved_path": str(venv_ruff),
+        "resolved_path": str(unclaimed_ruff),
     } in logged
 
 
@@ -648,8 +666,8 @@ def test_unclaimed_binary_resolved_path_is_visible_at_default_log_level(
     from maniac.logging import setup_logging
     from maniac.models import PipelineResult
 
-    venv_ruff = tmp_path / ".venv" / "bin" / "ruff"
-    monkeypatch.setattr(pathcache, "which", lambda name: venv_ruff)
+    unclaimed_ruff = tmp_path / "bin" / "overrides" / "ruff"
+    monkeypatch.setattr(pathcache, "which", lambda name: unclaimed_ruff)
     monkeypatch.setattr(
         "maniac.orchestration.context.resolution.find_installation",
         lambda name, bin_dir=None: None,
@@ -672,7 +690,7 @@ def test_unclaimed_binary_resolved_path_is_visible_at_default_log_level(
     setup_logging(verbose=False)
     run_install("ruff")
 
-    assert str(venv_ruff) in capsys.readouterr().out
+    assert str(unclaimed_ruff) in capsys.readouterr().out
 
 
 def test_run_install_tier2_skipped_without_an_installed_version(

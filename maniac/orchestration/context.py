@@ -14,7 +14,7 @@ from pathlib import Path
 
 from ..config import Config
 from ..models import Installation, RepoSource
-from ..sources import documentation, resolution
+from ..sources import documentation, pathcache, resolution
 from ..sources.providers.base import Provider
 from ..sources.providers.registry import registry
 
@@ -35,13 +35,28 @@ class ResolvedTool:
     bin_dir: Path | None = None
     provider: Provider | None = None
     installation: Installation | None = None
+    bin_path: Path | None = None
+    """The binary resolution chose (ADR-0062's login `$PATH`, or `bin_dir`)."""
 
     @property
-    def executable(self) -> str:
-        """Command that runs this binary, bin-dir-qualified when one was named."""
+    def command(self) -> str:
+        """How the crawled help names this binary, bin-dir-qualified when one was named."""
         if self.bin_dir is None:
             return self.tool_name
         return str(self.bin_dir / self.tool_name)
+
+    @property
+    def executable(self) -> str:
+        """What actually runs: the resolved path whenever there is one.
+
+        Never the bare name when a path was resolved -- `--help` and
+        `--version` run through `subprocess`, which searches the `$PATH`
+        maniac inherited, so inside an activated venv a bare `ruff` would
+        crawl the venv's copy while resolution documented the global one.
+        """
+        if self.bin_path is not None:
+            return str(self.bin_path)
+        return self.command
 
     @property
     def installed_version(self) -> str | None:
@@ -79,6 +94,7 @@ def resolve_tool(
     found = resolution.find_installation(tool_name, bin_dir=bin_dir)
     provider, installation = found if found is not None else (None, None)
     return ResolvedTool(
+        bin_path=pathcache.resolve_bin_path(tool_name, bin_dir),
         tool_name=tool_name,
         config=config,
         cache_dir=Path(cache_dir) if cache_dir is not None else config.cache_dir,

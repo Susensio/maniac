@@ -399,7 +399,7 @@ def test_cli_install_reuses_config_for_existing_destination(
 def test_cli_install_exits_nonzero_for_unreachable_binary(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """ADR-0048: ADR-0061's unreachable-binary refusal still produces no page."""
+    """ADR-0048: the unreachable-binary refusal still produces no page."""
     monkeypatch.setattr("maniac.sources.pathcache.which", lambda name: None)
     monkeypatch.setattr(
         "maniac.orchestration.context.resolution.find_installation",
@@ -410,6 +410,30 @@ def test_cli_install_exits_nonzero_for_unreachable_binary(
 
     assert result.exit_code != 0
     assert "$PATH" in result.output
+
+
+@pytest.mark.parametrize("command", [["install", "a", "b"], ["list"], ["list", "a"]])
+def test_cli_stops_once_when_the_login_shell_cannot_report_path(
+    monkeypatch: pytest.MonkeyPatch, command: list[str]
+) -> None:
+    """ADR-0060/ADR-0062: every binary resolves through the login `$PATH`, so
+    a broken login shell is reported once, up front, and nothing runs."""
+    from maniac.exceptions import BrokenLoginShell
+    from maniac.sources import pathcache
+
+    def broken() -> str:
+        raise BrokenLoginShell("/bin/bash", "exited 1 reading $PATH")
+
+    monkeypatch.setattr(pathcache, "_spawn_login_shell", broken)
+    monkeypatch.setattr(
+        "maniac.orchestration.install.run_install",
+        lambda *a, **k: pytest.fail("install ran past a broken login shell"),
+    )
+
+    result = runner.invoke(app, command)
+
+    assert result.exit_code == 1
+    assert result.output.count("login shell /bin/bash: exited 1") == 1
 
 
 def test_cli_install_exits_nonzero_when_no_synthesize_finds_nothing(

@@ -21,7 +21,7 @@ from ..sources.manpages import (
     find_installed_manpage_path,
 )
 from ..sources.packages import ExternalPageFreshness, verify_external_page
-from ..sources.pathcache import resolve_cached
+from ..sources.pathcache import resolve_cached, which
 from ..sources.providers.base import DirectPageProvider
 from ..sources.roff import verify_page_header
 from .models import ActionState, Candidate, LocalClassification, PageSource
@@ -92,6 +92,17 @@ def _installed_source(
     return PageSource.SYSTEM
 
 
+def _unclaimed_version(tool: str, cfg: Config) -> str | None:
+    """`--version` of the binary the login `$PATH` resolves `tool` to (ADR-0062).
+
+    Run by path, never by bare name: `subprocess` would search the inherited
+    `$PATH`, so inside an activated venv the venv's copy would answer for the
+    global binary the page documents.
+    """
+    path = which(tool)
+    return get_version([str(path)], config=cfg) if path is not None else None
+
+
 def _managed_page_state(
     candidate: Candidate, cfg: Config, evidence: _PageEvidence
 ) -> ActionState:
@@ -102,7 +113,7 @@ def _managed_page_state(
         return ActionState.OK
     inst = candidate.installation
     current_version = (
-        inst.version if inst is not None else get_version([candidate.tool], config=cfg)
+        inst.version if inst is not None else _unclaimed_version(candidate.tool, cfg)
     )
     if (
         current_version is not None

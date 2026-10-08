@@ -218,6 +218,29 @@ def test_find_subcommands_recursive(monkeypatch: pytest.MonkeyPatch) -> None:
     assert "> tool sub2 --help" in tree
 
 
+def test_find_subcommands_runs_the_executable_but_keys_and_parses_by_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ADR-0062: the resolved path runs, so the inherited `$PATH` cannot pick
+    another copy; the name still keys the tree and is the prefix help lines
+    carry (`tool sub1`), so `sub1` is found rather than `tool` itself."""
+    ran: list[list[str]] = []
+
+    def fake_get_help(
+        cmd: list[str], timeout: int | None = None, config: Any | None = None
+    ) -> str:
+        ran.append(cmd)
+        if cmd == ["/opt/global/tool"]:
+            return "Commands:\n  tool sub1  First sub"
+        return "No subcommands"
+
+    monkeypatch.setattr("maniac.sources.crawler.get_help", fake_get_help)
+    tree = find_subcommands(["tool"], executable="/opt/global/tool")
+
+    assert ran == [["/opt/global/tool"], ["/opt/global/tool", "sub1"]]
+    assert list(tree) == ["> tool --help", "> tool sub1 --help"]
+
+
 def test_extract_from_commands_section() -> None:
     sample = """
 Usage: mytool <command> [options]

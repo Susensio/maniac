@@ -1573,7 +1573,8 @@ def test_classify_outdated_when_unclaimed_binarys_own_version_differs(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """ADR-0020: no `Installation` to compare against, so the binary's own
-    `--version` output is asked directly and compared verbatim."""
+    `--version` output is asked directly and compared verbatim -- of the
+    binary the login `$PATH` resolves to, by path (ADR-0062)."""
     cfg = _config(tmp_path)
     cfg.man_dir.mkdir(parents=True)
     installed = cfg.man_dir / "tool.1"
@@ -1593,14 +1594,19 @@ def test_classify_outdated_when_unclaimed_binarys_own_version_differs(
         "maniac.listing.classification.find_installed_manpage_path",
         lambda man_bin, tool_name: installed,
     )
+    resolved = tmp_path / "bin" / "tool"
+    monkeypatch.setattr("maniac.listing.classification.which", lambda name: resolved)
+    asked: list[list[str]] = []
     monkeypatch.setattr(
-        "maniac.listing.classification.get_version", lambda cmd, **kwargs: "2.0.0"
+        "maniac.listing.classification.get_version",
+        lambda cmd, **kwargs: asked.append(cmd) or "2.0.0",
     )
 
     assert _classification_pair(None, None, "tool", cfg) == (
         ActionState.OUTDATED,
         PageSource.MANIAC,
     )
+    assert asked == [[str(resolved)]]
 
 
 def test_classify_ok_when_unclaimed_binarys_own_version_matches(
@@ -1625,14 +1631,19 @@ def test_classify_ok_when_unclaimed_binarys_own_version_matches(
         "maniac.listing.classification.find_installed_manpage_path",
         lambda man_bin, tool_name: installed,
     )
+    resolved = tmp_path / "bin" / "tool"
+    monkeypatch.setattr("maniac.listing.classification.which", lambda name: resolved)
+    asked: list[list[str]] = []
     monkeypatch.setattr(
-        "maniac.listing.classification.get_version", lambda cmd, **kwargs: "1.0.0"
+        "maniac.listing.classification.get_version",
+        lambda cmd, **kwargs: asked.append(cmd) or "1.0.0",
     )
 
     assert _classification_pair(None, None, "tool", cfg) == (
         ActionState.OK,
         PageSource.MANIAC,
     )
+    assert asked == [[str(resolved)]]
 
 
 def test_classify_ok_when_unclaimed_binarys_version_is_unavailable(
@@ -1658,6 +1669,9 @@ def test_classify_ok_when_unclaimed_binarys_version_is_unavailable(
     monkeypatch.setattr(
         "maniac.listing.classification.find_installed_manpage_path",
         lambda man_bin, tool_name: installed,
+    )
+    monkeypatch.setattr(
+        "maniac.listing.classification.which", lambda name: tmp_path / "bin" / name
     )
     monkeypatch.setattr(
         "maniac.listing.classification.get_version", lambda cmd, **kwargs: None
