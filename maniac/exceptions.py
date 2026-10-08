@@ -15,6 +15,25 @@ class GenerationError(ManiacError):
     """Raised when generating manpages via LLM or compiler fails."""
 
 
+class UnsupportedPandoc(GenerationError):
+    """The installed pandoc writes pages `man` shows wrongly (ADR-0064).
+
+    Before 3.1.10 pandoc writes `-` bare, which an unpatched groff renders
+    as U+2010 HYPHEN: every option in the page looks right but cannot be
+    pasted into a shell or found with `/--flag`. Raised before any model is
+    called, so an old pandoc never costs a synthesis it then cannot compile.
+    """
+
+    def __init__(self, found: str) -> None:
+        self.found = found
+        super().__init__(
+            f"{found} is too old: pandoc before 3.1.10 writes option dashes that "
+            "man shows as Unicode hyphens, which cannot be typed or searched. "
+            "Install pandoc 3.1.10 or newer from "
+            "https://github.com/jgm/pandoc/releases (a .deb for Debian and Ubuntu)."
+        )
+
+
 class MalformedToolMetadata(ManiacError):
     """A tool's own metadata file is present but cannot be read (ADR-0060).
 

@@ -11,7 +11,11 @@ name into those facts, and the only way to obtain them.
 from pathlib import Path
 
 from ..exceptions import CrawlerError, GenerationError
-from ..generation.compiler import compile_to_man
+from ..generation.compiler import (
+    compile_to_man,
+    require_supported_pandoc,
+    version_footer,
+)
 from ..generation.llm import run_llm_synthesis
 from ..generation.prompts import build_synthesis_prompt
 from ..installer import PageRequest, install_manpage
@@ -90,6 +94,9 @@ def synthesize(
             markdown_content=dummy_md,
         )
 
+    # Before the model is paid for: a pandoc that cannot compile a usable
+    # page would only fail after it (ADR-0064).
+    require_supported_pandoc()
     markdown_content = run_llm_synthesis(
         full_prompt,
         tool_name=tool.tool_name,
@@ -108,7 +115,13 @@ def synthesize(
         roff_file,
         tool_name=tool.tool_name,
         model=selected_model,
-        version=recorded_version,
+        footer=(
+            version_footer(
+                tool.tool_name, recorded_version, verbatim=tool.installation is None
+            )
+            if recorded_version
+            else None
+        ),
         config=cfg,
     )
     actual_roff_path = roff_file if compiled else None

@@ -465,3 +465,29 @@ def test_synthesize_dry_run_opens_no_manifest_transaction(
     )
 
     assert result.installed_path is None
+
+
+def test_synthesize_refuses_an_old_pandoc_before_calling_the_model(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """ADR-0064: the page could not be compiled usably, so the model -- the
+    one step that costs money -- is never asked."""
+    from maniac.exceptions import UnsupportedPandoc
+    from maniac.generation import compiler
+
+    monkeypatch.setattr("shutil.which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(
+        compiler, "_pandoc_version_line", lambda pandoc_bin: "pandoc 3.1.3"
+    )
+    _help_tree(monkeypatch, {"> testtool --help": "Usage: testtool"})
+    monkeypatch.setattr(
+        "maniac.orchestration.pipeline.fetch_and_extract_docs",
+        lambda source, cache_dir, **kwargs: ([], False),
+    )
+    monkeypatch.setattr(
+        "maniac.orchestration.pipeline.run_llm_synthesis",
+        lambda *a, **k: pytest.fail("model called with an unusable pandoc"),
+    )
+
+    with pytest.raises(UnsupportedPandoc, match=r"pandoc 3\.1\.3 is too old"):
+        synthesize(_resolved(output_dir=tmp_path))

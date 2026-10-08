@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 import structlog
 
+from maniac.generation import compiler
 from maniac.sources import pathcache
 from maniac.sources.docs import cache
 from maniac.sources.pathcache import resolve_cached
@@ -107,3 +108,31 @@ def _login_path_is_the_test_path(
     )
     yield
     pathcache.clear_login_path()
+
+
+_INTEGRATION_DIR = Path(__file__).parent / "integration"
+
+
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    """Mark everything under `tests/integration/` `integration` (ADR-0064)."""
+    for item in items:
+        if item.path.is_relative_to(_INTEGRATION_DIR):
+            item.add_marker(pytest.mark.integration)
+
+
+@pytest.fixture(autouse=True)
+def _supported_pandoc_unless_integration(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Unit tests stub pandoc's compile; its `--version` reads as supported.
+
+    The version check (ADR-0064) would otherwise run whatever `pandoc` the
+    developer has, or reach a test's own `subprocess.run` stub. Integration
+    tests keep the real check. A test of the check itself patches
+    `_pandoc_version_line` again.
+    """
+    compiler._pandoc_version_line.cache_clear()
+    if request.node.get_closest_marker("integration") is None:
+        monkeypatch.setattr(
+            compiler, "_pandoc_version_line", lambda pandoc_bin: "pandoc 3.12.1"
+        )

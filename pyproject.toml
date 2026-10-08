@@ -48,6 +48,10 @@ max-complexity-allowed = 25
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = "-m 'not integration'"
+markers = [
+    "integration: needs real pandoc, groff and man; run with `just integration` (ADR-0064)",
+]
 
 [tool.semantic_release]
 version_toml = ["pyproject.toml:project.version"]

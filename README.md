@@ -32,7 +32,7 @@ Most modern utilities ship without standard Unix manual pages. Instead, you're f
 
 - **[Python](https://www.python.org/)**: 3.12+
 - **[uv](https://github.com/astral-sh/uv)**: Fast Python package and tool runner
-- **[pandoc](https://pandoc.org/)**: Document converter for Markdown &rarr; roff compilation
+- **[pandoc](https://pandoc.org/) 3.1.10+**: Document converter for Markdown &rarr; roff compilation. Older releases write option dashes that `man` shows as Unicode hyphens, so maniac refuses them; Ubuntu 24.04 ships 3.1.3, so install the `.deb` from [pandoc's releases](https://github.com/jgm/pandoc/releases).
 - **LiteLLM-compatible API key**: A provider-native key, such as `GEMINI_API_KEY`, `ANTHROPIC_API_KEY`, or `OPENAI_API_KEY`
 - **[git](https://git-scm.com/)**: Repository cloning and remote URL inspection
 
@@ -272,11 +272,14 @@ maniac source docs hx
 Run tests, formatting, and linting with [`just`](https://github.com/casey/just):
 
 ```bash
-# Run all verification checks (linter, formatting, test suite)
+# Run all verification checks (linter, formatting, types, unit and integration tests)
 just check
 
-# Run pytest unit and integration tests
+# Run the unit suite (no external tools needed)
 just test
+
+# Run the integration suite: real pandoc 3.1.10+, groff and man-db must be installed
+just integration
 
 # Fix lint issues and format code
 just fix

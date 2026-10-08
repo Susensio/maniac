@@ -7,11 +7,17 @@ set positional-arguments := true
 default:
     @just --list
 
-# Run test suite
+# Run the unit suite (no external tools needed)
 test *args:
     #!/usr/bin/env bash
     set -euo pipefail
     uv run pytest "$@"
+
+# Run the integration suite against real pandoc, groff and man (ADR-0064)
+integration *args:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    uv run pytest -m integration "$@"
 
 # Run ruff linter
 lint:
@@ -30,8 +36,8 @@ fix:
     uv run ruff check --fix .
     uv run ruff format .
 
-# Run all verification checks (linter, formatting, typing, tests)
-check: lint format-check typecheck test
+# Run all verification checks (linter, formatting, typing, unit and integration tests)
+check: lint format-check typecheck test integration
 
 # Report maintainability findings; existing findings are advisory.
 audit:

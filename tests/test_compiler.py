@@ -5,10 +5,14 @@ from typing import Any
 
 import pytest
 
+from maniac.exceptions import UnsupportedPandoc
+from maniac.generation import compiler
 from maniac.generation.compiler import (
     PROVENANCE_SIGNATURE,
     build_provenance_header,
     compile_to_man,
+    require_supported_pandoc,
+    version_footer,
 )
 
 
@@ -53,7 +57,7 @@ def test_compile_to_man_with_pandoc(
     assert "Model: Gemini 3.7 Flash" in content
 
 
-def test_compile_to_man_passes_version_as_footer_metadata(
+def test_compile_to_man_passes_footer_metadata(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     monkeypatch.setattr(shutil, "which", lambda name: "/usr/bin/pandoc")
@@ -74,12 +78,12 @@ def test_compile_to_man_passes_version_as_footer_metadata(
         "% TOOL(1)\n# NAME\ntool",
         out_file,
         tool_name="tool",
-        version="1.2.3",
+        footer="tool 1.2.3",
     )
     assert success
 
 
-def test_compile_to_man_without_version_omits_footer_metadata(
+def test_compile_to_man_without_footer_omits_footer_metadata(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     monkeypatch.setattr(shutil, "which", lambda name: "/usr/bin/pandoc")
@@ -99,37 +103,87 @@ def test_compile_to_man_without_version_omits_footer_metadata(
     assert success
 
 
-def test_compile_to_man_stamps_th_footer_field_with_real_pandoc(
-    tmp_path: Path,
-) -> None:
-    if not shutil.which("pandoc"):
-        pytest.skip("pandoc not available in environment")
-
-    out_file = tmp_path / "gum.1"
-    md_text = "% GUM(1) | User Commands\n\n# NAME\ngum - test\n"
-    success = compile_to_man(md_text, out_file, tool_name="gum", version="0.14.5")
-    assert success
-    content = out_file.read_text(encoding="utf-8")
-    assert '.TH "GUM" "1" "" "gum 0.14.5" "User Commands"' in content
-
-
-def test_compile_to_man_preserves_double_hyphens(tmp_path: Path) -> None:
-    if not shutil.which("pandoc"):
-        pytest.skip("pandoc not available in environment")
-
-    out_file = tmp_path / "tool.1"
-    md_text = "% TOOL(1) | User Commands\n\n# OPTIONS\n**--version**, **--update**\n:   Flag description.\n"
-    success = compile_to_man(md_text, out_file, tool_name="tool")
-    assert success
-    content = out_file.read_text(encoding="utf-8")
-    assert "\\-\\-version" in content
-    assert "\\-\\-update" in content
-    assert "\\(enversion" not in content
-    assert "\\(enupdate" not in content
-
-
 def test_build_provenance_header() -> None:
     header = build_provenance_header(tool_name="mytool", model="Gemini 3.7 Flash")
     assert PROVENANCE_SIGNATURE in header
     assert "Tool: mytool" in header
     assert "Model: Gemini 3.7 Flash" in header
+
+
+def test_version_footer_names_the_tool_before_a_provider_version() -> None:
+    assert version_footer("gh", "2.63.0", verbatim=False) == "gh 2.63.0"
+
+
+def test_version_footer_uses_a_verbatim_version_line_as_it_stands() -> None:
+    """An unclaimed binary's `--version` already names itself (ADR-0020);
+    prefixing it again read `faketool faketool 2.3.1`, and pandoc folded a
+    multi-line one (gcc's copyright notice) into the footer."""
+    gcc = "gcc (Debian 14.2.0-19) 14.2.0\nCopyright (C) 2024 Free Software Foundation, Inc."
+
+    assert (
+        version_footer("faketool", "faketool 2.3.1", verbatim=True) == "faketool 2.3.1"
+    )
+    assert version_footer("gcc", gcc, verbatim=True) == "gcc (Debian 14.2.0-19) 14.2.0"
+
+
+@pytest.mark.parametrize(
+    ("line", "supported"),
+    [
+        ("pandoc 3.1.9", False),
+        ("pandoc 3.1.3", False),
+        ("pandoc 2.17.1.1", False),
+        ("pandoc 3.1.10", True),
+        ("pandoc 3.12.1", True),
+        ("pandoc.exe 3.2", True),
+    ],
+)
+def test_require_supported_pandoc_draws_the_line_at_3_1_10(
+    monkeypatch: pytest.MonkeyPatch, line: str, supported: bool
+) -> None:
+    """3.1.10 is the first release that escapes `-` (bisected, ADR-0064)."""
+    monkeypatch.setattr(shutil, "which", lambda name: "/usr/bin/pandoc")
+    monkeypatch.setattr(compiler, "_pandoc_version_line", lambda pandoc_bin: line)
+
+    if supported:
+        assert require_supported_pandoc() == "/usr/bin/pandoc"
+    else:
+        with pytest.raises(UnsupportedPandoc, match=r"3\.1\.10 or newer"):
+            require_supported_pandoc()
+
+
+def test_require_supported_pandoc_refuses_an_unreadable_version(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ADR-0060: a pandoc that cannot say its version is not guessed at."""
+    monkeypatch.setattr(shutil, "which", lambda name: "/usr/bin/pandoc")
+    monkeypatch.setattr(
+        compiler,
+        "_pandoc_version_line",
+        lambda pandoc_bin: "/usr/bin/pandoc (--version exited 1)",
+    )
+
+    with pytest.raises(UnsupportedPandoc, match="exited 1"):
+        require_supported_pandoc()
+
+
+def test_require_supported_pandoc_leaves_a_missing_pandoc_to_callers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(shutil, "which", lambda name: None)
+
+    assert require_supported_pandoc() is None
+
+
+def test_compile_to_man_refuses_an_old_pandoc_without_running_it(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(shutil, "which", lambda name: "/usr/bin/pandoc")
+    monkeypatch.setattr(
+        compiler, "_pandoc_version_line", lambda pandoc_bin: "pandoc 3.1.3"
+    )
+    monkeypatch.setattr(
+        subprocess, "run", lambda *a, **k: pytest.fail("compiled with old pandoc")
+    )
+
+    with pytest.raises(UnsupportedPandoc):
+        compile_to_man("% TOOL(1)\n# NAME\ntool", tmp_path / "tool.1", tool_name="tool")

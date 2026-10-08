@@ -19,7 +19,8 @@ from pathlib import Path
 
 from .. import manifest
 from ..config import Config
-from ..exceptions import ManiacError, NotGloballySelected
+from ..exceptions import ManiacError, NotGloballySelected, UnsupportedPandoc
+from ..generation.compiler import require_supported_pandoc
 from ..installer import (
     InstallResult,
     PageRequest,
@@ -162,7 +163,18 @@ def run_install(
         # `dry_run` entirely, so the preview has to ask the same question
         # pandoc would answer, or it reports success on a machine where the
         # real run would produce no page at all.
-        if shutil.which("pandoc") is None:
+        try:
+            pandoc = require_supported_pandoc()
+        except UnsupportedPandoc as e:
+            return InstallOutcome(
+                tool=tool_name,
+                tier=None,
+                detail=f"{detail}   [dry run, {e.found} too old, no page would be produced]",
+                source_path=pipeline_result.roff_path,
+                installed_path=None,
+                pipeline=pipeline_result,
+            )
+        if pandoc is None:
             return InstallOutcome(
                 tool=tool_name,
                 tier=None,

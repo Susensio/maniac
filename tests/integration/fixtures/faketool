@@ -1,0 +1,53 @@
+#!/bin/sh
+# A small CLI for integration tests: top-level help listing subcommands,
+# per-subcommand help, and a --version line -- what the crawler walks.
+case "$1" in
+--version)
+    echo "faketool 2.3.1"
+    ;;
+--help | -h | "")
+    cat <<'EOF'
+Usage: faketool [OPTIONS] COMMAND [ARGS]...
+
+Build and serve fake projects.
+
+Commands:
+  build  Build the project
+  serve  Serve the last build
+
+Options:
+  -v, --verbose       Print every step
+      --color <WHEN>  Colour output [possible values: auto, always, never]
+      --version       Print the version and exit
+  -h, --help          Print help and exit
+EOF
+    ;;
+build)
+    cat <<'EOF'
+Usage: faketool build [OPTIONS] [PATH]
+
+Build the project
+
+Options:
+      --release   Optimise the build
+  -j, --jobs <N>  Parallel jobs [default: 4]
+  -h, --help      Print help
+EOF
+    ;;
+serve)
+    cat <<'EOF'
+Usage: faketool serve [OPTIONS]
+
+Serve the last build
+
+Options:
+      --port <PORT>      Listen port [default: 8080]
+      --format <FORMAT>  Log format [possible values: text, json]
+  -h, --help             Print help
+EOF
+    ;;
+*)
+    echo "error: unrecognized subcommand '$1'" >&2
+    exit 2
+    ;;
+esac
