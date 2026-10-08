@@ -57,7 +57,7 @@ The fallthrough target is detected like any other binary, claimed or not.
 Only a shim with nothing to fall through to raises, as `ShimRunsNothing` (a `NotGloballySelected`).
 `list` with no names leaves it out, since the name reaches no binary from `$HOME`; asked for by name, `install` and `list` still give the reason.
 
-This follows mise's own dispatch, not ADR-0020's rejected positional fall-through: the shim is not an unclaimed binary that maniac skips past, but a dispatcher whose documented behaviour is to run that later binary.
+This follows mise's own dispatch, not ADR-0020's rejected positional fall-through: the shim is not an unclaimed binary that maniac skips past, but a dispatcher measured to run that later binary itself.
 
 Every lookup that turns a name into a runnable path now goes through `resolution.binary_path`, which applies the shim swap.
 Before, an unclaimed fallthrough target left `resolve_tool` running the shim itself, and `list` probed an unclaimed binary's `--version` through it.
