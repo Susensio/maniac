@@ -9,11 +9,6 @@ Settled decisions live in `docs/adr/`; defects with a line to sit beside are mar
 - Distinguish a wrong documentation repository from one that legitimately has no manpage.
   Flag-inventory overlap and whether the repository contains implementation source are possible evidence, but absence is a normal synthesis fallback and must not be treated as proof of misresolution.
 
-- Recognise Mise shims as a provider claim.
-  ADR-0062's conventional Mise setup (`mise activate --shims` in the login profile) puts `~/.local/share/mise/shims/` first on the login `$PATH`, and no provider claims a shim, so a shimmed tool resolves as unclaimed and falls to tier-3 synthesis instead of tiers 1-2.
-  Next step: resolve a shim to the install it runs from `$HOME` (`mise which <tool>`, with the same activation scrub as `_run_mise`) and claim that, keeping the global-selection check (ADR-0061).
-  Shims dispatch per cwd, so the resolved install, not the shim, is what `--help` and `--version` must run.
-
 ## Refactors and architecture
 
 - Surface `Installation.losers` to the user.
