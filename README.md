@@ -278,7 +278,7 @@ just check
 # Run the unit suite (no external tools needed)
 just test
 
-# Run the integration suite: real pandoc 3.1.10+, groff and man-db must be installed
+# Run the integration suite: needs pandoc 3.1.10+, groff, man-db, npm, uvx and network
 just integration
 
 # Fix lint issues and format code

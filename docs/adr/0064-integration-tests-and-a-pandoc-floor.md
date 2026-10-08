@@ -60,3 +60,10 @@ Tiers 1 and 2, which install pages they did not compile, are unaffected.
 The integration suite takes about five seconds.
 
 Unit tests read pandoc's version as supported through a conftest seam; integration tests keep the real check.
+
+## Corrections
+
+2026-10-08: the suite also covers the npm and pipx providers against real installs.
+`npm install --global --prefix` and a pinned `uvx pipx install` each install once per run into a throwaway prefix.
+Detection, version, install root and declared repository are checked, plus a real tier-1 install: `marked` ships `man/marked.1`, which maniac links into the man root and `man -w` reaches.
+`just integration` therefore also needs `npm`, `uvx` and network access to the npm registry and PyPI.

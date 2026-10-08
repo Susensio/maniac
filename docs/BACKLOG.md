@@ -56,6 +56,6 @@ Settled decisions live in `docs/adr/`; defects with a line to sit beside are mar
   Blocked on API access; the staged fzf context is ready.
 - Measure the coverage cost of refusing an unmatched upstream version before changing ADR-0016's version-match policy.
   Separate unusual tag conventions from genuine absence.
-- Exercise standalone npm, pipx and Homebrew `detect()` implementations against real installations.
-  Mise-composed metadata coverage does not verify their path layouts.
-  npm and pipx installs were reachable from a sandbox on 2026-10-08, so they could join `tests/integration/`; Homebrew is still blocked on a real installation.
+- Exercise the standalone Homebrew `detect()` against a real installation.
+  Mise-composed metadata coverage does not verify its path layout; npm and pipx are covered by `tests/integration/test_providers.py`.
+  Blocked on a real Homebrew installation.
