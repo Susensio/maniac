@@ -40,10 +40,14 @@ def _installation(
     version: str | None = "1.2.3",
     root: Path = Path("/root"),
 ) -> Installation:
+    # Never a real directory: identity is proved from the filesystem
+    # (ADR-0049), so `/bin/<name>` made a test depend on what the machine
+    # running it has installed -- pandoc's .deb links `pandoc-lua` there.
+    fake_bin = Path("/nonexistent/maniac-tests/bin") / binary
     return Installation(
         binary=binary,
-        bin_path=Path(f"/bin/{binary}"),
-        real_path=Path(f"/bin/{binary}"),
+        bin_path=fake_bin,
+        real_path=fake_bin,
         provider="fake",
         package=package,
         version=version,
