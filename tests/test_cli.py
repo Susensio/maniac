@@ -275,7 +275,7 @@ def test_cli_install_dry_run(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) ->
     )
     monkeypatch.setattr(
         "maniac.orchestration.context.resolution.find_installation",
-        lambda name, bin_dir=None: None,
+        lambda name, bin_dir=None, **_: None,
     )
     monkeypatch.setattr(cli_module, "Config", lambda: Config(output_dir=tmp_path))
 
@@ -373,11 +373,11 @@ def test_cli_install_reuses_config_for_existing_destination(
     monkeypatch.setattr(cli_module, "Config", TrackingConfig)
     monkeypatch.setattr(
         "maniac.orchestration.install.resolve_bin_path",
-        lambda tool, bin_dir=None: Path(f"/nonexistent/maniac-tests/bin/{tool}"),
+        lambda tool, bin_dir=None, **_: Path(f"/nonexistent/maniac-tests/bin/{tool}"),
     )
     monkeypatch.setattr(
         "maniac.orchestration.context.resolution.find_installation",
-        lambda tool, bin_dir=None: (Provider(), installation),
+        lambda tool, bin_dir=None, **_: (Provider(), installation),
     )
     monkeypatch.setattr("maniac.manifest.Config", TrackingConfig)
     real_load = manifest.load
@@ -403,7 +403,7 @@ def test_cli_install_exits_nonzero_for_unreachable_binary(
     monkeypatch.setattr("maniac.sources.pathcache.which", lambda name: None)
     monkeypatch.setattr(
         "maniac.orchestration.context.resolution.find_installation",
-        lambda name, bin_dir=None: None,
+        lambda name, bin_dir=None, **_: None,
     )
 
     result = runner.invoke(app, ["install", "project-local-tool"])
@@ -446,7 +446,7 @@ def test_cli_install_exits_nonzero_when_no_synthesize_finds_nothing(
     )
     monkeypatch.setattr(
         "maniac.orchestration.context.resolution.find_installation",
-        lambda name, bin_dir=None: None,
+        lambda name, bin_dir=None, **_: None,
     )
 
     result = runner.invoke(
@@ -469,7 +469,7 @@ def test_cli_install_dry_run_exits_nonzero_when_no_tier_would_answer(
     )
     monkeypatch.setattr(
         "maniac.orchestration.context.resolution.find_installation",
-        lambda name, bin_dir=None: None,
+        lambda name, bin_dir=None, **_: None,
     )
 
     result = runner.invoke(

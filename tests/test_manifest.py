@@ -1198,3 +1198,23 @@ def test_a_provenance_header_never_seeds_ownership_of_an_unlinked_page(
         assert txn.recovery.reconstructed == ()
 
     assert manifest.load(config=cfg) == {}
+
+
+def test_an_entry_records_the_copy_it_documents_and_old_rows_read_none() -> None:
+    """`install --here` (CONTRACT.md rule 2) records which copy a page
+    documents; a row written before the field existed reads as None."""
+    from maniac.manifest import _entry_to_row, _row_to_entry
+
+    entry = Entry(
+        path=Path("/m/ruff.1"),
+        tier=Tier.SYNTHESIS,
+        source="model",
+        checksum="c",
+        binary=Path("/p/.venv/bin/ruff"),
+    )
+    row = _entry_to_row(entry)
+
+    assert row["binary"] == "/p/.venv/bin/ruff"
+    assert _row_to_entry(row) == entry
+    del row["binary"]
+    assert _row_to_entry(row).binary is None

@@ -10,7 +10,7 @@ from maniac import lifecycle, manifest
 from maniac.config import Config
 from maniac.installer import InstallResult
 from maniac.manifest import Entry
-from maniac.models import DocFile, Installation, RepoSource
+from maniac.models import DocFile, Installation, PipelineResult, RepoSource
 from maniac.orchestration.context import ResolvedTool, resolve_tool
 from maniac.orchestration.install import (
     InstallRefused,
@@ -87,7 +87,7 @@ def test_run_install_uses_the_install_root_page_first(
     inst = _installation()
     monkeypatch.setattr(
         "maniac.orchestration.context.resolution.find_installation",
-        lambda name, bin_dir=None: (provider, inst),
+        lambda name, bin_dir=None, **_: (provider, inst),
     )
     monkeypatch.setattr(
         "maniac.orchestration.install.install_manpage",
@@ -118,7 +118,7 @@ def test_run_install_dry_run_tier1_writes_nothing(
     inst = _installation()
     monkeypatch.setattr(
         "maniac.orchestration.context.resolution.find_installation",
-        lambda name, bin_dir=None: (provider, inst),
+        lambda name, bin_dir=None, **_: (provider, inst),
     )
     monkeypatch.setattr(
         "maniac.orchestration.install.install_manpage",
@@ -158,7 +158,7 @@ def test_run_install_links_a_verified_install_root_page_directly(
     )
     monkeypatch.setattr(
         "maniac.orchestration.context.resolution.find_installation",
-        lambda name, bin_dir=None: (provider, inst),
+        lambda name, bin_dir=None, **_: (provider, inst),
     )
 
     outcome = run_install("tool", config=cfg)
@@ -197,7 +197,7 @@ def test_run_install_installs_every_page_of_a_multi_page_install_root_candidate(
     )
     monkeypatch.setattr(
         "maniac.orchestration.context.resolution.find_installation",
-        lambda name, bin_dir=None: (provider, inst),
+        lambda name, bin_dir=None, **_: (provider, inst),
     )
 
     outcome = run_install("tool", config=cfg)
@@ -241,7 +241,7 @@ def test_run_install_materializes_an_install_root_page_resolving_outside_its_roo
     )
     monkeypatch.setattr(
         "maniac.orchestration.context.resolution.find_installation",
-        lambda name, bin_dir=None: (provider, inst),
+        lambda name, bin_dir=None, **_: (provider, inst),
     )
 
     outcome = run_install("tool", config=cfg)
@@ -261,7 +261,7 @@ def test_run_install_falls_through_to_repository_when_no_install_root_page(
     inst = _installation()
     monkeypatch.setattr(
         "maniac.orchestration.context.resolution.find_installation",
-        lambda name, bin_dir=None: (provider, inst),
+        lambda name, bin_dir=None, **_: (provider, inst),
     )
     page = tmp_path / "tool.1"
     page.write_text(".TH TOOL 1\n", encoding="utf-8")
@@ -297,7 +297,7 @@ def test_run_install_dry_run_tier2_writes_nothing(
     inst = _installation()
     monkeypatch.setattr(
         "maniac.orchestration.context.resolution.find_installation",
-        lambda name, bin_dir=None: (provider, inst),
+        lambda name, bin_dir=None, **_: (provider, inst),
     )
     page = tmp_path / "tool.1"
     page.write_text(".TH TOOL 1\n", encoding="utf-8")
@@ -500,7 +500,7 @@ def test_run_install_uses_the_exact_tmux_documentation_repository(
     page.write_text(".TH TMUX 1\n", encoding="utf-8")
     monkeypatch.setattr(
         "maniac.orchestration.context.resolution.find_installation",
-        lambda name, bin_dir=None: (provider, inst),
+        lambda name, bin_dir=None, **_: (provider, inst),
     )
     observed: list[RepoSource] = []
 
@@ -533,7 +533,7 @@ def test_run_install_tier2_rejects_a_page_naming_a_different_binary(
     inst = _installation()
     monkeypatch.setattr(
         "maniac.orchestration.context.resolution.find_installation",
-        lambda name, bin_dir=None: (provider, inst),
+        lambda name, bin_dir=None, **_: (provider, inst),
     )
     page = tmp_path / "tool.1"
     page.write_text(".TH SOMETHINGELSE 1\n", encoding="utf-8")
@@ -574,7 +574,7 @@ def test_run_install_reports_repository_docs_only_synthesis(
 
     monkeypatch.setattr(
         "maniac.orchestration.context.resolution.find_installation",
-        lambda name, bin_dir=None: None,
+        lambda name, bin_dir=None, **_: None,
     )
     monkeypatch.setattr(
         "maniac.orchestration.pipeline.synthesize",
@@ -608,7 +608,7 @@ def test_resolved_tool_runs_the_login_path_binary_not_the_bare_name(
     monkeypatch.setattr(pathcache, "which", lambda name: global_ruff)
     monkeypatch.setattr(
         "maniac.orchestration.context.resolution.find_installation",
-        lambda name, bin_dir=None: None,
+        lambda name, bin_dir=None, **_: None,
     )
 
     tool = resolve_tool("ruff", config=Config(cache_dir=tmp_path / "cache"))
@@ -652,7 +652,7 @@ def test_run_install_reports_what_an_unclaimed_binary_documents(
     monkeypatch.setenv("PATH", str(ruff.parent))
     monkeypatch.setattr(
         "maniac.orchestration.context.resolution.find_installation",
-        lambda name, bin_dir=None: None,
+        lambda name, bin_dir=None, **_: None,
     )
     _stub_synthesis(monkeypatch, tmp_path)
 
@@ -672,13 +672,66 @@ def test_run_install_says_when_this_shell_runs_another_copy(
     monkeypatch.setenv("PATH", f"{venv_ruff.parent}{os.pathsep}{global_ruff.parent}")
     monkeypatch.setattr(
         "maniac.orchestration.context.resolution.find_installation",
-        lambda name, bin_dir=None: None,
+        lambda name, bin_dir=None, **_: None,
     )
     _stub_synthesis(monkeypatch, tmp_path)
 
     outcome = run_install("ruff")
 
     assert outcome.resolution == Resolution(global_ruff, None, "ruff 0.6.9", venv_ruff)
+
+
+def test_install_here_documents_and_records_this_shells_copy(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`--here` (CONTRACT.md rule 2): the invoking shell's copy is the one
+    documented, no divergence is reported, and the page records that copy."""
+    global_ruff = _reporting_binary(tmp_path / "global" / "ruff", "ruff 0.6.9")
+    venv_ruff = _reporting_binary(tmp_path / ".venv" / "bin" / "ruff", "ruff 0.7.0")
+    monkeypatch.setattr(pathcache, "which", lambda name: global_ruff)
+    monkeypatch.setenv("PATH", f"{venv_ruff.parent}{os.pathsep}{global_ruff.parent}")
+    monkeypatch.setattr(
+        "maniac.orchestration.context.resolution.find_installation",
+        lambda name, bin_dir=None, **_: None,
+    )
+    seen: dict[str, object] = {}
+
+    def synthesize(tool: ResolvedTool, **kwargs: object) -> object:
+        seen["executable"] = tool.executable
+        seen["documented"] = tool.documented_binary
+        return PipelineResult(
+            tool_name=tool.tool_name,
+            repo_source=None,
+            command_count=1,
+            doc_file_count=0,
+            context_path=None,
+            markdown_path=tmp_path / "ruff.1.md",
+            roff_path=None,
+            installed_path=None,
+            markdown_content="# doc",
+        )
+
+    monkeypatch.setattr("maniac.orchestration.pipeline.synthesize", synthesize)
+
+    outcome = run_install("ruff", here=True)
+
+    assert outcome.resolution == Resolution(venv_ruff, None, "ruff 0.7.0", None)
+    assert seen == {"executable": str(venv_ruff), "documented": venv_ruff}
+
+
+def test_refusals_point_at_here_when_this_shell_has_a_copy(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Not on the login `$PATH`, but this shell runs one: the refusal says
+    which, and how to document it."""
+    venv_ruff = _reporting_binary(tmp_path / ".venv" / "bin" / "ruff", "ruff 0.7.0")
+    monkeypatch.setattr(pathcache, "which", lambda name: None)
+    monkeypatch.setenv("PATH", str(venv_ruff.parent))
+
+    with pytest.raises(InstallRefused, match="`--here` documents that copy") as raised:
+        run_install("ruff")
+
+    assert f"This shell runs {venv_ruff}" in str(raised.value)
 
 
 @pytest.mark.parametrize(
@@ -699,7 +752,7 @@ def test_run_install_refuses_a_named_system_binary_and_shows_its_page(
     monkeypatch.setattr(pathcache, "which", lambda name: Path("/usr/bin/ls"))
     monkeypatch.setattr(
         "maniac.orchestration.context.resolution.find_installation",
-        lambda name, bin_dir=None: None,
+        lambda name, bin_dir=None, **_: None,
     )
     monkeypatch.setattr(
         "maniac.orchestration.install.find_installed_manpage_path",
@@ -725,7 +778,7 @@ def test_run_install_tier2_skipped_without_an_installed_version(
     inst = _installation(version=None)
     monkeypatch.setattr(
         "maniac.orchestration.context.resolution.find_installation",
-        lambda name, bin_dir=None: (provider, inst),
+        lambda name, bin_dir=None, **_: (provider, inst),
     )
     called = False
 
@@ -769,7 +822,7 @@ def test_run_install_installs_all_anchored_release_manpages(
     inst = _installation(version="0.23.5", binary="eza")
     monkeypatch.setattr(
         "maniac.orchestration.context.resolution.find_installation",
-        lambda name, bin_dir=None: (provider, inst),
+        lambda name, bin_dir=None, **_: (provider, inst),
     )
     monkeypatch.setattr(
         "maniac.orchestration.install.discover_repo_manpages",
@@ -825,7 +878,7 @@ def _resolve_eza_release(monkeypatch: pytest.MonkeyPatch, pages: list[Path]) -> 
     inst = _installation(version="0.23.5", binary="eza")
     monkeypatch.setattr(
         "maniac.orchestration.context.resolution.find_installation",
-        lambda name, bin_dir=None: (provider, inst),
+        lambda name, bin_dir=None, **_: (provider, inst),
     )
     monkeypatch.setattr(
         "maniac.orchestration.install.discover_repo_manpages",
@@ -1078,7 +1131,7 @@ def test_no_synthesize_never_reaches_the_llm_when_no_tier_1_or_2_page_exists(
     monkeypatch.setattr("maniac.generation.llm.run_llm_synthesis", _explode)
     monkeypatch.setattr(
         "maniac.orchestration.context.resolution.find_installation",
-        lambda name, bin_dir=None: None,
+        lambda name, bin_dir=None, **_: None,
     )
 
     outcome = run_install("nonexistent_unknown_tool_xyz", no_synthesize=True)
@@ -1102,7 +1155,7 @@ def test_no_synthesize_installs_a_tier_1_page_with_no_llm_call(
     inst = _installation()
     monkeypatch.setattr(
         "maniac.orchestration.context.resolution.find_installation",
-        lambda name, bin_dir=None: (provider, inst),
+        lambda name, bin_dir=None, **_: (provider, inst),
     )
     monkeypatch.setattr(
         "maniac.orchestration.install.install_manpage",
@@ -1126,7 +1179,7 @@ def test_run_install_refuses_a_binary_not_on_path(
     monkeypatch.setattr(pathcache, "which", lambda name: None)
     monkeypatch.setattr(
         "maniac.orchestration.context.resolution.find_installation",
-        lambda name, bin_dir=None: None,
+        lambda name, bin_dir=None, **_: None,
     )
 
     with pytest.raises(InstallRefused) as excinfo:
@@ -1150,7 +1203,7 @@ def test_run_install_refuses_under_no_synthesize_too(
     monkeypatch.setattr(pathcache, "which", lambda name: None)
     monkeypatch.setattr(
         "maniac.orchestration.context.resolution.find_installation",
-        lambda name, bin_dir=None: None,
+        lambda name, bin_dir=None, **_: None,
     )
 
     with pytest.raises(InstallRefused):
@@ -1169,7 +1222,9 @@ def test_run_install_refuses_a_project_scoped_mise_install(
     root = tmp_path / "installs" / "ripgrep" / "13.0.0"
     bin_path = tmp_path / "bin" / "rg"
 
-    def raise_project_scoped(name: str, bin_dir: str | None = None) -> None:
+    def raise_project_scoped(
+        name: str, bin_dir: str | None = None, **_: object
+    ) -> None:
         raise NotGloballySelected(name, root)
 
     monkeypatch.setattr(pathcache, "which", lambda name: bin_path)
@@ -1203,7 +1258,7 @@ def test_run_install_refusal_runs_no_tier(
     inst = _installation()
     monkeypatch.setattr(
         "maniac.orchestration.context.resolution.find_installation",
-        lambda name, bin_dir=None: (provider, inst),
+        lambda name, bin_dir=None, **_: (provider, inst),
     )
     monkeypatch.setattr(
         "maniac.orchestration.install.install_manpage",
@@ -1228,7 +1283,7 @@ def test_run_install_refuses_synthesis_after_a_non_definitive_repository_probe(
     inst = _installation()
     monkeypatch.setattr(
         "maniac.orchestration.context.resolution.find_installation",
-        lambda name, bin_dir=None: (provider, inst),
+        lambda name, bin_dir=None, **_: (provider, inst),
     )
     monkeypatch.setattr(
         "maniac.orchestration.install.discover_repo_manpages",
@@ -1259,7 +1314,7 @@ def test_run_install_no_synthesize_still_works_on_a_non_definitive_probe(
     inst = _installation()
     monkeypatch.setattr(
         "maniac.orchestration.context.resolution.find_installation",
-        lambda name, bin_dir=None: (provider, inst),
+        lambda name, bin_dir=None, **_: (provider, inst),
     )
     monkeypatch.setattr(
         "maniac.orchestration.install.discover_repo_manpages",
@@ -1290,7 +1345,7 @@ def test_run_install_explicit_bin_dir_bypasses_the_refusal(
     inst = _installation()
     monkeypatch.setattr(
         "maniac.orchestration.context.resolution.find_installation",
-        lambda name, bin_dir=None: (provider, inst),
+        lambda name, bin_dir=None, **_: (provider, inst),
     )
     monkeypatch.setattr(
         "maniac.orchestration.install.install_manpage",
@@ -1324,7 +1379,9 @@ def test_run_install_refuses_an_unmanaged_destination_before_any_tier(
     )
     monkeypatch.setattr(
         "maniac.orchestration.context.resolution.find_installation",
-        lambda name, bin_dir=None: pytest.fail("no resolution should run on a refusal"),
+        lambda name, bin_dir=None, **_: pytest.fail(
+            "no resolution should run on a refusal"
+        ),
     )
     monkeypatch.setattr(
         "maniac.orchestration.pipeline.synthesize",
@@ -1358,7 +1415,7 @@ def test_run_install_force_bypasses_the_unmanaged_destination_precheck(
     inst = _installation()
     monkeypatch.setattr(
         "maniac.orchestration.context.resolution.find_installation",
-        lambda name, bin_dir=None: (provider, inst),
+        lambda name, bin_dir=None, **_: (provider, inst),
     )
 
     # No candidate at any tier -- the precheck already ran, so reaching here
@@ -1401,7 +1458,7 @@ def test_run_install_does_not_refuse_a_manifest_owned_destination(
     inst = _installation()
     monkeypatch.setattr(
         "maniac.orchestration.context.resolution.find_installation",
-        lambda name, bin_dir=None: (provider, inst),
+        lambda name, bin_dir=None, **_: (provider, inst),
     )
 
     outcome = run_install("tool", config=cfg, no_synthesize=True)
@@ -1448,7 +1505,7 @@ def test_run_install_does_not_refuse_its_own_orphaned_destination(
     inst = _installation()
     monkeypatch.setattr(
         "maniac.orchestration.context.resolution.find_installation",
-        lambda name, bin_dir=None: (provider, inst),
+        lambda name, bin_dir=None, **_: (provider, inst),
     )
 
     outcome = run_install("tool", config=cfg, no_synthesize=True)
@@ -1485,7 +1542,9 @@ def test_run_install_refuses_a_dangling_output_dir_symlink(
     )
     monkeypatch.setattr(
         "maniac.orchestration.context.resolution.find_installation",
-        lambda name, bin_dir=None: pytest.fail("no resolution should run on a refusal"),
+        lambda name, bin_dir=None, **_: pytest.fail(
+            "no resolution should run on a refusal"
+        ),
     )
     monkeypatch.setattr(
         "maniac.orchestration.pipeline.synthesize",
@@ -1520,7 +1579,7 @@ def test_run_install_tier1_refuses_a_resolved_destination_beyond_the_default_gue
     inst = _installation()
     monkeypatch.setattr(
         "maniac.orchestration.context.resolution.find_installation",
-        lambda name, bin_dir=None: (provider, inst),
+        lambda name, bin_dir=None, **_: (provider, inst),
     )
     monkeypatch.setattr(
         "maniac.orchestration.install.install_manpage",
@@ -1552,7 +1611,7 @@ def test_run_install_tier1_force_bypasses_the_widened_precheck(
     inst = _installation()
     monkeypatch.setattr(
         "maniac.orchestration.context.resolution.find_installation",
-        lambda name, bin_dir=None: (provider, inst),
+        lambda name, bin_dir=None, **_: (provider, inst),
     )
     monkeypatch.setattr(
         "maniac.orchestration.install.install_manpage",
@@ -1601,7 +1660,7 @@ def test_run_install_tier1_does_not_refuse_an_owned_resolved_destination(
     inst = _installation()
     monkeypatch.setattr(
         "maniac.orchestration.context.resolution.find_installation",
-        lambda name, bin_dir=None: (provider, inst),
+        lambda name, bin_dir=None, **_: (provider, inst),
     )
 
     outcome = run_install("tool", config=cfg, no_synthesize=True)
@@ -1630,7 +1689,7 @@ def test_run_install_tier2_refuses_a_foreign_companion_destination(
     inst = _installation(version="0.23.5", binary="eza")
     monkeypatch.setattr(
         "maniac.orchestration.context.resolution.find_installation",
-        lambda name, bin_dir=None: (provider, inst),
+        lambda name, bin_dir=None, **_: (provider, inst),
     )
     monkeypatch.setattr(
         "maniac.orchestration.install.discover_repo_manpages",
@@ -1671,7 +1730,7 @@ def test_run_install_tier2_force_bypasses_the_widened_precheck(
     inst = _installation(version="0.23.5", binary="eza")
     monkeypatch.setattr(
         "maniac.orchestration.context.resolution.find_installation",
-        lambda name, bin_dir=None: (provider, inst),
+        lambda name, bin_dir=None, **_: (provider, inst),
     )
     monkeypatch.setattr(
         "maniac.orchestration.install.discover_repo_manpages",
@@ -1789,7 +1848,7 @@ def test_run_install_dry_run_tier3_writes_nothing(
     inst = _installation()
     monkeypatch.setattr(
         "maniac.orchestration.context.resolution.find_installation",
-        lambda name, bin_dir=None: (provider, inst),
+        lambda name, bin_dir=None, **_: (provider, inst),
     )
     monkeypatch.setattr(
         "maniac.orchestration.install.discover_repo_manpages",
@@ -1840,7 +1899,7 @@ def test_run_install_dry_run_tier3_without_pandoc_reports_no_page(
     inst = _installation()
     monkeypatch.setattr(
         "maniac.orchestration.context.resolution.find_installation",
-        lambda name, bin_dir=None: (provider, inst),
+        lambda name, bin_dir=None, **_: (provider, inst),
     )
     monkeypatch.setattr(
         "maniac.orchestration.install.discover_repo_manpages",
@@ -1886,7 +1945,7 @@ def test_install_reaching_tier_3_resolves_the_tool_once_not_twice(
     inst = _installation()
 
     def _find_installation(
-        name: str, bin_dir: object = None
+        name: str, bin_dir: object = None, **_: object
     ) -> tuple[_FakeProvider, Installation]:
         calls["find_installation"] += 1
         return provider, inst

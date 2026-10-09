@@ -26,6 +26,7 @@ class PageRequest:
     source_uri: str | None = None
     provider_target: bool = False
     group: str | None = None
+    binary: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -154,6 +155,7 @@ def install_manpage(
                 target=materialized.path,
                 provider_target=request.provider_target,
                 group=request.group,
+                binary=request.binary,
             ),
         )
     logger.info("Installed manpage", path=str(dest_file))

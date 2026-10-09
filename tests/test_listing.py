@@ -1260,7 +1260,7 @@ def test_cli_list_explicit_tools_on_a_terminal_render_a_final_table(
     monkeypatch.setattr(cli_module, "Config", lambda: _config(tmp_path))
     monkeypatch.setattr(
         "maniac.listing.inventory.resolution.find_installation",
-        lambda name, bin_dir=None: (_FakeProvider(), _installation(binary=name)),
+        lambda name, bin_dir=None, **_: (_FakeProvider(), _installation(binary=name)),
     )
 
     result = runner.invoke(app, ["list", "gum"])

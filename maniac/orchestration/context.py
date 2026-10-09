@@ -39,6 +39,13 @@ class ResolvedTool:
     """The binary that runs: the claimed installation's file, else
     `resolution.binary_path` (ADR-0062's login `$PATH` or `bin_dir`, a
     Mise shim replaced by its target, ADR-0063)."""
+    here: bool = False
+    """Chosen with `install --here`: the invoking shell's copy (CONTRACT.md rule 2)."""
+
+    @property
+    def documented_binary(self) -> Path | None:
+        """The copy a page records documenting: only a `--here` choice is recorded."""
+        return self.bin_path if self.here else None
 
     @property
     def command(self) -> str:
@@ -91,9 +98,10 @@ def resolve_tool(
     config: Config,
     cache_dir: str | Path | None = None,
     bin_dir: str | Path | None = None,
+    here: bool = False,
 ) -> ResolvedTool:
     """Resolve a binary's installation once, for every tier that follows."""
-    found = resolution.find_installation(tool_name, bin_dir=bin_dir)
+    found = resolution.find_installation(tool_name, bin_dir=bin_dir, here=here)
     provider, installation = found if found is not None else (None, None)
     return ResolvedTool(
         # What runs: the claimed file, else the unclaimed binary -- for a
@@ -109,4 +117,5 @@ def resolve_tool(
         bin_dir=Path(bin_dir) if bin_dir is not None else None,
         provider=provider,
         installation=installation,
+        here=here,
     )

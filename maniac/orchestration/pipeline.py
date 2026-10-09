@@ -135,6 +135,7 @@ def synthesize(
                 Tier.SYNTHESIS,
                 selected_model or "unknown",
                 version=recorded_version,
+                binary=tool.documented_binary,
             ),
             force=force,
             config=cfg,

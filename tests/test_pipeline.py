@@ -189,7 +189,7 @@ def test_resolve_tool_is_the_direct_synthesis_entry(
     inst = _installation("1.2.3")
     monkeypatch.setattr(
         "maniac.orchestration.context.resolution.find_installation",
-        lambda name, bin_dir=None: (provider, inst),
+        lambda name, bin_dir=None, **_: (provider, inst),
     )
     monkeypatch.setattr(
         "maniac.sources.pathcache.which",

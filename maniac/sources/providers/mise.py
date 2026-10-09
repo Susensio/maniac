@@ -56,16 +56,7 @@ class MiseProvider:
             return None
         tool_id, version = parts[idx + 1], parts[idx + 2]
         root = Path(*parts[: idx + 3])
-        if not _is_globally_active(root):
-            # ADR-0061: this install exists, but mise only activates it because
-            # of a project's own config -- from $HOME it is not among mise's
-            # globally selected tools, so a page for it would document a
-            # binary this machine doesn't otherwise resolve to. Refused
-            # outright rather than returned as unclaimed (ADR-0061's
-            # Corrections): unclaimed falls to tier-3 synthesis, which would
-            # document this project's version as the machine's global one.
-            raise NotGloballySelected(bin_path.name, root)
-        return Installation(
+        inst = Installation(
             binary=bin_path.name,
             bin_path=bin_path,
             real_path=resolved,
@@ -75,6 +66,18 @@ class MiseProvider:
             root=root,
             parent=_build_parent(bin_path, resolved, root),
         )
+        if not _is_globally_active(root):
+            # ADR-0061: this install exists, but mise only activates it because
+            # of a project's own config -- from $HOME it is not among mise's
+            # globally selected tools, so a page for it would document a
+            # binary this machine doesn't otherwise resolve to. Refused
+            # outright rather than returned as unclaimed (ADR-0061's
+            # Corrections): unclaimed falls to tier-3 synthesis, which would
+            # document this project's version as the machine's global one.
+            # The installation rides along for `install --here`, which asks
+            # for exactly this copy (CONTRACT.md rule 2).
+            raise NotGloballySelected(bin_path.name, root, inst)
+        return inst
 
     def resolve_source(
         self,

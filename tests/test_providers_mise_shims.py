@@ -57,9 +57,15 @@ def _npm_install(tmp_path: Path, package: str, version: str, binary: str) -> Pat
 class _FakeMise:
     """Answers `mise bin-paths` and `mise ls --current --json`, recording calls."""
 
-    def __init__(self, bin_paths: list[Path], current: dict[str, list[dict]]) -> None:
+    def __init__(
+        self,
+        bin_paths: list[Path],
+        current: dict[str, list[dict]],
+        which: dict[str, Path] | None = None,
+    ) -> None:
         self.bin_paths = bin_paths
         self.current = current
+        self.which = which or {}
         self.calls: list[tuple[list[str], dict[str, object]]] = []
 
     def __call__(
@@ -70,6 +76,8 @@ class _FakeMise:
             out = "\n".join(str(p) for p in self.bin_paths) + "\n"
         elif cmd[1:] == ["ls", "--current", "--json"]:
             out = json.dumps(self.current)
+        elif cmd[1] == "which" and cmd[2] in self.which:
+            out = f"{self.which[cmd[2]]}\n"
         else:
             raise AssertionError(f"unexpected mise call {cmd}")
         return subprocess.CompletedProcess(cmd, 0, stdout=out)
@@ -306,3 +314,30 @@ def test_an_unclaimed_fallthrough_target_is_what_runs_not_the_shim(
 
     assert tool.provider is None
     assert tool.executable == str(later)
+
+
+def test_install_refuses_a_shim_that_runs_nothing_and_offers_here(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A project-only tool's shim, named: not "remove the stale link" (it is
+    not one), but what it is, and `--here` for the project's copy."""
+    from maniac.orchestration.install import InstallRefused, run_install
+
+    shim = _shim(tmp_path, "cowsay", _mise_binary(tmp_path))
+    project_bin = _npm_install(tmp_path, "cowsay", "1.6.0", "cowsay")
+    fake = _FakeMise([], {}, which={"cowsay": project_bin / "cowsay"})
+    _use(monkeypatch, fake)
+    monkeypatch.setenv("PATH", str(shim.parent))
+
+    with pytest.raises(InstallRefused, match="is a Mise shim") as raised:
+        run_install("cowsay", config=Config())
+
+    message = str(raised.value)
+    assert "stale link" not in message
+    assert (
+        f"This shell runs {project_bin / 'cowsay'}; `--here` documents that copy."
+        in message
+    )
+    # Asked from this directory, with the environment as inherited.
+    [(_, kwargs)] = [call for call in fake.calls if call[0][1] == "which"]
+    assert kwargs["cwd"] == Path.cwd()

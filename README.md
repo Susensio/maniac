@@ -113,6 +113,20 @@ hx       synthesized from --help + repo docs
 
 `--no-synthesize` restricts this to the first two tiers and never calls an LLM.
 
+Under each tool, `install` prints the binary the page documents and where its version came from: the global copy your login shell runs from `$HOME`, since a manpage is global. When the shell you ran it from would run a different copy (an activated venv, a Mise project pin), it says so, and `--here` documents that copy instead:
+
+```bash
+$ cd ~/proj && . .venv/bin/activate && maniac install ruff
+ruff     synthesized from --help + repo docs
+  documents ~/.local/bin/ruff (uv, 0.6.9)
+  this shell runs ~/proj/.venv/bin/ruff instead
+$ maniac install --here ruff
+ruff     synthesized from --help + repo docs
+  documents ~/proj/.venv/bin/ruff (no installer; it reports ruff 0.7.0)
+```
+
+A page installed with `--here` records which copy it documents, and `list` keeps checking that copy. Tools installed by the system package manager are left to their package, which maintains their pages; naming one says so.
+
 Before synthesis, MANIAC reports how many commands, subcommands, and repository documents it found, which repository it used, and whether those documents matched the installed version.
 Root `--help` alone is enough to generate a page when no better source exists, but MANIAC warns that the source material is limited.
 Repository documentation alone can also be used when the help crawl fails; synthesis stops only when neither source provides usable material.

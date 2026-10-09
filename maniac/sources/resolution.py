@@ -61,7 +61,7 @@ def is_system_binary(bin_path: Path) -> bool:
 
 
 def find_installation(
-    binary_name: str, bin_dir: str | Path | None = None
+    binary_name: str, bin_dir: str | Path | None = None, *, here: bool = False
 ) -> tuple[Provider, Installation] | None:
     """Return the provider and `Installation` a binary resolves to, if any.
 
@@ -72,7 +72,19 @@ def find_installation(
     `resolve_source` derives from them.
     """
     bin_path = binary_path(binary_name, bin_dir)
-    return _detect_via_registry(bin_path) if bin_path is not None else None
+    return _detect_via_registry(bin_path, here=here) if bin_path is not None else None
+
+
+def installation_at(bin_path: Path) -> tuple[Provider, Installation] | None:
+    """Who installed the file at `bin_path`, global or not; None if no one or unreadable.
+
+    For a page that documents a copy chosen with `--here` (CONTRACT.md rule
+    2): its version is checked on that copy, project-scoped or not.
+    """
+    try:
+        return _detect_via_registry(bin_path, here=True)
+    except _DiscoveryError:
+        return None
 
 
 def discover_repo(
@@ -194,18 +206,30 @@ def enumerate_installations(
     return sorted(found, key=lambda item: item[1].binary)
 
 
-def _detect_via_registry(bin_path: Path) -> tuple[Provider, Installation] | None:
+def _detect_via_registry(
+    bin_path: Path, *, here: bool = False
+) -> tuple[Provider, Installation] | None:
     """Return the first registered provider that claims one PATH candidate.
 
     A Mise shim is replaced by the binary it dispatches to from `$HOME`
     first (ADR-0063): the shim itself is the `mise` executable, which no
     provider owns, and what it runs depends on the directory it runs in.
+
+    `here` accepts an install its provider found but would refuse as not
+    globally selected -- `install --here` names that copy on purpose.
     """
     target = shim_target(bin_path)
     if target is not None:
         bin_path = target
     for provider in registry.candidates_for(bin_path):
-        inst = provider.detect(bin_path)
+        try:
+            inst = provider.detect(bin_path)
+        except NotGloballySelected as e:
+            # `here`: the caller asked for this very copy (`install --here`,
+            # CONTRACT.md rule 2), so a project-scoped install is its answer.
+            if here and e.installation is not None:
+                return provider, e.installation
+            raise
         if inst is not None:
             return provider, inst
     return None

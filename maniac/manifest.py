@@ -71,6 +71,10 @@ class Entry:
     safely convert.
     `provider_target` marks a validated provider-managed target whose bytes
     may advance independently of MANIAC.
+    `binary` is the copy of the tool this page documents when it was chosen
+    with `install --here` (CONTRACT.md rule 2): `list` and `update` check
+    that copy, not whichever one the login `$PATH` reaches. None on every
+    other entry, and on every entry written before this field existed.
     `group` names the manifest key of the primary page of the upstream
     release these pages arrived in, carried by every member including the
     primary itself -- so membership and primacy are one field, and
@@ -89,6 +93,7 @@ class Entry:
     target: Path | None = None
     provider_target: bool = False
     group: str | None = None
+    binary: Path | None = None
 
 
 def manpage_owner(page: Path) -> str:
@@ -184,6 +189,7 @@ def _entry_to_row(entry: Entry) -> dict[str, Any]:
         "target": str(entry.target) if entry.target is not None else None,
         "provider_target": entry.provider_target,
         "group": entry.group,
+        "binary": str(entry.binary) if entry.binary is not None else None,
     }
 
 
@@ -199,6 +205,7 @@ def _row_to_entry(row: Any) -> Entry:
     raw_source_uri = row.get("source_uri")
     raw_target = row.get("target")
     raw_group = row.get("group")
+    raw_binary = row.get("binary")
     source_uri = (
         raw_source_uri
         if isinstance(raw_source_uri, str)
@@ -220,6 +227,7 @@ def _row_to_entry(row: Any) -> Entry:
         # .get again (ADR-0018): a row written before groups existed must
         # read as ungrouped, not fail to parse.
         group=raw_group if isinstance(raw_group, str) else None,
+        binary=Path(raw_binary) if isinstance(raw_binary, str) else None,
     )
 
 

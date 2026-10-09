@@ -24,7 +24,7 @@ from ..sources.manpages import (
 from ..sources.packages import ExternalPageFreshness, verify_external_page
 from ..sources.pathcache import resolve_cached
 from ..sources.providers.base import DirectPageProvider
-from ..sources.resolution import binary_path
+from ..sources.resolution import binary_path, installation_at
 from ..sources.roff import verify_page_header
 from .models import ActionState, Candidate, LocalClassification, PageSource
 
@@ -110,6 +110,24 @@ def _unclaimed_version(tool: str, cfg: Config) -> str | None:
     return get_version([str(path)], config=cfg) if path is not None else None
 
 
+def _current_version(
+    candidate: Candidate, entry: manifest.Entry, cfg: Config
+) -> str | None:
+    """The installed version a managed page is compared with.
+
+    A page chosen with `install --here` documents the copy it recorded, so
+    that copy answers, project-scoped or not (CONTRACT.md rule 2); every
+    other page is compared with what the login `$PATH` reaches.
+    """
+    if entry.binary is not None:
+        claim = installation_at(entry.binary)
+        if claim is not None:
+            return claim[1].version
+        return get_version([str(entry.binary)], config=cfg)
+    inst = candidate.installation
+    return inst.version if inst is not None else _unclaimed_version(candidate.tool, cfg)
+
+
 def _managed_page_state(
     candidate: Candidate, cfg: Config, evidence: _PageEvidence
 ) -> ActionState:
@@ -118,10 +136,7 @@ def _managed_page_state(
     assert entry is not None
     if entry.version is None:
         return ActionState.OK
-    inst = candidate.installation
-    current_version = (
-        inst.version if inst is not None else _unclaimed_version(candidate.tool, cfg)
-    )
+    current_version = _current_version(candidate, entry, cfg)
     if (
         current_version is not None
         and entry.version != current_version

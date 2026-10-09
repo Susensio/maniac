@@ -13,14 +13,18 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from typer.testing import CliRunner
 
 from maniac import manifest
+from maniac.cli import app
 from maniac.config import Config
 from maniac.exceptions import UnsupportedPandoc
 from maniac.installer import uninstall_manpage
 from maniac.listing import ActionState, compute_rows
 from maniac.manifest import Tier
 from maniac.orchestration.install import run_install
+
+runner = CliRunner()
 
 
 @pytest.fixture
@@ -51,6 +55,11 @@ def config(monkeypatch: pytest.MonkeyPatch) -> Config:
     cfg = Config()
     monkeypatch.setenv("MANPATH", str(cfg.man_dir.parent))
     return cfg
+
+
+def _says(output: str, text: str) -> bool:
+    """Whether `output` contains `text`, however Rich wrapped it."""
+    return "".join(text.split()) in "".join(output.split())
 
 
 def _man(*args: str) -> subprocess.CompletedProcess[str]:
@@ -134,3 +143,62 @@ def test_an_old_pandoc_is_refused_before_the_model_is_called(
 
     assert prompts == []
     assert not (config.man_dir / "faketool.1").exists()
+
+
+def test_a_venv_copy_is_noticed_then_documented_with_here(
+    faketool: Path,
+    prompts: list[str],
+    config: Config,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """CONTRACT.md rule 2 through the real CLI. Inside an activated venv the
+    page still documents the global copy, and says this shell runs another;
+    `--here` documents the venv's, and `list` keeps checking that copy."""
+    from maniac.sources import pathcache
+
+    venv_bin = tmp_path / "project" / ".venv" / "bin"
+    venv_bin.mkdir(parents=True)
+    venv_tool = venv_bin / "faketool"
+    venv_tool.write_text(
+        faketool.read_text(encoding="utf-8").replace("2.3.1", "3.0.0"),
+        encoding="utf-8",
+    )
+    venv_tool.chmod(0o755)
+    login_path = os.environ["PATH"]  # the global faketool, first
+    monkeypatch.setattr(pathcache, "_spawn_login_shell", lambda: login_path)
+    monkeypatch.setenv("PATH", f"{venv_bin}{os.pathsep}{login_path}")
+    monkeypatch.setenv("VIRTUAL_ENV", str(venv_bin.parent))
+    model = ["--model", "openai/gpt-4o-mini"]
+
+    plain = runner.invoke(app, ["install", *model, "faketool"])
+
+    assert plain.exit_code == 0, plain.output
+    assert _says(
+        plain.output, f"documents {faketool} (no installer; it reports faketool 2.3.1)"
+    )
+    assert _says(plain.output, f"this shell runs {venv_tool} instead")
+
+    here = runner.invoke(app, ["install", *model, "--here", "faketool"])
+
+    assert here.exit_code == 0, here.output
+    assert _says(
+        here.output, f"documents {venv_tool} (no installer; it reports faketool 3.0.0)"
+    )
+    assert not _says(here.output, "this shell runs")
+    entry = manifest.lookup("faketool", config=config)
+    assert entry is not None
+    assert (entry.binary, entry.version) == (venv_tool, "faketool 3.0.0")
+    page = config.man_dir / "faketool.1"
+    assert '"faketool 3.0.0" "User Commands"' in page.read_text(encoding="utf-8")
+
+    # `list` checks the recorded copy, not the global one, even from $HOME.
+    monkeypatch.setenv("PATH", login_path)
+    [row] = compute_rows(["faketool"], config=config)
+    assert row.state is ActionState.OK
+    venv_tool.write_text(
+        venv_tool.read_text(encoding="utf-8").replace("3.0.0", "3.1.0"),
+        encoding="utf-8",
+    )
+    [row] = compute_rows(["faketool"], config=config)
+    assert row.state is ActionState.OUTDATED

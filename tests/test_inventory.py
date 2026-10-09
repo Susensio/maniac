@@ -228,7 +228,7 @@ def test_compute_rows_logs_phase_timing(
 ) -> None:
     monkeypatch.setattr(
         "maniac.listing.inventory.resolution.find_installation",
-        lambda name, bin_dir=None: None,
+        lambda name, bin_dir=None, **_: None,
     )
     clock = iter(float(value) for value in range(1, 9))
     monkeypatch.setattr("maniac.listing.inventory.monotonic", lambda: next(clock))
@@ -422,7 +422,7 @@ def test_compute_rows_with_tools_is_unfiltered_and_resolves_each_by_name(
     inst = _installation(binary="bash")
     monkeypatch.setattr(
         "maniac.listing.inventory.resolution.find_installation",
-        lambda name, bin_dir=None: (provider, inst) if name == "bash" else None,
+        lambda name, bin_dir=None, **_: (provider, inst) if name == "bash" else None,
     )
 
     rows = compute_rows(["bash", "unknown"], config=_config(tmp_path))
@@ -439,7 +439,7 @@ def test_compute_rows_named_tools_are_deduplicated(
 ) -> None:
     monkeypatch.setattr(
         "maniac.listing.inventory.resolution.find_installation",
-        lambda name, bin_dir=None: None,
+        lambda name, bin_dir=None, **_: None,
     )
 
     rows = compute_rows(["uv", "uv"], config=_config(tmp_path))
@@ -453,7 +453,7 @@ def test_compute_rows_without_an_observer_behaves_the_same(
     """Every caller besides the CLI omits the observer and sees the same rows."""
     monkeypatch.setattr(
         "maniac.listing.inventory.resolution.find_installation",
-        lambda name, bin_dir=None: None,
+        lambda name, bin_dir=None, **_: None,
     )
 
     rows = compute_rows(["uv"], config=_config(tmp_path))
@@ -468,7 +468,7 @@ def test_compute_rows_named_tools_report_row_progress_but_no_discovery_phase(
     its discovery callbacks must never fire."""
     monkeypatch.setattr(
         "maniac.listing.inventory.resolution.find_installation",
-        lambda name, bin_dir=None: None,
+        lambda name, bin_dir=None, **_: None,
     )
     observer = RecordingObserver()
 
@@ -2798,7 +2798,7 @@ def test_build_inventory_with_tools_resolves_each_by_name(
     inst = _installation(binary="bash")
     monkeypatch.setattr(
         "maniac.listing.inventory.resolution.find_installation",
-        lambda name, bin_dir=None: (provider, inst) if name == "bash" else None,
+        lambda name, bin_dir=None, **_: (provider, inst) if name == "bash" else None,
     )
 
     candidates, discovered = _build_inventory(["bash", "unknown"], RecordingObserver())
@@ -2816,7 +2816,7 @@ def test_build_inventory_with_tools_deduplicates_repeats(
 ) -> None:
     monkeypatch.setattr(
         "maniac.listing.inventory.resolution.find_installation",
-        lambda name, bin_dir=None: None,
+        lambda name, bin_dir=None, **_: None,
     )
 
     candidates, discovered = _build_inventory(["uv", "uv"], RecordingObserver())
@@ -2830,7 +2830,7 @@ def test_build_inventory_with_tools_never_walks_discovery(
 ) -> None:
     monkeypatch.setattr(
         "maniac.listing.inventory.resolution.find_installation",
-        lambda name, bin_dir=None: None,
+        lambda name, bin_dir=None, **_: None,
     )
     monkeypatch.setattr(
         "maniac.listing.inventory.resolution.enumerate_installations",

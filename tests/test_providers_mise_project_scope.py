@@ -361,3 +361,27 @@ def test_one_corrupt_backend_file_does_not_fail_other_global_installs(
     assert not any(identity[1] == "corrupt" for identity in installs.identities)
     assert installs.skipped
     assert installs.skipped[0][0] == corrupt_root.parent / ".mise.backend.toml"
+
+
+def test_a_project_only_install_is_found_when_asked_for_here(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`install --here` names the project's copy on purpose (CONTRACT.md
+    rule 2): the same install refused for the login `$PATH` is its answer."""
+    from maniac.sources import resolution
+
+    bin_path = _make_mise_install(tmp_path, "ripgrep", "13.0.0", "rg")
+    monkeypatch.setattr(mise.discovery.shutil, "which", lambda name: "/usr/bin/mise")
+    monkeypatch.setattr(
+        mise.discovery.subprocess,
+        "run",
+        _fake_run(json.dumps({"ripgrep": [{"install_path": "/other/root"}]})),
+    )
+
+    with pytest.raises(NotGloballySelected):
+        resolution.find_installation("rg", bin_dir=bin_path.parent)
+    found = resolution.find_installation("rg", bin_dir=bin_path.parent, here=True)
+
+    assert found is not None
+    provider, inst = found
+    assert (provider.name, inst.package, inst.version) == ("mise", "ripgrep", "13.0.0")

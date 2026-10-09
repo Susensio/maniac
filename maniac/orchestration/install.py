@@ -19,7 +19,12 @@ from pathlib import Path
 
 from .. import manifest
 from ..config import Config
-from ..exceptions import ManiacError, NotGloballySelected, UnsupportedPandoc
+from ..exceptions import (
+    ManiacError,
+    NotGloballySelected,
+    ShimRunsNothing,
+    UnsupportedPandoc,
+)
 from ..generation.compiler import require_supported_pandoc
 from ..installer import (
     InstallResult,
@@ -88,8 +93,13 @@ def run_install(
     dry_run: bool = False,
     config: Config | None = None,
     bin_dir: str | Path | None = None,
+    here: bool = False,
 ) -> InstallOutcome:
     """Resolve `tool_name` through ADR-0016's tiers and report which one answered.
+
+    `here` documents the copy the invoking shell runs instead of the login
+    `$PATH`'s (`install --here`, CONTRACT.md rule 2), project-scoped or
+    not; the page records which copy it documents.
 
     Tiers 1-2 (install root, repository) always run first. `no_synthesize`
     (`--no-synthesize`) restricts selection to them -- `synthesize`, the
@@ -104,24 +114,39 @@ def run_install(
     """
     cfg = config or Config()
 
+    if here:
+        this_copy = binary_here(tool_name)
+        if this_copy is None:
+            raise InstallRefused(f"'{tool_name}' is not on this shell's $PATH.")
+        bin_dir = this_copy.parent
+
     bin_path = resolve_bin_path(tool_name, bin_dir)
     if bin_path is None:
         raise InstallRefused(
             f"'{tool_name}' is not on your login shell's $PATH -- and a "
             "manpage would be installed globally and permanently. Install it "
             "globally first, or make your login profile put it on $PATH."
+            + _here_hint(tool_name)
         )
 
     _refuse_unmanaged_destination(cfg.man_dir / f"{tool_name}.1", cfg, force=force)
 
     try:
-        tool = resolve_tool(tool_name, config=cfg, bin_dir=bin_dir)
+        tool = resolve_tool(tool_name, config=cfg, bin_dir=bin_dir, here=here)
+    except ShimRunsNothing as e:
+        raise InstallRefused(
+            f"'{tool_name}' is a Mise shim ({e.path}) that runs nothing from "
+            "$HOME: no globally selected tool provides it, and nothing else on "
+            "your login shell's $PATH does. Select it globally "
+            "(`mise use -g ...`) to document it." + _here_hint(tool_name)
+        ) from e
     except NotGloballySelected as e:
         raise InstallRefused(
             f"'{tool_name}' resolves to {e.path}, which is not one of Mise's "
             "globally selected tools (`mise ls --current` from $HOME) -- "
             "selected only by a project config, or by none. Select it "
             "globally (`mise use -g ...`) or remove the stale link."
+            + _here_hint(tool_name)
         ) from e
     if tool.provider is None and tool.bin_path is not None:
         _refuse_system_binary(tool_name, tool.bin_path)
@@ -133,7 +158,18 @@ def run_install(
         force=force,
         dry_run=dry_run,
     )
-    return replace(outcome, resolution=_resolution(tool, bin_dir=bin_dir))
+    return replace(
+        outcome,
+        resolution=_resolution(tool, bin_dir=None if here else bin_dir),
+    )
+
+
+def _here_hint(tool_name: str) -> str:
+    """How to document the invoking shell's copy instead, when it has one."""
+    this_copy = binary_here(tool_name)
+    if this_copy is None:
+        return ""
+    return f" This shell runs {this_copy}; `--here` documents that copy."
 
 
 def _resolution(tool: ResolvedTool, *, bin_dir: str | Path | None) -> Resolution | None:
@@ -146,7 +182,7 @@ def _resolution(tool: ResolvedTool, *, bin_dir: str | Path | None) -> Resolution
         installer = None
         reported = get_version([str(tool.bin_path)], config=tool.config)
         version = reported.splitlines()[0].strip() if reported else None
-    here = binary_here(tool.tool_name) if bin_dir is None else None
+    here = binary_here(tool.tool_name) if bin_dir is None and not tool.here else None
     if here is not None and _same_file(here, tool.bin_path):
         here = None
     return Resolution(tool.bin_path, installer, version, here)
@@ -426,6 +462,7 @@ def _try_install_root(
                         if page == candidate.primary
                         else False,
                         group=group,
+                        binary=tool.documented_binary,
                     ),
                     target_dir=_manpage_directory(page.path, cfg),
                     durable_source=candidate.provider_owned
@@ -530,6 +567,7 @@ def _try_repository(
                         version=inst.version,
                         source_uri=page.uri,
                         group=group,
+                        binary=tool.documented_binary,
                     ),
                     target_dir=_manpage_directory(page.path, cfg),
                 )

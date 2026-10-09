@@ -1,6 +1,10 @@
 """Exception hierarchy for the maniac package."""
 
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .models import Installation
 
 
 class ManiacError(Exception):
@@ -78,9 +82,14 @@ class NotGloballySelected(ManiacError):
     version as if it were the machine's global one.
     """
 
-    def __init__(self, tool: str, root: Path) -> None:
+    def __init__(
+        self, tool: str, root: Path, installation: "Installation | None" = None
+    ) -> None:
         self.tool = tool
         self.path = root
+        # What detection found, for `install --here` to document anyway
+        # (CONTRACT.md rule 2); None where nothing was found to document.
+        self.installation = installation
         # Short: `listing.py` renders this in the Source column, capped at
         # `_SOURCE_COLUMN_MAX_WIDTH` -- the fuller explanation belongs to
         # the caller's own message (`orchestration/install.py`'s refusal).
