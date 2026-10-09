@@ -194,7 +194,24 @@ def which(binary_name: str) -> Path | None:
     walk already did -- it cannot be the binary that runs, so it is not the
     first hit either.
     """
-    for directory in path_dirs():
+    return _first_executable(path_dirs(), binary_name)
+
+
+def which_here(binary_name: str) -> Path | None:
+    """`which` over the `$PATH` maniac inherited: what the invoking shell runs.
+
+    Never used to choose what a page documents (that is the login `$PATH`,
+    ADR-0062); only to say so when the invoking shell would run another
+    copy (CONTRACT.md rule 2).
+    """
+    inherited = [
+        Path(entry) for entry in os.environ.get("PATH", "").split(os.pathsep) if entry
+    ]
+    return _first_executable(inherited, binary_name)
+
+
+def _first_executable(directories: list[Path], binary_name: str) -> Path | None:
+    for directory in directories:
         candidate = directory / binary_name
         try:
             if candidate.is_file() and os.access(candidate, os.X_OK):

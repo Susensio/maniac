@@ -16,11 +16,12 @@ When a phase lands, it updates the README for what became live and marks the ADR
 
 ### P1 Visible resolution (rule 2): next
 
-- [ ] `install` prints, per tool, the binary it documents and where its version came from.
-- [ ] When the invoking shell's `$PATH` reaches a different copy, `install` says so (`...; this shell runs .venv/bin/ruff`).
+- [x] `install` prints, per tool, the binary it documents and where its version came from.
+- [x] When the invoking shell's `$PATH` reaches a different copy, `install` says so (`this shell runs ~/proj/.venv/bin/ruff instead`), following a Mise shim the way mise would from the current directory.
 - [ ] `--here` documents the copy the invoking shell runs.
   The manifest entry records that binary's path, and `list`/`update` check that copy rather than re-resolving from `$HOME`.
-- [ ] A named system binary is refused; the message shows the page `man -w` already finds for it.
+- [x] A named system binary is refused; the message shows the page `man -w` already finds for it.
+  Before, `install ls` would quietly have generated a page from `ls --help`, despite ADR-0059.
 - [ ] Integration test through the real CLI, inside an activated venv: the notice, then `--here`.
 
 ### P2 `why <tool>` (rule 3)
@@ -67,3 +68,4 @@ When a phase lands, it updates the README for what became live and marks the ADR
 ## Log
 
 - 2026-10-09: P0 landed.
+- 2026-10-09: P1 part 1: the documented binary, the divergence notice and the system-binary refusal, checked live in a venv, a Mise project and with `ls`. The `Binary resolves outside any known installer` warning is gone; `install` now prints the same fact as `no installer`.

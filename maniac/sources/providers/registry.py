@@ -73,6 +73,11 @@ class ProviderRegistry:
             return
         yield from self
 
+    @staticmethod
+    def is_system_path(bin_path: Path) -> bool:
+        """Whether `bin_path` resolves into a standard system bin directory (ADR-0059)."""
+        return resolve_cached(bin_path).parent in _SYSTEM_BIN_DIRS
+
     def provider_named(self, name: str) -> Provider | None:
         """The registered provider called `name`, as `Installation.provider` records it."""
         return next(

@@ -264,7 +264,7 @@ def test_cli_source_docs(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_cli_install_dry_run(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setattr(
         "maniac.sources.pathcache.which",
-        lambda name: Path(f"/bin/{name}"),
+        lambda name: Path(f"/nonexistent/maniac-tests/bin/{name}"),
     )
     monkeypatch.setattr(
         "maniac.orchestration.install.shutil.which", lambda name: "/usr/bin/pandoc"
@@ -298,7 +298,7 @@ def test_cli_install_exits_nonzero_when_synthesis_produces_no_page(
 
     monkeypatch.setattr(
         "maniac.sources.pathcache.which",
-        lambda name: Path(f"/bin/{name}"),
+        lambda name: Path(f"/nonexistent/maniac-tests/bin/{name}"),
     )
 
     def _synthesize(tool: ResolvedTool, **kwargs: object) -> PipelineResult:
@@ -373,7 +373,7 @@ def test_cli_install_reuses_config_for_existing_destination(
     monkeypatch.setattr(cli_module, "Config", TrackingConfig)
     monkeypatch.setattr(
         "maniac.orchestration.install.resolve_bin_path",
-        lambda tool, bin_dir=None: Path(f"/bin/{tool}"),
+        lambda tool, bin_dir=None: Path(f"/nonexistent/maniac-tests/bin/{tool}"),
     )
     monkeypatch.setattr(
         "maniac.orchestration.context.resolution.find_installation",
@@ -442,7 +442,7 @@ def test_cli_install_exits_nonzero_when_no_synthesize_finds_nothing(
     """ADR-0048: `--no-synthesize` finding nothing at tiers 1-2 is still no page."""
     monkeypatch.setattr(
         "maniac.sources.pathcache.which",
-        lambda name: Path(f"/bin/{name}"),
+        lambda name: Path(f"/nonexistent/maniac-tests/bin/{name}"),
     )
     monkeypatch.setattr(
         "maniac.orchestration.context.resolution.find_installation",
@@ -465,7 +465,7 @@ def test_cli_install_dry_run_exits_nonzero_when_no_tier_would_answer(
     still no page, the same as a real run finding none."""
     monkeypatch.setattr(
         "maniac.sources.pathcache.which",
-        lambda name: Path(f"/bin/{name}"),
+        lambda name: Path(f"/nonexistent/maniac-tests/bin/{name}"),
     )
     monkeypatch.setattr(
         "maniac.orchestration.context.resolution.find_installation",
@@ -489,7 +489,7 @@ def test_cli_install_always_installs(
 
     monkeypatch.setattr(
         "maniac.sources.pathcache.which",
-        lambda name: Path(f"/bin/{name}"),
+        lambda name: Path(f"/nonexistent/maniac-tests/bin/{name}"),
     )
     observed: dict[str, object] = {}
 
@@ -778,7 +778,7 @@ def test_cli_install_multiple_all_fail_exits_nonzero(
 
     monkeypatch.setattr(
         "maniac.sources.pathcache.which",
-        lambda name: Path(f"/bin/{name}"),
+        lambda name: Path(f"/nonexistent/maniac-tests/bin/{name}"),
     )
     monkeypatch.setattr("maniac.orchestration.pipeline.synthesize", _raise)
     res = runner.invoke(app, ["install", "toolone", "tooltwo"])
@@ -801,7 +801,7 @@ def test_cli_install_reports_malformed_tool_metadata_and_exits_nonzero(
 
     monkeypatch.setattr(
         "maniac.sources.pathcache.which",
-        lambda name: Path("/bin/toolone"),
+        lambda name: Path("/nonexistent/maniac-tests/bin/toolone"),
     )
     monkeypatch.setattr(
         "maniac.orchestration.context.resolution.find_installation", _raise
@@ -822,7 +822,7 @@ def test_cli_install_multiple_partial_success_exits_nonzero(
 
     monkeypatch.setattr(
         "maniac.sources.pathcache.which",
-        lambda name: Path(f"/bin/{name}"),
+        lambda name: Path(f"/nonexistent/maniac-tests/bin/{name}"),
     )
 
     def _synthesize(tool: ResolvedTool, **kwargs: object) -> PipelineResult:
@@ -882,3 +882,31 @@ def test_cli_uninstall_rejects_removed_force_option() -> None:
     page whose bytes moved on for an unrelated reason."""
     res = runner.invoke(app, ["uninstall", "mytool", "--force"])
     assert res.exit_code != 0
+
+
+def test_install_prints_what_each_page_documents() -> None:
+    """CONTRACT.md rule 2: under each tool, the binary its page documents and
+    where that version came from; and the invoking shell's copy if another."""
+    from maniac.cli.install import _resolution_lines
+    from maniac.orchestration.install import InstallOutcome, Resolution
+
+    home = Path.home()
+
+    def outcome(resolution: Resolution) -> InstallOutcome:
+        return InstallOutcome(tool="ruff", tier=None, detail="", resolution=resolution)
+
+    claimed = Resolution(
+        home / ".local/bin/ruff", "uv", "0.6.9", home / "p/.venv/bin/ruff"
+    )
+    assert _resolution_lines(outcome(claimed)) == [
+        "documents ~/.local/bin/ruff (uv, 0.6.9)",
+        "this shell runs ~/p/.venv/bin/ruff instead",
+    ]
+    unclaimed = Resolution(Path("/opt/w/ruff"), None, "ruff 9.9.9")
+    assert _resolution_lines(outcome(unclaimed)) == [
+        "documents /opt/w/ruff (no installer; it reports ruff 9.9.9)"
+    ]
+    silent = Resolution(Path("/opt/w/ruff"), None, None)
+    assert _resolution_lines(outcome(silent)) == [
+        "documents /opt/w/ruff (no installer; version unknown)"
+    ]

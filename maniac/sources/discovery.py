@@ -99,8 +99,12 @@ class _SingleFlightCache[T]:
             self._locks.clear()
 
 
-def _run_mise(*args: str) -> str:
+def _run_mise(*args: str, here: bool = False) -> str:
     """Run one `mise` subcommand from `$HOME` and return its stdout.
+
+    `here=True` asks from the current directory with the environment as
+    inherited instead -- what the invoking shell's mise would answer, for
+    saying when that differs from `$HOME`'s (CONTRACT.md rule 2).
 
     Only what shell activation exports is scrubbed first -- every `__MISE_*`
     variable and `MISE_SHELL` (ADR-0061 Corrections). The user's own `MISE_*`
@@ -119,15 +123,19 @@ def _run_mise(*args: str) -> str:
             Path("mise"),
             "mise binary not found on $PATH, but a mise-managed install exists",
         )
-    env = {
-        key: value
-        for key, value in os.environ.items()
-        if not (key.startswith("__MISE_") or key == "MISE_SHELL")
-    }
+    env = (
+        dict(os.environ)
+        if here
+        else {
+            key: value
+            for key, value in os.environ.items()
+            if not (key.startswith("__MISE_") or key == "MISE_SHELL")
+        }
+    )
     try:
         result = subprocess.run(
             [mise, *args],
-            cwd=Path.home(),
+            cwd=Path.cwd() if here else Path.home(),
             env=env,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,

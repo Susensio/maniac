@@ -159,7 +159,7 @@ def shim_target(bin_path: Path) -> Path | None:
     `MalformedToolMetadata` when `mise` itself fails: a shim already found
     is evidence mise should work here.
     """
-    if bin_path.parent.name != "shims" or resolve_cached(bin_path).name != "mise":
+    if not is_shim(bin_path):
         return None
     for directory in _mise_global_bin_paths():
         candidate = _executable_in(directory, bin_path.name)
@@ -172,6 +172,25 @@ def shim_target(bin_path: Path) -> Path | None:
         if candidate is not None:
             return candidate
     raise ShimRunsNothing(bin_path.name, bin_path)
+
+
+def is_shim(bin_path: Path) -> bool:
+    """A `$PATH` entry in a `shims` directory that resolves to `mise` itself."""
+    return bin_path.parent.name == "shims" and resolve_cached(bin_path).name == "mise"
+
+
+def shim_target_here(bin_path: Path) -> Path | None:
+    """What a shim runs from the current directory, as the invoking shell sees it.
+
+    `mise which` with the inherited environment and working directory. None
+    when mise cannot say: this only feeds a notice (CONTRACT.md rule 2), so
+    a failure here is not a reason to stop.
+    """
+    try:
+        output = discovery._run_mise("which", bin_path.name, here=True).strip()
+    except MalformedToolMetadata:
+        return None
+    return Path(output) if output else None
 
 
 def _executable_in(directory: Path, name: str) -> Path | None:

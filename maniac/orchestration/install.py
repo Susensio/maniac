@@ -14,7 +14,7 @@ all three, so tier 3 never re-resolves what tiers 1-2 already found.
 
 import shutil
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from .. import manifest
@@ -29,12 +29,14 @@ from ..installer import (
     _remove_recorded_manpage,
     install_manpage,
 )
-from ..logging import logger
 from ..manifest import Tier, manpage_owner
 from ..models import PipelineResult
 from ..sources.candidates import select_install_root, select_repository
+from ..sources.crawler import get_version
 from ..sources.docs import discover_repo_manpages
+from ..sources.manpages import find_installed_manpage_path
 from ..sources.pathcache import resolve_bin_path
+from ..sources.resolution import binary_here, is_system_binary
 from .context import ResolvedTool, resolve_tool
 
 __all__ = ["InstallOutcome", "InstallRefused", "Tier", "run_install"]
@@ -49,6 +51,22 @@ class InstallRefused(ManiacError):
 
 
 @dataclass(frozen=True, slots=True)
+class Resolution:
+    """The binary a page documents, as `install` prints it (CONTRACT.md rule 2).
+
+    `version` is the installer's own record, or for a binary no installer
+    claims, the first line of its own `--version`; None when neither says.
+    `here` is the copy the invoking shell would run, set only when it is a
+    different file from `binary`.
+    """
+
+    binary: Path
+    installer: str | None
+    version: str | None
+    here: Path | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class InstallOutcome:
     """What `run_install` decided for one tool: the tier that answered, and detail."""
 
@@ -58,6 +76,7 @@ class InstallOutcome:
     source_path: Path | None = None
     installed_path: Path | None = None
     pipeline: PipelineResult | None = None
+    resolution: Resolution | None = None
 
 
 def run_install(
@@ -104,18 +123,73 @@ def run_install(
             "selected only by a project config, or by none. Select it "
             "globally (`mise use -g ...`) or remove the stale link."
         ) from e
-    if tool.provider is None:
-        # No installer claims the login `$PATH`'s first hit (a wrapper script,
-        # a hand-copied binary) -- tiers 1-2 are unreachable for it, and any
-        # tier-3 page below documents exactly this resolved binary.
-        # `warning`, not `info`: this is the reason a refusal or a
-        # synthesized-from-shadow page happens, and default logging is WARNING.
-        logger.warning(
-            "Binary resolves outside any known installer",
-            tool=tool_name,
-            resolved_path=str(tool.bin_path),
-        )
+    if tool.provider is None and tool.bin_path is not None:
+        _refuse_system_binary(tool_name, tool.bin_path)
 
+    outcome = _select_page(
+        tool,
+        model=model,
+        no_synthesize=no_synthesize,
+        force=force,
+        dry_run=dry_run,
+    )
+    return replace(outcome, resolution=_resolution(tool, bin_dir=bin_dir))
+
+
+def _resolution(tool: ResolvedTool, *, bin_dir: str | Path | None) -> Resolution | None:
+    """What `tool` documents, and what the invoking shell runs if it differs."""
+    if tool.bin_path is None:
+        return None
+    if tool.installation is not None:
+        installer, version = tool.installation.provider, tool.installation.version
+    else:
+        installer = None
+        reported = get_version([str(tool.bin_path)], config=tool.config)
+        version = reported.splitlines()[0].strip() if reported else None
+    here = binary_here(tool.tool_name) if bin_dir is None else None
+    if here is not None and _same_file(here, tool.bin_path):
+        here = None
+    return Resolution(tool.bin_path, installer, version, here)
+
+
+def _same_file(a: Path, b: Path) -> bool:
+    try:
+        return a.resolve() == b.resolve()
+    except OSError:
+        return a == b
+
+
+def _refuse_system_binary(tool_name: str, bin_path: Path) -> None:
+    """A system package's binary is out of scope; say which page it already has.
+
+    CONTRACT.md rule 1 with ADR-0059: its package ships and upgrades its
+    page, so there is nothing for maniac to install or keep fresh.
+    """
+    if not is_system_binary(bin_path):
+        return
+    page = find_installed_manpage_path("man", tool_name)
+    state = (
+        f"its package maintains its page, and `man {tool_name}` already shows {page}"
+        if page is not None
+        else "and its package ships no page for it"
+    )
+    sep = ":" if page is not None else ","
+    raise InstallRefused(
+        f"'{tool_name}' is {bin_path}, a system package's binary{sep} {state}. "
+        "maniac leaves system tools to their package."
+    )
+
+
+def _select_page(
+    tool: ResolvedTool,
+    *,
+    model: str | None,
+    no_synthesize: bool,
+    force: bool,
+    dry_run: bool,
+) -> InstallOutcome:
+    """The first tier with a page for `tool`, installed (ADR-0016)."""
+    tool_name = tool.tool_name
     outcome = _try_install_root(tool, force=force, dry_run=dry_run)
     if outcome is not None:
         return outcome

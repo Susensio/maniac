@@ -1,10 +1,10 @@
 """Tests for `run_install` (ADR-0016): tier selection, `--no-synthesize`."""
 
+import os
 from collections import Counter
 from pathlib import Path
 
 import pytest
-import structlog
 
 from maniac import lifecycle, manifest
 from maniac.config import Config
@@ -14,6 +14,7 @@ from maniac.models import DocFile, Installation, RepoSource
 from maniac.orchestration.context import ResolvedTool, resolve_tool
 from maniac.orchestration.install import (
     InstallRefused,
+    Resolution,
     Tier,
     _try_install_root,
     _try_repository,
@@ -33,7 +34,9 @@ def _reachable_on_path(monkeypatch: pytest.MonkeyPatch) -> None:
     (tested on its own below) doesn't fire for tests about tier selection
     instead.
     """
-    monkeypatch.setattr(pathcache, "which", lambda name: Path(f"/bin/{name}"))
+    monkeypatch.setattr(
+        pathcache, "which", lambda name: Path(f"/nonexistent/maniac-tests/bin/{name}")
+    )
 
 
 class _FakeProvider:
@@ -613,84 +616,104 @@ def test_resolved_tool_runs_the_login_path_binary_not_the_bare_name(
     assert tool.executable == str(global_ruff)
 
 
-def test_run_install_names_the_resolved_path_of_an_unclaimed_binary(
+def _stub_synthesis(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from maniac.models import PipelineResult
+
+    monkeypatch.setattr(
+        "maniac.orchestration.pipeline.synthesize",
+        lambda tool, **kwargs: PipelineResult(
+            tool_name=tool.tool_name,
+            repo_source=None,
+            command_count=1,
+            doc_file_count=0,
+            context_path=None,
+            markdown_path=tmp_path / f"{tool.tool_name}.1.md",
+            roff_path=None,
+            installed_path=None,
+            markdown_content="# doc",
+        ),
+    )
+
+
+def _reporting_binary(path: Path, version: str) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(f"#!/bin/sh\necho '{version}'\n", encoding="utf-8")
+    path.chmod(0o755)
+    return path
+
+
+def test_run_install_reports_what_an_unclaimed_binary_documents(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """An unclaimed first hit on the login `$PATH` (a wrapper script, a
-    hand-copied binary) reaches tier 3 -- no installer claims it, and the
-    resolved path is logged at `warning` (visible at default logging level)
-    so the user can see why.
-    """
-    from maniac.models import PipelineResult
-
-    unclaimed_ruff = tmp_path / "bin" / "overrides" / "ruff"
-    monkeypatch.setattr(pathcache, "which", lambda name: unclaimed_ruff)
+    """CONTRACT.md rule 2: the binary a page documents, and -- with no
+    installer to ask -- the version it reports itself (rule 4)."""
+    ruff = _reporting_binary(tmp_path / "overrides" / "ruff", "ruff 9.9.9")
+    monkeypatch.setattr(pathcache, "which", lambda name: ruff)
+    monkeypatch.setenv("PATH", str(ruff.parent))
     monkeypatch.setattr(
         "maniac.orchestration.context.resolution.find_installation",
         lambda name, bin_dir=None: None,
     )
-    monkeypatch.setattr(
-        "maniac.orchestration.pipeline.synthesize",
-        lambda tool, **kwargs: PipelineResult(
-            tool_name=tool.tool_name,
-            repo_source=None,
-            command_count=1,
-            doc_file_count=0,
-            context_path=None,
-            markdown_path=tmp_path / f"{tool.tool_name}.1.md",
-            roff_path=None,
-            installed_path=None,
-            markdown_content="# doc",
-        ),
-    )
+    _stub_synthesis(monkeypatch, tmp_path)
 
-    with structlog.testing.capture_logs() as logged:
-        run_install("ruff")
+    outcome = run_install("ruff")
 
-    assert {
-        "event": "Binary resolves outside any known installer",
-        "log_level": "warning",
-        "tool": "ruff",
-        "resolved_path": str(unclaimed_ruff),
-    } in logged
+    assert outcome.resolution == Resolution(ruff, None, "ruff 9.9.9", None)
 
 
-def test_unclaimed_binary_resolved_path_is_visible_at_default_log_level(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+def test_run_install_says_when_this_shell_runs_another_copy(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """`capture_logs()` bypasses structlog's own level filter, so it alone
-    cannot prove the resolved path is visible by default (item 5) -- this
-    drives the real `setup_logging(verbose=False)` filtering bound logger
-    (default WARNING) and checks the rendered line actually reaches stdout.
-    """
-    from maniac.logging import setup_logging
-    from maniac.models import PipelineResult
+    """Inside an activated venv the invoking shell runs the venv's copy; the
+    page still documents the login `$PATH`'s, and the outcome says both."""
+    global_ruff = _reporting_binary(tmp_path / "global" / "ruff", "ruff 0.6.9")
+    venv_ruff = _reporting_binary(tmp_path / ".venv" / "bin" / "ruff", "ruff 0.7.0")
+    monkeypatch.setattr(pathcache, "which", lambda name: global_ruff)
+    monkeypatch.setenv("PATH", f"{venv_ruff.parent}{os.pathsep}{global_ruff.parent}")
+    monkeypatch.setattr(
+        "maniac.orchestration.context.resolution.find_installation",
+        lambda name, bin_dir=None: None,
+    )
+    _stub_synthesis(monkeypatch, tmp_path)
 
-    unclaimed_ruff = tmp_path / "bin" / "overrides" / "ruff"
-    monkeypatch.setattr(pathcache, "which", lambda name: unclaimed_ruff)
+    outcome = run_install("ruff")
+
+    assert outcome.resolution == Resolution(global_ruff, None, "ruff 0.6.9", venv_ruff)
+
+
+@pytest.mark.parametrize(
+    ("page", "says"),
+    [
+        (
+            Path("/usr/share/man/man1/ls.1.gz"),
+            "its package maintains its page, and `man ls` already shows /usr/share/man/man1/ls.1.gz",
+        ),
+        (None, "binary, and its package ships no page for it"),
+    ],
+)
+def test_run_install_refuses_a_named_system_binary_and_shows_its_page(
+    monkeypatch: pytest.MonkeyPatch, page: Path | None, says: str
+) -> None:
+    """CONTRACT.md rule 1 with ADR-0059: a system package maintains its own
+    page, so naming its binary is refused rather than generated over."""
+    monkeypatch.setattr(pathcache, "which", lambda name: Path("/usr/bin/ls"))
     monkeypatch.setattr(
         "maniac.orchestration.context.resolution.find_installation",
         lambda name, bin_dir=None: None,
     )
     monkeypatch.setattr(
-        "maniac.orchestration.pipeline.synthesize",
-        lambda tool, **kwargs: PipelineResult(
-            tool_name=tool.tool_name,
-            repo_source=None,
-            command_count=1,
-            doc_file_count=0,
-            context_path=None,
-            markdown_path=tmp_path / f"{tool.tool_name}.1.md",
-            roff_path=None,
-            installed_path=None,
-            markdown_content="# doc",
-        ),
+        "maniac.orchestration.install.find_installed_manpage_path",
+        lambda man, tool: page,
+    )
+    monkeypatch.setattr(
+        "maniac.orchestration.install._select_page",
+        lambda *a, **k: pytest.fail("a system binary reached page selection"),
     )
 
-    setup_logging(verbose=False)
-    run_install("ruff")
+    with pytest.raises(InstallRefused, match="a system package's binary") as raised:
+        run_install("ls")
 
-    assert str(unclaimed_ruff) in capsys.readouterr().out
+    assert says in str(raised.value)
 
 
 def test_run_install_tier2_skipped_without_an_installed_version(

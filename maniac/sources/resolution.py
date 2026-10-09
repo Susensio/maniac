@@ -14,9 +14,9 @@ from pathlib import Path
 from ..config import Config
 from ..exceptions import MalformedToolMetadata, NotGloballySelected, ShimRunsNothing
 from ..models import Installation, RepoSource
-from .pathcache import path_dirs, resolve_bin_path
+from .pathcache import path_dirs, resolve_bin_path, which_here
 from .providers.base import Provider
-from .providers.mise import shim_target
+from .providers.mise import is_shim, shim_target, shim_target_here
 from .providers.registry import registry
 
 # Both name a claim `_detect_via_registry` could not complete (ADR-0060,
@@ -39,6 +39,25 @@ def binary_path(binary_name: str, bin_dir: str | Path | None = None) -> Path | N
     if found is None:
         return None
     return shim_target(found) or found
+
+
+def binary_here(binary_name: str) -> Path | None:
+    """The file the invoking shell runs for `binary_name`, or None.
+
+    The inherited `$PATH`'s first hit, a Mise shim followed as mise would
+    from the current directory. Compared with `binary_path`, it tells when
+    the shell maniac was run from would run another copy than the one a
+    page documents (CONTRACT.md rule 2).
+    """
+    found = which_here(binary_name)
+    if found is not None and is_shim(found):
+        return shim_target_here(found) or found
+    return found
+
+
+def is_system_binary(bin_path: Path) -> bool:
+    """Whether `bin_path` is a system package's binary, out of scope (ADR-0059)."""
+    return registry.is_system_path(bin_path)
 
 
 def find_installation(

@@ -6,6 +6,7 @@ LLM synthesis, in that order; `--no-synthesize` restricts it to the first
 two tiers.
 """
 
+from pathlib import Path
 from typing import Annotated, Any
 
 import typer
@@ -45,8 +46,40 @@ def _render_install(
     detail = escape(outcome.detail)
     if _no_page_installed(outcome, dry_run=dry_run):
         target_console.print(f"[yellow]{outcome.tool}   {detail}[/yellow]")
-        return
-    target_console.print(f"[bold green]{outcome.tool}[/bold green]   {detail}")
+    else:
+        target_console.print(f"[bold green]{outcome.tool}[/bold green]   {detail}")
+    for line in _resolution_lines(outcome):
+        target_console.print(f"  [dim]{escape(line)}[/dim]")
+
+
+def _resolution_lines(outcome: InstallOutcome) -> list[str]:
+    """What the page documents, and the copy this shell runs if another (rule 2)."""
+    resolution = outcome.resolution
+    if resolution is None:
+        return []
+    if resolution.installer is not None:
+        origin = resolution.installer
+        if resolution.version is not None:
+            origin += f", {resolution.version}"
+    else:
+        origin = "no installer"
+        origin += (
+            f"; it reports {resolution.version}"
+            if resolution.version is not None
+            else "; version unknown"
+        )
+    lines = [f"documents {_home(resolution.binary)} ({origin})"]
+    if resolution.here is not None:
+        lines.append(f"this shell runs {_home(resolution.here)} instead")
+    return lines
+
+
+def _home(path: Path) -> str:
+    """`path` with the home directory shown as `~`."""
+    try:
+        return f"~/{path.relative_to(Path.home())}"
+    except ValueError:
+        return str(path)
 
 
 @app.command()
