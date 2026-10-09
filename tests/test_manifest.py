@@ -1201,7 +1201,7 @@ def test_a_provenance_header_never_seeds_ownership_of_an_unlinked_page(
 
 
 def test_an_entry_records_the_copy_it_documents_and_old_rows_read_none() -> None:
-    """`install --here` (CONTRACT.md rule 2) records which copy a page
+    """`install --force` (CONTRACT.md rule 2) records which non-global copy a page
     documents; a row written before the field existed reads as None."""
     from maniac.manifest import _entry_to_row, _row_to_entry
 

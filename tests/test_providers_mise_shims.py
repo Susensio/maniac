@@ -316,11 +316,11 @@ def test_an_unclaimed_fallthrough_target_is_what_runs_not_the_shim(
     assert tool.executable == str(later)
 
 
-def test_install_refuses_a_shim_that_runs_nothing_and_offers_here(
+def test_install_refuses_a_shim_that_runs_nothing_and_offers_force(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """A project-only tool's shim, named: not "remove the stale link" (it is
-    not one), but what it is, and `--here` for the project's copy."""
+    not one), but what it is, and `--force` for the project's copy."""
     from maniac.orchestration.install import InstallRefused, run_install
 
     shim = _shim(tmp_path, "cowsay", _mise_binary(tmp_path))
@@ -335,7 +335,7 @@ def test_install_refuses_a_shim_that_runs_nothing_and_offers_here(
     message = str(raised.value)
     assert "stale link" not in message
     assert (
-        f"This shell runs {project_bin / 'cowsay'}; `--here` documents that copy."
+        f"This shell runs {project_bin / 'cowsay'}; `--force` documents that copy."
         in message
     )
     # Asked from this directory, with the environment as inherited.

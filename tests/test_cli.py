@@ -910,3 +910,21 @@ def test_install_prints_what_each_page_documents() -> None:
     assert _resolution_lines(outcome(silent)) == [
         "documents /opt/w/ruff (no installer; version unknown)"
     ]
+
+
+def test_forced_lines_show_home_as_a_tilde() -> None:
+    from maniac.cli.install import _resolution_lines
+    from maniac.orchestration.install import InstallOutcome, Resolution
+
+    venv = Path.home() / "p/.venv/bin/ruff"
+    outcome = InstallOutcome(
+        tool="ruff",
+        tier=None,
+        detail="",
+        resolution=Resolution(venv, None, "ruff 0.7.0"),
+        overrides=(f"not installed globally; documenting {venv}",),
+    )
+
+    assert _resolution_lines(outcome)[-1] == (
+        "forced: not installed globally; documenting ~/p/.venv/bin/ruff"
+    )

@@ -87,7 +87,7 @@ class NotGloballySelected(ManiacError):
     ) -> None:
         self.tool = tool
         self.path = root
-        # What detection found, for `install --here` to document anyway
+        # What detection found, for `install --force` to document anyway
         # (CONTRACT.md rule 2); None where nothing was found to document.
         self.installation = installation
         # Short: `listing.py` renders this in the Source column, capped at

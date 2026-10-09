@@ -18,11 +18,11 @@ When a phase lands, it updates the README for what became live and marks the ADR
 
 - [x] `install` prints, per tool, the binary it documents and where its version came from.
 - [x] When the invoking shell's `$PATH` reaches a different copy, `install` says so (`this shell runs ~/proj/.venv/bin/ruff instead`), following a Mise shim the way mise would from the current directory.
-- [x] `--here` documents the copy the invoking shell runs, project-scoped Mise installs included.
+- [x] `--force` documents the copy the invoking shell runs for a tool with no global copy, project-scoped Mise installs included (was `--here`; see the log).
   The manifest entry records that binary's path (`Entry.binary`), and `list` checks that copy rather than re-resolving from `$HOME`; `update` must reinstall with it too (P3).
 - [x] A named system binary is refused; the message shows the page `man -w` already finds for it.
   Before, `install ls` would quietly have generated a page from `ls --help`, despite ADR-0059.
-- [x] Integration test through the real CLI, inside an activated venv: the notice, then `--here`, then `list` following the recorded copy to `outdated`.
+- [x] Integration test through the real CLI, inside an activated venv: the notice for a global tool, then a venv-only tool refused, `--force`, and `list` following the recorded copy to `outdated`.
 
 ### P2 `why <tool>` (rule 3): next
 
@@ -58,16 +58,17 @@ When a phase lands, it updates the README for what became live and marks the ADR
 ## Decisions taken (2026-10-09)
 
 - Discovery stays, as `scan`.
-- A project-only tool is documented only with `--here`, not `--force` (one flag, one meaning); a named system binary is refused with its existing page shown.
+- `--force` is the one override: "install where maniac would refuse". It documents a tool with no global copy as this shell runs it, installs for a system binary (naming the page it hides), and replaces a foreign page with a backup; each prints a `forced:` line. A venv's copy is never chosen over an existing global one. (`--here` was tried and dropped the same day as uncommon and hard to guess.)
 - `docs/CONTRACT.md` is the single source of user-facing rules; ADRs only when it changes.
 - `source` folds into `why`; `eval` and the benchmark move under `maniac dev`.
 
 ## Open
 
-- `--here` and a vanished copy: when the recorded binary is gone (the project was deleted), the page has no version evidence. Today it reads `ok` (the old positive-evidence rule); under rule 4 it reads `unknown` once P3 adds that state for managed pages, and `why` says why.
+- A forced non-global copy that vanishes: when the recorded binary is gone (the project was deleted), the page has no version evidence. Today it reads `ok` (the old positive-evidence rule); under rule 4 it reads `unknown` once P3 adds that state for managed pages, and `why` says why.
 
 ## Log
 
 - 2026-10-09: P0 landed.
 - 2026-10-09: P1 part 1: the documented binary, the divergence notice and the system-binary refusal, checked live in a venv, a Mise project and with `ls`. The `Binary resolves outside any known installer` warning is gone; `install` now prints the same fact as `no installer`.
 - 2026-10-09: P1 done: `--here` (manifest `binary`, Mise project installs accepted when asked for), refusals that offer `--here`, a shim refusal that no longer says "remove the stale link", ADR-0059 and ADR-0062 marked superseded in part. Checked live: venv and Mise project, plain and `--here`.
+- 2026-10-09: `--here` replaced by `--force` as the single override, covering system binaries too (user's decision); ADR-0065 Corrections, contract, README and tests updated. Integration test: global copy noted, venv-only tool refused, `--force` documents and records it, `list` follows it.

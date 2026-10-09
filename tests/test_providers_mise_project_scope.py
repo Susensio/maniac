@@ -366,7 +366,7 @@ def test_one_corrupt_backend_file_does_not_fail_other_global_installs(
 def test_a_project_only_install_is_found_when_asked_for_here(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """`install --here` names the project's copy on purpose (CONTRACT.md
+    """`install --force` names the project's copy on purpose (CONTRACT.md
     rule 2): the same install refused for the login `$PATH` is its answer."""
     from maniac.sources import resolution
 

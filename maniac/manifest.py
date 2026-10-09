@@ -71,8 +71,9 @@ class Entry:
     safely convert.
     `provider_target` marks a validated provider-managed target whose bytes
     may advance independently of MANIAC.
-    `binary` is the copy of the tool this page documents when it was chosen
-    with `install --here` (CONTRACT.md rule 2): `list` and `update` check
+    `binary` is the copy of the tool this page documents when `install
+    --force` documented one with no global copy, as the invoking shell
+    runs it (CONTRACT.md rule 2): `list` and `update` check
     that copy, not whichever one the login `$PATH` reaches. None on every
     other entry, and on every entry written before this field existed.
     `group` names the manifest key of the primary page of the upstream

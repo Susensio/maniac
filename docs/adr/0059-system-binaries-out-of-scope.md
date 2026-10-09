@@ -1,6 +1,6 @@
 # ADR-0059: Leave system-package-manager binaries out of scope instead of adding a Debian provider for them
 
-Status: Accepted; superseded in part by [ADR-0065](0065-a-user-contract-and-a-smaller-command-surface.md) (a named system binary is refused with the page its package ships, rather than reaching synthesis)
+Status: Accepted; superseded in part by [ADR-0065](0065-a-user-contract-and-a-smaller-command-surface.md) (a named system binary is refused with the page its package ships, rather than reaching synthesis; `--force` installs one anyway)
 Date: 2026-09-24
 
 ## Context

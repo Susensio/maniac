@@ -32,7 +32,7 @@ The cause was structural: no small set of rules existed that answered such quest
 Its four rules are:
 
 1. maniac changes only pages it installed, or tools you name.
-2. maniac documents the tool your login shell runs from `$HOME`, says so when the current shell would run another copy, and documents that copy instead only when asked (`--here`).
+2. maniac documents the tool your login shell runs from `$HOME`, and says so when the current shell would run another copy (see Corrections for how a tool with no global copy is documented).
 3. Every skip is counted, and every decision can be explained (`why <tool>`).
 4. When the evidence is missing, maniac says `unknown`.
 
@@ -50,7 +50,7 @@ The vocabulary changes with it:
 Decisions the user took on 2026-10-09:
 
 - **Discovery stays**, as its own `scan` command, rather than being dropped or postponed.
-- **Naming a project-only tool needs a flag.** It was proposed as `--force`; it is `--here` instead, because `--force` already means "replace a foreign page after backing it up", and one flag with two meanings is the kind of hidden rule this record removes.
+- **Naming a project-only tool needs a flag** (see Corrections: `--force`).
   A named system binary is refused, and the refusal shows the page its package already ships (rule 1 with ADR-0059).
 - **One contract document, and fewer ADRs.**
   An ADR is written only when a change alters the contract.
@@ -71,10 +71,32 @@ When a phase lands, it marks the ADRs it overrides as superseded in part:
 - ADR-0027: the source labels;
 - ADR-0047: the flag name;
 - ADR-0059: named system binaries;
-- ADR-0062: the divergence notice and `--here`.
+- ADR-0062: the divergence notice, and `--force` for a tool with no global copy.
 
 The locally held draft that argued against an `update` command, branch `hold/update-path-adr-0065`, is abandoned.
 Its fix giving every managed page a row in `list` becomes the basis of the new `list`.
 
 Questions that would once have been new ADRs now go to the rules first.
 A question the rules cannot answer is a gap in the contract, and closing it is an ADR.
+
+## Corrections
+
+2026-10-09: `--here` is gone; `--force` is the one override.
+
+The Decision gave a project-only tool its own flag, `--here`, to keep `--force` to a single meaning.
+The user found `--here` uncommon and hard to guess.
+Read as "install where maniac would refuse", `--force` already has a single meaning, and its cases cannot pull against each other:
+
+- a page maniac did not install at the destination: backed up and replaced;
+- no global copy: the copy this shell runs is documented and recorded;
+- a system package's binary: installed anyway, and the page it hides is named.
+
+A project-only tool has no global copy to choose instead.
+A foreign page at its destination is one more thing the user asked to install past.
+Every override prints a `forced:` line.
+
+What goes with `--here` is choosing a venv's copy over an existing global one.
+maniac documents the global copy and notes the venv's, as rule 2 says a global page should.
+
+The user chose that `--force` also covers system binaries: one override without an exception to remember.
+ADR-0059's refusal now holds only without `--force`.

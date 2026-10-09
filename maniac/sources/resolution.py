@@ -78,7 +78,7 @@ def find_installation(
 def installation_at(bin_path: Path) -> tuple[Provider, Installation] | None:
     """Who installed the file at `bin_path`, global or not; None if no one or unreadable.
 
-    For a page that documents a copy chosen with `--here` (CONTRACT.md rule
+    For a page that documents a copy `install --force` chose (CONTRACT.md rule
     2): its version is checked on that copy, project-scoped or not.
     """
     try:
@@ -216,7 +216,7 @@ def _detect_via_registry(
     provider owns, and what it runs depends on the directory it runs in.
 
     `here` accepts an install its provider found but would refuse as not
-    globally selected -- `install --here` names that copy on purpose.
+    globally selected -- `install --force` documents that copy on purpose.
     """
     target = shim_target(bin_path)
     if target is not None:
@@ -225,7 +225,7 @@ def _detect_via_registry(
         try:
             inst = provider.detect(bin_path)
         except NotGloballySelected as e:
-            # `here`: the caller asked for this very copy (`install --here`,
+            # `here`: the caller asked for this very copy (`install --force`,
             # CONTRACT.md rule 2), so a project-scoped install is its answer.
             if here and e.installation is not None:
                 return provider, e.installation

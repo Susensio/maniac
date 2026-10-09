@@ -115,7 +115,7 @@ def _current_version(
 ) -> str | None:
     """The installed version a managed page is compared with.
 
-    A page chosen with `install --here` documents the copy it recorded, so
+    A page `install --force` made for a non-global copy documents that copy, so
     that copy answers, project-scoped or not (CONTRACT.md rule 2); every
     other page is compared with what the login `$PATH` reaches.
     """

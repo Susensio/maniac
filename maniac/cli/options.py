@@ -13,7 +13,11 @@ ForceOption = Annotated[
     typer.Option(
         "--force",
         "-f",
-        help="Force overwrite of foreign manpages with automatic backup.",
+        help=(
+            "Install where maniac would refuse: replace a page it did not "
+            "install (kept as a backup), or document a tool installed only "
+            "for this project or a system package's tool."
+        ),
     ),
 ]
 DryRunOption = Annotated[

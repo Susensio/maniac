@@ -145,16 +145,17 @@ def test_an_old_pandoc_is_refused_before_the_model_is_called(
     assert not (config.man_dir / "faketool.1").exists()
 
 
-def test_a_venv_copy_is_noticed_then_documented_with_here(
+def test_venv_copies_are_noticed_and_a_venv_only_tool_needs_force(
     faketool: Path,
     prompts: list[str],
     config: Config,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """CONTRACT.md rule 2 through the real CLI. Inside an activated venv the
-    page still documents the global copy, and says this shell runs another;
-    `--here` documents the venv's, and `list` keeps checking that copy."""
+    """CONTRACT.md rule 2 through the real CLI, inside an activated venv.
+    A tool with a global copy documents that one and notes the venv's. A tool
+    only the venv has is refused, naming that copy; `--force` documents it,
+    says what it overrode, and `list` keeps checking that copy."""
     from maniac.sources import pathcache
 
     venv_bin = tmp_path / "project" / ".venv" / "bin"
@@ -168,7 +169,6 @@ def test_a_venv_copy_is_noticed_then_documented_with_here(
     login_path = os.environ["PATH"]  # the global faketool, first
     monkeypatch.setattr(pathcache, "_spawn_login_shell", lambda: login_path)
     monkeypatch.setenv("PATH", f"{venv_bin}{os.pathsep}{login_path}")
-    monkeypatch.setenv("VIRTUAL_ENV", str(venv_bin.parent))
     model = ["--model", "openai/gpt-4o-mini"]
 
     plain = runner.invoke(app, ["install", *model, "faketool"])
@@ -179,20 +179,32 @@ def test_a_venv_copy_is_noticed_then_documented_with_here(
     )
     assert _says(plain.output, f"this shell runs {venv_tool} instead")
 
-    here = runner.invoke(app, ["install", *model, "--here", "faketool"])
+    # Now only the venv has it: the global copy is gone from the login $PATH.
+    faketool.unlink()
+    refused = runner.invoke(app, ["install", *model, "faketool"])
 
-    assert here.exit_code == 0, here.output
+    assert refused.exit_code == 1
     assert _says(
-        here.output, f"documents {venv_tool} (no installer; it reports faketool 3.0.0)"
+        refused.output, f"This shell runs {venv_tool}; `--force` documents that copy."
     )
-    assert not _says(here.output, "this shell runs")
+
+    forced = runner.invoke(app, ["install", *model, "--force", "faketool"])
+
+    assert forced.exit_code == 0, forced.output
+    assert _says(
+        forced.output,
+        f"documents {venv_tool} (no installer; it reports faketool 3.0.0)",
+    )
+    assert _says(
+        forced.output, f"forced: not installed globally; documenting {venv_tool}"
+    )
     entry = manifest.lookup("faketool", config=config)
     assert entry is not None
     assert (entry.binary, entry.version) == (venv_tool, "faketool 3.0.0")
     page = config.man_dir / "faketool.1"
     assert '"faketool 3.0.0" "User Commands"' in page.read_text(encoding="utf-8")
 
-    # `list` checks the recorded copy, not the global one, even from $HOME.
+    # `list` checks the recorded copy, even from a shell without the venv.
     monkeypatch.setenv("PATH", login_path)
     [row] = compute_rows(["faketool"], config=config)
     assert row.state is ActionState.OK

@@ -69,6 +69,10 @@ def _resolution_lines(outcome: InstallOutcome) -> list[str]:
             else "; version unknown"
         )
     lines = [f"documents {_home(resolution.binary)} ({origin})"]
+    home = f"{Path.home()}/"
+    lines += [
+        f"forced: {override.replace(home, '~/')}" for override in outcome.overrides
+    ]
     if resolution.here is not None:
         lines.append(f"this shell runs {_home(resolution.here)} instead")
     return lines
@@ -101,16 +105,6 @@ def install(
     ] = False,
     force: ForceOption = False,
     dry_run: DryRunOption = False,
-    here: Annotated[
-        bool,
-        typer.Option(
-            "--here",
-            help=(
-                "Document the copy this shell runs (a venv's, a project's) "
-                "instead of the one your login shell runs from $HOME."
-            ),
-        ),
-    ] = False,
 ) -> None:
     """Install a manpage: install root, then repository, then LLM synthesis.
 
@@ -138,7 +132,6 @@ def install(
                     force=force,
                     dry_run=dry_run,
                     config=cfg,
-                    here=here,
                 )
             _render_install(console, outcome, dry_run=dry_run)
             if _no_page_installed(outcome, dry_run=dry_run):

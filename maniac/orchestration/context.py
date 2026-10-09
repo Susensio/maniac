@@ -40,11 +40,11 @@ class ResolvedTool:
     `resolution.binary_path` (ADR-0062's login `$PATH` or `bin_dir`, a
     Mise shim replaced by its target, ADR-0063)."""
     here: bool = False
-    """Chosen with `install --here`: the invoking shell's copy (CONTRACT.md rule 2)."""
+    """The invoking shell's copy, documented by `install --force` (CONTRACT.md rule 2)."""
 
     @property
     def documented_binary(self) -> Path | None:
-        """The copy a page records documenting: only a `--here` choice is recorded."""
+        """The copy a page records documenting: only a forced non-global copy is recorded."""
         return self.bin_path if self.here else None
 
     @property

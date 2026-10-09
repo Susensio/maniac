@@ -74,7 +74,7 @@ class MiseProvider:
             # outright rather than returned as unclaimed (ADR-0061's
             # Corrections): unclaimed falls to tier-3 synthesis, which would
             # document this project's version as the machine's global one.
-            # The installation rides along for `install --here`, which asks
+            # The installation rides along for `install --force`, which asks
             # for exactly this copy (CONTRACT.md rule 2).
             raise NotGloballySelected(bin_path.name, root, inst)
         return inst

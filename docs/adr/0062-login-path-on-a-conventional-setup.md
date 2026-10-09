@@ -1,6 +1,6 @@
 # ADR-0062: Resolve tools through a non-interactive login shell's PATH, assuming a conventional setup
 
-Status: Accepted; superseded in part by [ADR-0065](0065-a-user-contract-and-a-smaller-command-surface.md) (`install` reports when the invoking shell runs another copy, and `--here` documents that copy; the login `$PATH` stands as the default)
+Status: Accepted; superseded in part by [ADR-0065](0065-a-user-contract-and-a-smaller-command-surface.md) (`install` reports when the invoking shell runs another copy, and `--force` documents that copy for a tool with no global one; the login `$PATH` stands as the default)
 Date: 2026-10-08
 Supersedes in part: [ADR-0061](0061-inherited-path-not-login-shell.md)
 

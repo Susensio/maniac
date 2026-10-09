@@ -13,6 +13,7 @@ from maniac.manifest import Entry
 from maniac.models import DocFile, Installation, PipelineResult, RepoSource
 from maniac.orchestration.context import ResolvedTool, resolve_tool
 from maniac.orchestration.install import (
+    InstallOutcome,
     InstallRefused,
     Resolution,
     Tier,
@@ -681,15 +682,14 @@ def test_run_install_says_when_this_shell_runs_another_copy(
     assert outcome.resolution == Resolution(global_ruff, None, "ruff 0.6.9", venv_ruff)
 
 
-def test_install_here_documents_and_records_this_shells_copy(
+def test_force_documents_and_records_this_shells_copy_of_a_tool_with_no_global_one(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """`--here` (CONTRACT.md rule 2): the invoking shell's copy is the one
-    documented, no divergence is reported, and the page records that copy."""
-    global_ruff = _reporting_binary(tmp_path / "global" / "ruff", "ruff 0.6.9")
+    """CONTRACT.md rule 2: a tool only this shell runs (a venv's) is refused,
+    naming that copy; `--force` documents it, says so, and records it."""
     venv_ruff = _reporting_binary(tmp_path / ".venv" / "bin" / "ruff", "ruff 0.7.0")
-    monkeypatch.setattr(pathcache, "which", lambda name: global_ruff)
-    monkeypatch.setenv("PATH", f"{venv_ruff.parent}{os.pathsep}{global_ruff.parent}")
+    monkeypatch.setattr(pathcache, "which", lambda name: None)
+    monkeypatch.setenv("PATH", str(venv_ruff.parent))
     monkeypatch.setattr(
         "maniac.orchestration.context.resolution.find_installation",
         lambda name, bin_dir=None, **_: None,
@@ -713,25 +713,66 @@ def test_install_here_documents_and_records_this_shells_copy(
 
     monkeypatch.setattr("maniac.orchestration.pipeline.synthesize", synthesize)
 
-    outcome = run_install("ruff", here=True)
+    with pytest.raises(
+        InstallRefused, match="`--force` documents that copy"
+    ) as refused:
+        run_install("ruff")
+    assert f"This shell runs {venv_ruff}" in str(refused.value)
+
+    outcome = run_install("ruff", force=True)
 
     assert outcome.resolution == Resolution(venv_ruff, None, "ruff 0.7.0", None)
+    assert outcome.overrides == (f"not installed globally; documenting {venv_ruff}",)
     assert seen == {"executable": str(venv_ruff), "documented": venv_ruff}
 
 
-def test_refusals_point_at_here_when_this_shell_has_a_copy(
+def test_force_never_trades_a_global_copy_for_this_shells(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Not on the login `$PATH`, but this shell runs one: the refusal says
-    which, and how to document it."""
+    """With a global copy there is nothing to override: `--force` still
+    documents the global one, and only notes the venv's (rule 2)."""
+    global_ruff = _reporting_binary(tmp_path / "global" / "ruff", "ruff 0.6.9")
     venv_ruff = _reporting_binary(tmp_path / ".venv" / "bin" / "ruff", "ruff 0.7.0")
-    monkeypatch.setattr(pathcache, "which", lambda name: None)
-    monkeypatch.setenv("PATH", str(venv_ruff.parent))
+    monkeypatch.setattr(pathcache, "which", lambda name: global_ruff)
+    monkeypatch.setenv("PATH", f"{venv_ruff.parent}{os.pathsep}{global_ruff.parent}")
+    monkeypatch.setattr(
+        "maniac.orchestration.context.resolution.find_installation",
+        lambda name, bin_dir=None, **_: None,
+    )
+    _stub_synthesis(monkeypatch, tmp_path)
 
-    with pytest.raises(InstallRefused, match="`--here` documents that copy") as raised:
-        run_install("ruff")
+    outcome = run_install("ruff", force=True)
 
-    assert f"This shell runs {venv_ruff}" in str(raised.value)
+    assert outcome.resolution == Resolution(global_ruff, None, "ruff 0.6.9", venv_ruff)
+    assert outcome.overrides == ()
+
+
+def test_force_installs_for_a_system_binary_and_says_whose_page_it_hides(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(pathcache, "which", lambda name: Path("/usr/bin/ls"))
+    monkeypatch.setattr(
+        "maniac.orchestration.context.resolution.find_installation",
+        lambda name, bin_dir=None, **_: None,
+    )
+    monkeypatch.setattr(
+        "maniac.orchestration.install.find_installed_manpage_path",
+        lambda man, tool: Path("/usr/share/man/man1/ls.1.gz"),
+    )
+    monkeypatch.setattr(
+        "maniac.orchestration.install._select_page",
+        lambda tool, **kwargs: InstallOutcome(tool="ls", tier=None, detail="selected"),
+    )
+    monkeypatch.setattr(
+        "maniac.orchestration.install._resolution", lambda tool, bin_dir: None
+    )
+
+    outcome = run_install("ls", force=True)
+
+    assert outcome.detail == "selected"
+    assert outcome.overrides == (
+        "a system package's binary; this page hides /usr/share/man/man1/ls.1.gz",
+    )
 
 
 @pytest.mark.parametrize(

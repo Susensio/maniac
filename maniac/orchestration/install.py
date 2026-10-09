@@ -34,6 +34,7 @@ from ..installer import (
     _remove_recorded_manpage,
     install_manpage,
 )
+from ..logging import logger
 from ..manifest import Tier, manpage_owner
 from ..models import PipelineResult
 from ..sources.candidates import select_install_root, select_repository
@@ -82,6 +83,8 @@ class InstallOutcome:
     installed_path: Path | None = None
     pipeline: PipelineResult | None = None
     resolution: Resolution | None = None
+    overrides: tuple[str, ...] = ()
+    """Each refusal `--force` overrode, said the way the user reads it."""
 
 
 def run_install(
@@ -93,63 +96,48 @@ def run_install(
     dry_run: bool = False,
     config: Config | None = None,
     bin_dir: str | Path | None = None,
-    here: bool = False,
 ) -> InstallOutcome:
     """Resolve `tool_name` through ADR-0016's tiers and report which one answered.
-
-    `here` documents the copy the invoking shell runs instead of the login
-    `$PATH`'s (`install --here`, CONTRACT.md rule 2), project-scoped or
-    not; the page records which copy it documents.
 
     Tiers 1-2 (install root, repository) always run first. `no_synthesize`
     (`--no-synthesize`) restricts selection to them -- `synthesize`, the
     only path that can call an LLM, is imported nowhere in that branch, not
     merely left uncalled.
 
-    Before any tier runs: a binary not on the login shell's `$PATH` at all
-    (ADR-0062) -- with no explicit `bin_dir` naming where it lives instead --
-    is refused outright. A page installs into a global manpath and persists; a binary
-    MANIAC cannot locate at all does not, so nothing here should record one
-    for it.
+    The page documents the copy the login shell runs from `$HOME`
+    (CONTRACT.md rule 2). Where maniac would refuse -- the tool is not
+    installed globally, it is a system package's binary, or a page maniac
+    did not install sits at the destination -- `force` installs anyway, and
+    the outcome lists each refusal it overrode. A tool with no global copy
+    is then documented as the invoking shell's copy, recorded on the page.
     """
     cfg = config or Config()
+    overrides: list[str] = []
 
-    if here:
-        this_copy = binary_here(tool_name)
-        if this_copy is None:
-            raise InstallRefused(f"'{tool_name}' is not on this shell's $PATH.")
-        bin_dir = this_copy.parent
-
-    bin_path = resolve_bin_path(tool_name, bin_dir)
-    if bin_path is None:
-        raise InstallRefused(
-            f"'{tool_name}' is not on your login shell's $PATH -- and a "
-            "manpage would be installed globally and permanently. Install it "
-            "globally first, or make your login profile put it on $PATH."
-            + _here_hint(tool_name)
+    # Before resolving anything: a refusal here should cost nothing.
+    dest_file = cfg.man_dir / f"{tool_name}.1"
+    _refuse_unmanaged_destination(dest_file, cfg, force=force)
+    if force and _holds_a_foreign_page(dest_file, cfg):
+        overrides.append(
+            f"replaces a page maniac did not install at {dest_file}, kept as a backup"
         )
 
-    _refuse_unmanaged_destination(cfg.man_dir / f"{tool_name}.1", cfg, force=force)
-
     try:
-        tool = resolve_tool(tool_name, config=cfg, bin_dir=bin_dir, here=here)
-    except ShimRunsNothing as e:
-        raise InstallRefused(
-            f"'{tool_name}' is a Mise shim ({e.path}) that runs nothing from "
-            "$HOME: no globally selected tool provides it, and nothing else on "
-            "your login shell's $PATH does. Select it globally "
-            "(`mise use -g ...`) to document it." + _here_hint(tool_name)
-        ) from e
-    except NotGloballySelected as e:
-        raise InstallRefused(
-            f"'{tool_name}' resolves to {e.path}, which is not one of Mise's "
-            "globally selected tools (`mise ls --current` from $HOME) -- "
-            "selected only by a project config, or by none. Select it "
-            "globally (`mise use -g ...`) or remove the stale link."
-            + _here_hint(tool_name)
-        ) from e
+        tool = _resolve_global(tool_name, cfg, bin_dir)
+    except InstallRefused as refusal:
+        if not force:
+            raise
+        this_copy = binary_here(tool_name)
+        if this_copy is None:
+            raise
+        overrides.append(f"not installed globally; documenting {this_copy}")
+        tool = resolve_tool(tool_name, config=cfg, bin_dir=this_copy.parent, here=True)
+        logger.debug("Forced past a refusal", tool=tool_name, refusal=str(refusal))
+
     if tool.provider is None and tool.bin_path is not None:
-        _refuse_system_binary(tool_name, tool.bin_path)
+        system_page = _system_binary_page(tool_name, tool.bin_path, force=force)
+        if system_page is not None:
+            overrides.append(system_page)
 
     outcome = _select_page(
         tool,
@@ -160,16 +148,48 @@ def run_install(
     )
     return replace(
         outcome,
-        resolution=_resolution(tool, bin_dir=None if here else bin_dir),
+        resolution=_resolution(tool, bin_dir=None if tool.here else bin_dir),
+        overrides=tuple(overrides),
     )
 
 
-def _here_hint(tool_name: str) -> str:
+def _resolve_global(
+    tool_name: str, cfg: Config, bin_dir: str | Path | None
+) -> ResolvedTool:
+    """The copy the login `$PATH` reaches, or `InstallRefused` saying why not."""
+    bin_path = resolve_bin_path(tool_name, bin_dir)
+    if bin_path is None:
+        raise InstallRefused(
+            f"'{tool_name}' is not on your login shell's $PATH -- and a "
+            "manpage would be installed globally and permanently. Install it "
+            "globally first, or make your login profile put it on $PATH."
+            + _force_hint(tool_name)
+        )
+    try:
+        return resolve_tool(tool_name, config=cfg, bin_dir=bin_dir)
+    except ShimRunsNothing as e:
+        raise InstallRefused(
+            f"'{tool_name}' is a Mise shim ({e.path}) that runs nothing from "
+            "$HOME: no globally selected tool provides it, and nothing else on "
+            "your login shell's $PATH does. Select it globally "
+            "(`mise use -g ...`) to document it." + _force_hint(tool_name)
+        ) from e
+    except NotGloballySelected as e:
+        raise InstallRefused(
+            f"'{tool_name}' resolves to {e.path}, which is not one of Mise's "
+            "globally selected tools (`mise ls --current` from $HOME) -- "
+            "selected only by a project config, or by none. Select it "
+            "globally (`mise use -g ...`) or remove the stale link."
+            + _force_hint(tool_name)
+        ) from e
+
+
+def _force_hint(tool_name: str) -> str:
     """How to document the invoking shell's copy instead, when it has one."""
     this_copy = binary_here(tool_name)
     if this_copy is None:
         return ""
-    return f" This shell runs {this_copy}; `--here` documents that copy."
+    return f" This shell runs {this_copy}; `--force` documents that copy."
 
 
 def _resolution(tool: ResolvedTool, *, bin_dir: str | Path | None) -> Resolution | None:
@@ -195,15 +215,22 @@ def _same_file(a: Path, b: Path) -> bool:
         return a == b
 
 
-def _refuse_system_binary(tool_name: str, bin_path: Path) -> None:
-    """A system package's binary is out of scope; say which page it already has.
+def _system_binary_page(tool_name: str, bin_path: Path, *, force: bool) -> str | None:
+    """Refuse a system package's binary, or under `force` say what is overridden.
 
     CONTRACT.md rule 1 with ADR-0059: its package ships and upgrades its
-    page, so there is nothing for maniac to install or keep fresh.
+    page, so maniac leaves it alone unless told to. None when `bin_path` is
+    not a system binary.
     """
     if not is_system_binary(bin_path):
-        return
+        return None
     page = find_installed_manpage_path("man", tool_name)
+    if force:
+        return (
+            f"a system package's binary; this page hides {page}"
+            if page is not None
+            else "a system package's binary"
+        )
     state = (
         f"its package maintains its page, and `man {tool_name}` already shows {page}"
         if page is not None
@@ -212,7 +239,7 @@ def _refuse_system_binary(tool_name: str, bin_path: Path) -> None:
     sep = ":" if page is not None else ","
     raise InstallRefused(
         f"'{tool_name}' is {bin_path}, a system package's binary{sep} {state}. "
-        "maniac leaves system tools to their package."
+        "maniac leaves system tools to their package; `--force` installs one anyway."
     )
 
 
@@ -307,6 +334,9 @@ def _select_page(
 def _refuse_unmanaged_destination(dest_file: Path, cfg: Config, *, force: bool) -> None:
     """Refuse when `dest_file` already holds a foreign or vendor page.
 
+    Under `force`, return instead: `installer._take_backup` backs the page
+    up and replaces it (CONTRACT.md rule 1's one exception).
+
     A fast, cheap version of `installer._take_backup`'s own check -- same
     ownership rule, run early enough that a refused install never crawls
     `--help`, writes a context snapshot, calls an LLM, or (tier 2) installs
@@ -318,10 +348,18 @@ def _refuse_unmanaged_destination(dest_file: Path, cfg: Config, *, force: bool) 
     their own candidate's resolved destination(s) once that candidate is
     built -- `_take_backup` stays the real enforcement point this previews.
     """
-    if force:
+    if force or not _holds_a_foreign_page(dest_file, cfg):
         return
+    raise InstallRefused(
+        f"A foreign or vendor manpage already exists at '{dest_file}'. "
+        f"Use --force to create a backup and overwrite."
+    )
+
+
+def _holds_a_foreign_page(dest_file: Path, cfg: Config) -> bool:
+    """Whether a page maniac did not install sits at `dest_file`."""
     if not (dest_file.exists() or dest_file.is_symlink()):
-        return
+        return False
     entries = manifest.load(cfg)
     owned = any(
         entry.path == dest_file and manifest.is_expected_link(entry)
@@ -336,12 +374,7 @@ def _refuse_unmanaged_destination(dest_file: Path, cfg: Config, *, force: bool) 
         # here too rather than refused as foreign -- and the two places can
         # no longer drift apart, being the one predicate.
         owned = manifest.is_owned_symlink(dest_file, cfg)
-    if owned:
-        return
-    raise InstallRefused(
-        f"A foreign or vendor manpage already exists at '{dest_file}'. "
-        f"Use --force to create a backup and overwrite."
-    )
+    return not owned
 
 
 @dataclass(frozen=True, slots=True)

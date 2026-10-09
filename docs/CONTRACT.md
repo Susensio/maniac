@@ -16,6 +16,9 @@ A behaviour that cannot be traced to one of them is a bug, either in maniac or i
 - A page maniac did not install is reported and never changed.
   The one exception is a tool you name whose page sits exactly where maniac would write: `--force` replaces it, after keeping a backup that `remove` puts back.
 
+Where `install` would refuse, `--force` installs anyway and prints each refusal it overrode (`forced: ...`).
+It is the only override, and it means the same thing everywhere.
+
 ### 2. maniac documents the tool your login shell runs from your home directory
 
 A manpage is global, so the tool it documents must be the global one.
@@ -23,12 +26,12 @@ maniac reads `$PATH` from a non-interactive login shell started in `$HOME`, whic
 An activated virtualenv, a project's mise pin or a direnv directory does not change the answer.
 
 - Every `install` prints the binary it documents and where its version came from.
-- When the shell you ran maniac from would run a different copy, maniac says so:
-  `documenting ~/.local/bin/ruff (uv, 0.6.9); this shell runs .venv/bin/ruff`.
-- `--here` documents the copy this shell runs instead.
-  The page is still global; maniac records which copy it documents and checks that copy from then on.
-- Tools installed by the system package manager are out of scope: their package ships their page.
-  Naming one says so and shows the page it already has.
+- When the shell you ran maniac from would run a different copy, maniac says so, and still documents the global one:
+  `documents ~/.local/bin/ruff (uv, 0.6.9)` / `this shell runs ~/proj/.venv/bin/ruff instead`.
+- A tool with no global copy (only a venv or a project pin has it) is refused, naming the copy this shell runs.
+  `--force` documents that copy; the page records it, and maniac checks that copy from then on.
+- Tools installed by the system package manager are left to their package, which ships and upgrades their page.
+  Naming one is refused, showing the page it already has; `--force` installs one anyway, saying which page it now hides.
 
 ### 3. Every skip is counted, and every decision can be explained
 
@@ -88,6 +91,7 @@ Edge cases are decided by the rules, not by new decisions:
 
 - *Should `update` touch pages maniac did not install?* No (rule 1).
 - *Which ruff does a page document inside an activated venv?* The global one, and maniac says so (rule 2).
+- *A tool only a project has?* Refused, naming the project's copy; `--force` documents it (rules 1 and 2).
 - *A mise shim?* The binary mise runs for it from `$HOME` (rule 2).
 - *A page installed before maniac recorded versions?* `unknown`; `update` leaves it alone until you name it (rules 1 and 4).
 - *A wrapper script no installer claims?* Its page is generated from its own help, and its version is its own `--version` (rule 4).
