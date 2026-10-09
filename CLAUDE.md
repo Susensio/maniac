@@ -1,8 +1,12 @@
 # Project records
 
-- `docs/adr/` — settled decisions.
+- `docs/CONTRACT.md` — how maniac decides: every behaviour a user can observe follows from its four rules.
+- `docs/adr/` — changes to the contract, and the decisions made before it existed.
 - `docs/BACKLOG.md` — open work nobody has committed to.
 - `docs/STATE.md` — work committed to and not yet finished; absent when nothing is.
+
+Decide an edge case by the contract's rules and explain it in the commit message.
+Write an ADR only when a change alters what `docs/CONTRACT.md` says; a question the rules cannot answer is a gap in the contract, and closing it is that ADR.
 
 # Shared master
 

@@ -3,6 +3,8 @@
 > **MAN**page **I**ntelligent **A**rtificial **C**reator  
 > *Instant, authoritative Unix manual pages for any CLI tool on your system.*
 
+> **Being redesigned.** [`docs/CONTRACT.md`](docs/CONTRACT.md) states how maniac decides, and the smaller command set it is moving to; [`docs/STATE.md`](docs/STATE.md) tracks which parts are live. This README describes the commands as they work today.
+
 ---
 
 ## Why MANIAC?
