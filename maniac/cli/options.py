@@ -8,6 +8,13 @@ ModelOption = Annotated[
     str | None,
     typer.Option(help="LLM model ID (e.g. 'gemini/gemini-3.5-flash')."),
 ]
+NoGenerateOption = Annotated[
+    bool,
+    typer.Option(
+        "--no-generate",
+        help="Use only a shipped or upstream page; never call an LLM.",
+    ),
+]
 ForceOption = Annotated[
     bool,
     typer.Option(

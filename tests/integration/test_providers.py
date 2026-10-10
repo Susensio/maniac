@@ -74,7 +74,7 @@ def test_npm_package_manpage_installs_from_the_install_root(
     cfg = Config()
     monkeypatch.setenv("MANPATH", str(cfg.man_dir.parent))
 
-    outcome = run_install("marked", config=cfg, no_synthesize=True)
+    outcome = run_install("marked", config=cfg, no_generate=True)
 
     assert outcome.tier is Tier.INSTALL_ROOT
     assert outcome.installed_path is not None

@@ -178,7 +178,7 @@ def test_update_reinstalls_only_outdated_pages_and_keeps_a_pinned_copy(
     def run_install(tool: str, **kwargs: object) -> InstallOutcome:
         copy_arg = kwargs.get("copy")
         calls.append((tool, copy_arg if isinstance(copy_arg, Path) else None))
-        assert kwargs["no_synthesize"] is True
+        assert kwargs["no_generate"] is True
         return InstallOutcome(
             tool=tool,
             tier=Tier.SYNTHESIS,
@@ -188,7 +188,7 @@ def test_update_reinstalls_only_outdated_pages_and_keeps_a_pinned_copy(
 
     monkeypatch.setattr("maniac.orchestration.install.run_install", run_install)
 
-    result = runner.invoke(app, ["update", "--no-synthesize"])
+    result = runner.invoke(app, ["update", "--no-generate"])
 
     assert result.exit_code == 0, result.output
     assert calls == [("pinned", copy), ("stale", None)]

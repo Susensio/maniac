@@ -2,7 +2,7 @@
 
 Tier order, cheapest and most authoritative first: the install root (tier
 1), the upstream repository with the version matched (tier 2), then LLM
-synthesis (tier 3, `synthesize`). Tiers 1-2 are always tried; `--no-synthesize`
+synthesis (tier 3, `synthesize`). Tiers 1-2 are always tried; `--no-generate`
 restricts selection to them and must never reach `synthesize` -- tested by
 `tests/test_orchestration_install.py` failing a monkeypatched LLM call
 reachable through it, not only by asserting the happy path.
@@ -92,7 +92,7 @@ def run_install(
     tool_name: str,
     *,
     model: str | None = None,
-    no_synthesize: bool = False,
+    no_generate: bool = False,
     force: bool = False,
     dry_run: bool = False,
     config: Config | None = None,
@@ -105,8 +105,8 @@ def run_install(
     for a page `--force` pinned): the earlier choice stands, so no refusal
     that `--force` overrode is asked again.
 
-    Tiers 1-2 (install root, repository) always run first. `no_synthesize`
-    (`--no-synthesize`) restricts selection to them -- `synthesize`, the
+    Tiers 1-2 (install root, repository) always run first. `no_generate`
+    (`--no-generate`) restricts selection to them -- `synthesize`, the
     only path that can call an LLM, is imported nowhere in that branch, not
     merely left uncalled.
 
@@ -136,7 +136,7 @@ def run_install(
             )
         tool = resolve_tool(tool_name, config=cfg, bin_dir=copy.parent, here=True)
         outcome = _select_page(
-            tool, model=model, no_synthesize=no_synthesize, force=force, dry_run=dry_run
+            tool, model=model, no_generate=no_generate, force=force, dry_run=dry_run
         )
         return replace(outcome, resolution=_resolution(tool, bin_dir=copy.parent))
 
@@ -166,7 +166,7 @@ def run_install(
     outcome = _select_page(
         tool,
         model=model,
-        no_synthesize=no_synthesize,
+        no_generate=no_generate,
         force=force,
         dry_run=dry_run,
     )
@@ -302,7 +302,7 @@ def _select_page(
     tool: ResolvedTool,
     *,
     model: str | None,
-    no_synthesize: bool,
+    no_generate: bool,
     force: bool,
     dry_run: bool,
 ) -> InstallOutcome:
@@ -316,7 +316,7 @@ def _select_page(
         return outcome
     source = tool.documentation_source
     upstream = source.identity if source is not None else "the upstream repository"
-    if no_synthesize:
+    if no_generate:
         # An incomplete check is not an absence (CONTRACT.md rule 4): say
         # which, so "no page" is never reported on missing evidence.
         return InstallOutcome(
@@ -324,7 +324,7 @@ def _select_page(
             tier=None,
             detail=(
                 "no install-root or repository page found "
-                "(tried tiers 1-2 only; rerun without --no-synthesize to synthesize)"
+                "(tried tiers 1-2 only; rerun without --no-generate to synthesize)"
                 if repository_definitive
                 else f"not installed: the check for an upstream page in {upstream} "
                 "did not complete (network or git?), so whether one exists is "
@@ -340,7 +340,7 @@ def _select_page(
             f"`maniac why {tool_name}` shows what was tried."
         )
 
-    from .pipeline import synthesize  # deferred: tier 3 only, never on --no-synthesize
+    from .pipeline import synthesize  # deferred: tier 3 only, never on --no-generate
 
     pipeline_result = synthesize(
         tool,

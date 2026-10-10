@@ -1,4 +1,4 @@
-"""Tests for `run_install` (ADR-0016): tier selection, `--no-synthesize`."""
+"""Tests for `run_install` (ADR-0016): tier selection, `--no-generate`."""
 
 import os
 from collections import Counter
@@ -520,7 +520,7 @@ def test_run_install_uses_the_exact_tmux_documentation_repository(
         ),
     )
 
-    outcome = run_install("tmux", no_synthesize=True)
+    outcome = run_install("tmux", no_generate=True)
 
     assert outcome.tier is Tier.REPOSITORY
     assert observed == [RepoSource(name="tmux", target="tmux/tmux", is_local=False)]
@@ -835,7 +835,7 @@ def test_run_install_tier2_skipped_without_an_installed_version(
         "maniac.orchestration.install.discover_repo_manpages", _discover_repo_manpages
     )
 
-    outcome = run_install("tool", no_synthesize=True)
+    outcome = run_install("tool", no_generate=True)
 
     assert not called
     assert outcome.tier is None
@@ -871,7 +871,7 @@ def test_run_install_installs_all_anchored_release_manpages(
         lambda *args, **kwargs: ([primary, companion], True),
     )
 
-    outcome = run_install("eza", no_synthesize=True, force=True, config=cfg)
+    outcome = run_install("eza", no_generate=True, force=True, config=cfg)
 
     assert outcome.installed_path == cfg.man_dir / primary.name
     assert (cfg.man_dir / primary.name).read_text(encoding="utf-8") == ".TH EZA 1\n"
@@ -948,7 +948,7 @@ def test_run_install_records_a_release_in_one_manifest_write(
         )[1],
     )
 
-    run_install("eza", no_synthesize=True, config=cfg)
+    run_install("eza", no_generate=True, config=cfg)
 
     assert writes == [["eza", "eza_colors", "eza_colors-explanation"]]
 
@@ -976,7 +976,7 @@ def test_run_install_records_no_page_when_a_release_fails_partway(
     monkeypatch.setattr("maniac.lifecycle.link_manpath_entry", link_once)
 
     with pytest.raises(OSError):
-        run_install("eza", no_synthesize=True, config=cfg)
+        run_install("eza", no_generate=True, config=cfg)
 
     assert manifest.load(config=cfg) == {}
 
@@ -1007,7 +1007,7 @@ def test_try_repository_undoes_earlier_pages_when_a_later_page_fails(
     monkeypatch.setattr("maniac.lifecycle.link_manpath_entry", link_twice_then_fail)
 
     with pytest.raises(OSError):
-        run_install("eza", no_synthesize=True, config=cfg)
+        run_install("eza", no_generate=True, config=cfg)
 
     assert manifest.load(config=cfg) == {}
     # Neither page had a prior entry, so `baseline_entries` names no user of
@@ -1062,7 +1062,7 @@ def test_try_repository_undo_leaves_an_unrelated_entrys_target_alone(
     monkeypatch.setattr("maniac.lifecycle.link_manpath_entry", link_once)
 
     with pytest.raises(OSError):
-        run_install("eza", no_synthesize=True, config=cfg)
+        run_install("eza", no_generate=True, config=cfg)
 
     assert other_target.read_text(encoding="utf-8") == "other tool's page\n"
     assert manifest.lookup("other", config=cfg) is not None
@@ -1104,7 +1104,7 @@ def test_try_repository_undo_restores_a_displaced_foreign_pages_backup(
     monkeypatch.setattr("maniac.lifecycle.link_manpath_entry", link_once_then_fail)
 
     with pytest.raises(OSError):
-        run_install("eza", no_synthesize=True, force=True, config=cfg)
+        run_install("eza", no_generate=True, force=True, config=cfg)
 
     assert manifest.load(config=cfg) == {}
     assert not foreign_path.is_symlink()
@@ -1130,7 +1130,7 @@ def test_try_repository_undo_restores_a_version_bumped_pages_prior_bytes(
     cfg = _release_config(tmp_path)
     pages = _eza_release(tmp_path)
     _resolve_eza_release(monkeypatch, pages)
-    run_install("eza", no_synthesize=True, config=cfg)
+    run_install("eza", no_generate=True, config=cfg)
 
     eza_path = cfg.man_dir / "eza.1"
     old_content = eza_path.read_text(encoding="utf-8")
@@ -1152,7 +1152,7 @@ def test_try_repository_undo_restores_a_version_bumped_pages_prior_bytes(
     monkeypatch.setattr("maniac.lifecycle.link_manpath_entry", link_once_then_fail)
 
     with pytest.raises(OSError):
-        run_install("eza", no_synthesize=True, config=cfg)
+        run_install("eza", no_generate=True, config=cfg)
 
     assert manifest.load(config=cfg) == first_entries
     assert not eza_path.is_symlink()
@@ -1161,19 +1161,19 @@ def test_try_repository_undo_restores_a_version_bumped_pages_prior_bytes(
     assert list(cfg.backup_dir.glob("*.reinstall.tmp")) == []
 
 
-def test_no_synthesize_never_reaches_the_llm_when_no_tier_1_or_2_page_exists(
+def test_no_generate_never_reaches_the_llm_when_no_tier_1_or_2_page_exists(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The guarantee ADR-0016 makes for `--no-synthesize`: falsified by a reachable LLM call.
+    """The guarantee ADR-0016 makes for `--no-generate`: falsified by a reachable LLM call.
 
     Both tiers fail (no provider claims the binary), so a bug that fell
     through to synthesis anyway would call `run_llm_synthesis` -- patched
     here to raise, so the test fails loudly if that path is ever reached,
-    rather than only asserting the happy `--no-synthesize` case succeeds.
+    rather than only asserting the happy `--no-generate` case succeeds.
     """
 
     def _explode(*args: object, **kwargs: object) -> str:
-        raise AssertionError("an LLM call is reachable under --no-synthesize")
+        raise AssertionError("an LLM call is reachable under --no-generate")
 
     monkeypatch.setattr("maniac.generation.llm.run_llm_synthesis", _explode)
     monkeypatch.setattr(
@@ -1181,18 +1181,18 @@ def test_no_synthesize_never_reaches_the_llm_when_no_tier_1_or_2_page_exists(
         lambda name, bin_dir=None, **_: None,
     )
 
-    outcome = run_install("nonexistent_unknown_tool_xyz", no_synthesize=True)
+    outcome = run_install("nonexistent_unknown_tool_xyz", no_generate=True)
 
     assert outcome.tier is None
 
 
-def test_no_synthesize_installs_a_tier_1_page_with_no_llm_call(
+def test_no_generate_installs_a_tier_1_page_with_no_llm_call(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """The happy-path pairing: `--no-synthesize` still does its job when tier 1 answers."""
+    """The happy-path pairing: `--no-generate` still does its job when tier 1 answers."""
 
     def _explode(*args: object, **kwargs: object) -> str:
-        raise AssertionError("an LLM call is reachable under --no-synthesize")
+        raise AssertionError("an LLM call is reachable under --no-generate")
 
     monkeypatch.setattr("maniac.generation.llm.run_llm_synthesis", _explode)
 
@@ -1211,7 +1211,7 @@ def test_no_synthesize_installs_a_tier_1_page_with_no_llm_call(
         ),
     )
 
-    outcome = run_install("tool", no_synthesize=True)
+    outcome = run_install("tool", no_generate=True)
 
     assert outcome.tier is Tier.INSTALL_ROOT
 
@@ -1238,10 +1238,10 @@ def test_run_install_refuses_a_binary_not_on_path(
     assert "global" in message
 
 
-def test_run_install_refuses_under_no_synthesize_too(
+def test_run_install_refuses_under_no_generate_too(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """`--no-synthesize` does not buy past the refusal.
+    """`--no-generate` does not buy past the refusal.
 
     The check asks whether MANIAC should serve this binary at all, which is
     prior to which tier would answer -- so restricting to tiers 1-2 cannot
@@ -1254,7 +1254,7 @@ def test_run_install_refuses_under_no_synthesize_too(
     )
 
     with pytest.raises(InstallRefused):
-        run_install("project-local-tool", no_synthesize=True)
+        run_install("project-local-tool", no_generate=True)
 
 
 def test_run_install_refuses_a_project_scoped_mise_install(
@@ -1347,14 +1347,14 @@ def test_run_install_refuses_synthesis_after_a_non_definitive_repository_probe(
     message = str(excinfo.value)
     assert "owner/tool" in message
     assert "tier-2" in message
-    assert "--no-synthesize" not in message
+    assert "--no-generate" not in message
     assert "`maniac why tool`" in message
 
 
-def test_run_install_no_synthesize_says_an_incomplete_probe_is_not_an_absence(
+def test_run_install_no_generate_says_an_incomplete_probe_is_not_an_absence(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """`--no-synthesize` installs nothing on a non-definitive tier-2 probe,
+    """`--no-generate` installs nothing on a non-definitive tier-2 probe,
     and says the check did not complete -- never "no page found", which
     would report an absence on missing evidence (CONTRACT.md rule 4).
     """
@@ -1370,7 +1370,7 @@ def test_run_install_no_synthesize_says_an_incomplete_probe_is_not_an_absence(
         lambda *args, **kwargs: ([], False),
     )
 
-    outcome = run_install("tool", no_synthesize=True)
+    outcome = run_install("tool", no_generate=True)
 
     assert outcome.tier is None
     assert outcome.installed_path is None
@@ -1471,7 +1471,7 @@ def test_run_install_force_bypasses_the_unmanaged_destination_precheck(
 
     # No candidate at any tier -- the precheck already ran, so reaching here
     # (rather than raising InstallRefused) is what this test is checking.
-    outcome = run_install("tool", config=cfg, force=True, no_synthesize=True)
+    outcome = run_install("tool", config=cfg, force=True, no_generate=True)
 
     assert outcome.tier is None
 
@@ -1512,7 +1512,7 @@ def test_run_install_does_not_refuse_a_manifest_owned_destination(
         lambda name, bin_dir=None, **_: (provider, inst),
     )
 
-    outcome = run_install("tool", config=cfg, no_synthesize=True)
+    outcome = run_install("tool", config=cfg, no_generate=True)
 
     assert outcome.tier is None
 
@@ -1559,7 +1559,7 @@ def test_run_install_does_not_refuse_its_own_orphaned_destination(
         lambda name, bin_dir=None, **_: (provider, inst),
     )
 
-    outcome = run_install("tool", config=cfg, no_synthesize=True)
+    outcome = run_install("tool", config=cfg, no_generate=True)
 
     assert outcome.tier is None
 
@@ -1640,7 +1640,7 @@ def test_run_install_tier1_refuses_a_resolved_destination_beyond_the_default_gue
     )
 
     with pytest.raises(InstallRefused):
-        run_install("tool", config=cfg, no_synthesize=True)
+        run_install("tool", config=cfg, no_generate=True)
 
 
 def test_run_install_tier1_force_bypasses_the_widened_precheck(
@@ -1671,7 +1671,7 @@ def test_run_install_tier1_force_bypasses_the_widened_precheck(
         ),
     )
 
-    outcome = run_install("tool", config=cfg, no_synthesize=True, force=True)
+    outcome = run_install("tool", config=cfg, no_generate=True, force=True)
 
     assert outcome.tier is Tier.INSTALL_ROOT
 
@@ -1714,7 +1714,7 @@ def test_run_install_tier1_does_not_refuse_an_owned_resolved_destination(
         lambda name, bin_dir=None, **_: (provider, inst),
     )
 
-    outcome = run_install("tool", config=cfg, no_synthesize=True)
+    outcome = run_install("tool", config=cfg, no_generate=True)
 
     assert outcome.tier is Tier.INSTALL_ROOT
 
@@ -1754,7 +1754,7 @@ def test_run_install_tier2_refuses_a_foreign_companion_destination(
     )
 
     with pytest.raises(InstallRefused):
-        run_install("eza", no_synthesize=True, config=cfg)
+        run_install("eza", no_generate=True, config=cfg)
 
     assert manifest.load(config=cfg) == {}
     assert vendor_companion.read_text(encoding="utf-8") == "vendor page\n"
@@ -1788,7 +1788,7 @@ def test_run_install_tier2_force_bypasses_the_widened_precheck(
         lambda *args, **kwargs: ([primary, companion], True),
     )
 
-    outcome = run_install("eza", no_synthesize=True, force=True, config=cfg)
+    outcome = run_install("eza", no_generate=True, force=True, config=cfg)
 
     assert outcome.tier is Tier.REPOSITORY
     assert vendor_companion.read_text(encoding="utf-8") == ".TH EZA_COLORS 5\n"
@@ -1805,11 +1805,11 @@ def test_run_install_tier2_does_not_refuse_an_owned_companion_destination(
     pages = _eza_release(tmp_path)
     _resolve_eza_release(monkeypatch, pages)
 
-    first = run_install("eza", no_synthesize=True, config=cfg)
+    first = run_install("eza", no_generate=True, config=cfg)
     assert first.tier is Tier.REPOSITORY
 
     _resolve_eza_release(monkeypatch, pages, version="0.24.0")
-    second = run_install("eza", no_synthesize=True, config=cfg)
+    second = run_install("eza", no_generate=True, config=cfg)
 
     assert second.tier is Tier.REPOSITORY
     assert second.detail.startswith("upstream page (0.24.0)")
@@ -1831,14 +1831,14 @@ def test_run_install_reinstall_prunes_a_page_the_new_release_no_longer_ships(
     pages = _eza_release(tmp_path)
     _resolve_eza_release(monkeypatch, pages)
 
-    run_install("eza", no_synthesize=True, config=cfg)
+    run_install("eza", no_generate=True, config=cfg)
     dropped_path = cfg.man_dir.parent / "man5" / "eza_colors-explanation.5"
     assert dropped_path.exists()
     assert manifest.lookup("eza_colors-explanation", config=cfg) is not None
 
     pages.pop()  # upstream's next release drops eza_colors-explanation.5
     _resolve_eza_release(monkeypatch, pages, version="0.24.0")
-    outcome = run_install("eza", no_synthesize=True, config=cfg)
+    outcome = run_install("eza", no_generate=True, config=cfg)
 
     assert outcome.tier is Tier.REPOSITORY
     assert manifest.lookup("eza_colors-explanation", config=cfg) is None
@@ -1862,12 +1862,12 @@ def test_run_install_reinstall_prunes_a_dropped_page_restoring_its_vendor_backup
     dropped_dest.write_text("vendor page\n", encoding="utf-8")
     _resolve_eza_release(monkeypatch, pages)
 
-    run_install("eza", no_synthesize=True, force=True, config=cfg)
+    run_install("eza", no_generate=True, force=True, config=cfg)
     assert manifest.lookup("eza_colors-explanation", config=cfg) is not None
 
     pages.pop()
     _resolve_eza_release(monkeypatch, pages, version="0.24.0")
-    run_install("eza", no_synthesize=True, config=cfg)
+    run_install("eza", no_generate=True, config=cfg)
 
     assert manifest.lookup("eza_colors-explanation", config=cfg) is None
     assert dropped_dest.read_text(encoding="utf-8") == "vendor page\n"
@@ -1881,11 +1881,11 @@ def test_run_install_reinstall_with_the_same_pages_prunes_nothing(
     pages = _eza_release(tmp_path)
     _resolve_eza_release(monkeypatch, pages)
 
-    run_install("eza", no_synthesize=True, config=cfg)
+    run_install("eza", no_generate=True, config=cfg)
     before = manifest.load(config=cfg)
 
     _resolve_eza_release(monkeypatch, pages, version="0.24.0")
-    outcome = run_install("eza", no_synthesize=True, config=cfg)
+    outcome = run_install("eza", no_generate=True, config=cfg)
 
     assert outcome.detail.startswith("upstream page (0.24.0)")
     after = manifest.load(config=cfg)
@@ -2065,13 +2065,13 @@ def test_install_leaves_a_page_already_current_alone(
     cfg = _release_config(tmp_path)
     pages = _eza_release(tmp_path)
     _resolve_eza_release(monkeypatch, pages)
-    run_install("eza", no_synthesize=True, config=cfg)
+    run_install("eza", no_generate=True, config=cfg)
     monkeypatch.setattr(
         "maniac.orchestration.install.discover_repo_manpages",
         lambda *args, **kwargs: pytest.fail("a current page is not looked up again"),
     )
 
-    outcome = run_install("eza", no_synthesize=True, config=cfg)
+    outcome = run_install("eza", no_generate=True, config=cfg)
 
     assert outcome.detail == "already up to date (0.23.5); --force reinstalls it"
     assert outcome.tier is Tier.REPOSITORY
@@ -2085,9 +2085,9 @@ def test_install_force_reinstalls_a_current_page(
     cfg = _release_config(tmp_path)
     pages = _eza_release(tmp_path)
     _resolve_eza_release(monkeypatch, pages)
-    run_install("eza", no_synthesize=True, config=cfg)
+    run_install("eza", no_generate=True, config=cfg)
 
-    outcome = run_install("eza", no_synthesize=True, force=True, config=cfg)
+    outcome = run_install("eza", no_generate=True, force=True, config=cfg)
 
     assert outcome.detail.startswith("upstream page (0.23.5)")
 
@@ -2100,11 +2100,11 @@ def test_install_reinstalls_a_page_whose_version_is_unknown(
     cfg = _release_config(tmp_path)
     pages = _eza_release(tmp_path)
     _resolve_eza_release(monkeypatch, pages)
-    run_install("eza", no_synthesize=True, config=cfg)
+    run_install("eza", no_generate=True, config=cfg)
     entries = manifest.load(config=cfg)
     entries["eza"] = replace(entries["eza"], version=None)
     manifest.save(entries, cfg)
 
-    outcome = run_install("eza", no_synthesize=True, config=cfg)
+    outcome = run_install("eza", no_generate=True, config=cfg)
 
     assert outcome.detail.startswith("upstream page (0.23.5)")

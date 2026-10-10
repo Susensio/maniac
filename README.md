@@ -111,7 +111,7 @@ pandoc   shipped page (3.10.2)   [no synthesis]
 hx       generated from --help + repo docs
 ```
 
-`--no-synthesize` restricts this to the first two tiers and never calls an LLM.
+`--no-generate` restricts this to the first two tiers and never calls an LLM.
 
 A page maniac already installed that `list` reads `ok` is left alone (`npm   already up to date (10.9.4); --force reinstalls it`), so naming it again costs nothing; an `outdated` or `unknown` page is reinstalled. If the upstream check cannot complete (network or git), `install` says so rather than reporting that no page exists.
 
@@ -148,7 +148,7 @@ maniac install hx
 maniac install uv howdoi glow ruff bat
 
 # Never call an LLM: install root or repository only
-maniac install pandoc --no-synthesize
+maniac install pandoc --no-generate
 
 # Now use standard man immediately
 man hx
@@ -177,7 +177,7 @@ maniac update            # every outdated page
 maniac update ruff       # just this one, saying why if it is left alone
 ```
 
-An *unknown* page is left alone until you name it to `maniac install`. A page `--force` pinned to a non-global copy is reinstalled for that copy. Each tool commits on its own, so an interrupted update resumes by running it again. `update` takes `--model`, `--no-synthesize` and `--dry-run` as `install` does.
+An *unknown* page is left alone until you name it to `maniac install`. A page `--force` pinned to a non-global copy is reinstalled for that copy. Each tool commits on its own, so an interrupted update resumes by running it again. `update` takes `--model`, `--no-generate` and `--dry-run` as `install` does.
 
 ### 3. Your Other Tools: `scan`
 

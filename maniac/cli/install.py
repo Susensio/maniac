@@ -2,7 +2,7 @@
 
 The inverse of `remove`, per ADR-0016's rename from `generate`. Tries the
 install root, then the upstream repository with the version matched, then
-LLM synthesis, in that order; `--no-synthesize` restricts it to the first
+LLM synthesis, in that order; `--no-generate` restricts it to the first
 two tiers.
 """
 
@@ -14,11 +14,7 @@ import typer
 from ..exceptions import ManiacError
 from ..orchestration.install import InstallOutcome, InstallRefused
 from . import app, console, get_config, require_login_path
-from .options import (
-    DryRunOption,
-    ForceOption,
-    ModelOption,
-)
+from .options import DryRunOption, ForceOption, ModelOption, NoGenerateOption
 
 
 def _no_page_installed(outcome: InstallOutcome, *, dry_run: bool) -> bool:
@@ -96,15 +92,7 @@ def install(
         typer.Argument(help="List of tool names to install manpages for."),
     ] = None,
     model: ModelOption = None,
-    no_synthesize: Annotated[
-        bool,
-        typer.Option(
-            "--no-synthesize",
-            help=(
-                "Restrict to tiers 1-2 (install root, repository); never calls an LLM."
-            ),
-        ),
-    ] = False,
+    no_generate: NoGenerateOption = False,
     force: ForceOption = False,
     dry_run: DryRunOption = False,
 ) -> None:
@@ -130,14 +118,14 @@ def install(
                 outcome = run_install(
                     tool,
                     model=model,
-                    no_synthesize=no_synthesize,
+                    no_generate=no_generate,
                     force=force,
                     dry_run=dry_run,
                     config=cfg,
                 )
             if not render_install(console, outcome, dry_run=dry_run):
                 # No page landed on disk for this tool -- whether tiers 1-2
-                # found nothing under --no-synthesize, or tier 3 reached
+                # found nothing under --no-generate, or tier 3 reached
                 # synthesis but pandoc was missing or rejected the markdown
                 # (`installed_path` stays None either way) -- so it counts
                 # toward the exit status (ADR-0048).

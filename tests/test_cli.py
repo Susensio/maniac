@@ -492,10 +492,10 @@ def test_cli_stops_once_when_the_login_shell_cannot_report_path(
     assert result.output.count("login shell /bin/bash: exited 1") == 1
 
 
-def test_cli_install_exits_nonzero_when_no_synthesize_finds_nothing(
+def test_cli_install_exits_nonzero_when_no_generate_finds_nothing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """ADR-0048: `--no-synthesize` finding nothing at tiers 1-2 is still no page."""
+    """ADR-0048: `--no-generate` finding nothing at tiers 1-2 is still no page."""
     monkeypatch.setattr(
         "maniac.sources.pathcache.which",
         lambda name: Path(f"/nonexistent/maniac-tests/bin/{name}"),
@@ -506,7 +506,7 @@ def test_cli_install_exits_nonzero_when_no_synthesize_finds_nothing(
     )
 
     result = runner.invoke(
-        app, ["install", "nonexistent_unknown_tool_xyz", "--no-synthesize"]
+        app, ["install", "nonexistent_unknown_tool_xyz", "--no-generate"]
     )
 
     assert result.exit_code != 0
@@ -530,7 +530,7 @@ def test_cli_install_dry_run_exits_nonzero_when_no_tier_would_answer(
 
     result = runner.invoke(
         app,
-        ["install", "nonexistent_unknown_tool_xyz", "--no-synthesize", "--dry-run"],
+        ["install", "nonexistent_unknown_tool_xyz", "--no-generate", "--dry-run"],
     )
 
     assert result.exit_code != 0

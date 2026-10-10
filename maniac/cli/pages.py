@@ -8,7 +8,7 @@ import typer
 from ..exceptions import ManiacError
 from ..listing.models import ActionState
 from . import app, console, get_config, require_login_path
-from .options import DryRunOption, ModelOption
+from .options import DryRunOption, ModelOption, NoGenerateOption
 
 LIST_TITLE = "Pages maniac installed"
 
@@ -119,13 +119,7 @@ def update(
         ),
     ] = None,
     model: ModelOption = None,
-    no_synthesize: Annotated[
-        bool,
-        typer.Option(
-            "--no-synthesize",
-            help="Only reinstall from a shipped or upstream page; never call an LLM.",
-        ),
-    ] = False,
+    no_generate: NoGenerateOption = False,
     dry_run: DryRunOption = False,
 ) -> None:
     """Reinstall each page maniac installed whose tool changed version.
@@ -168,7 +162,7 @@ def update(
                 outcome = run_install(
                     row.tool,
                     model=model,
-                    no_synthesize=no_synthesize,
+                    no_generate=no_generate,
                     dry_run=dry_run,
                     config=cfg,
                     copy=row.copy,
