@@ -46,10 +46,9 @@ def test_cli_help() -> None:
     result = runner.invoke(app, ["--help"])
     assert result.exit_code == 0
     assert "Maniac:" in result.output
-    assert "source" in result.output
-    assert "install" in result.output
-    assert "eval" in result.output
-    assert "list" in result.output
+    for command in ("install", "update", "list", "scan", "why", "uninstall", "eval"):
+        assert command in result.output
+    assert "source" not in result.output
 
 
 def test_importing_cli_does_not_construct_config() -> None:
@@ -81,8 +80,24 @@ def test_cli_constructs_and_threads_one_config(monkeypatch: pytest.MonkeyPatch) 
             super().__init__()
             constructed.append(self)
 
+    from maniac.orchestration.why import Explanation
+
     observed: list[Config] = []
     monkeypatch.setattr(cli_module, "Config", CountingConfig)
+    monkeypatch.setattr(
+        "maniac.orchestration.why.explain",
+        lambda tool, config: (
+            observed.append(config) or Explanation(tool, [], "generated")
+        ),
+    )
+    monkeypatch.setattr(
+        "maniac.sources.pathcache.which",
+        lambda name: Path("/nonexistent/maniac-tests/bin/tool"),
+    )
+    monkeypatch.setattr(
+        "maniac.orchestration.context.resolution.find_installation",
+        lambda name, bin_dir=None, **_: None,
+    )
     monkeypatch.setattr(
         "maniac.sources.crawler.find_subcommands",
         lambda cmd, **kwargs: (
@@ -90,11 +105,11 @@ def test_cli_constructs_and_threads_one_config(monkeypatch: pytest.MonkeyPatch) 
         ),
     )
 
-    result = runner.invoke(app, ["source", "crawl", "tool"])
+    result = runner.invoke(app, ["why", "--help-text", "tool"])
 
-    assert result.exit_code == 0
+    assert result.exit_code == 0, result.output
     assert len(constructed) == 1
-    assert observed == constructed
+    assert observed == constructed * 2
 
 
 def test_repo_cell_links_known_repo_and_labels_unknown() -> None:
@@ -228,22 +243,60 @@ def test_repo_cell_non_github_backend_prefix_renders_as_plain_text() -> None:
     assert cell.style == "yellow"
 
 
-def test_cli_source_crawl(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_why_help_text_prints_the_crawled_help_of_the_documented_binary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`why --help-text` replaces `source crawl`: the help a generated page
+    would be written from, crawled from the binary maniac documents."""
+    from maniac.orchestration.why import Explanation
+
     monkeypatch.setattr(
-        "maniac.sources.crawler.find_subcommands",
-        lambda cmd, **kwargs: {"> git --help": "git help content"},
+        "maniac.orchestration.why.explain",
+        lambda tool, config: Explanation(tool, [], "generated"),
     )
-    result = runner.invoke(app, ["source", "crawl", "git"])
-    assert result.exit_code == 0
+    seen: dict[str, object] = {}
+
+    def find_subcommands(cmd: list[str], **kwargs: object) -> dict[str, str]:
+        seen["cmd"], seen["executable"] = cmd, kwargs.get("executable")
+        return {"> git --help": "git help content"}
+
+    monkeypatch.setattr("maniac.sources.crawler.find_subcommands", find_subcommands)
+    monkeypatch.setattr(
+        "maniac.sources.pathcache.which",
+        lambda name: Path("/nonexistent/maniac-tests/bin/git"),
+    )
+    monkeypatch.setattr(
+        "maniac.orchestration.context.resolution.find_installation",
+        lambda name, bin_dir=None, **_: None,
+    )
+
+    result = runner.invoke(app, ["why", "--help-text", "git"])
+
+    assert result.exit_code == 0, result.output
     assert "> git --help" in result.output
     assert "git help content" in result.output
+    assert seen == {"cmd": ["git"], "executable": "/nonexistent/maniac-tests/bin/git"}
 
 
-def test_cli_source_docs(monkeypatch: pytest.MonkeyPatch) -> None:
-    raw_source = RepoSource(name="tmux", target="tmux/tmux-builds", is_local=False)
+def test_why_docs_lists_the_documents_from_the_documentation_repository(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`why --docs` replaces `source docs`, through the same documentation
+    repository redirect synthesis uses (tmux-builds -> tmux)."""
+    from maniac.orchestration.context import ResolvedTool
+    from maniac.orchestration.why import Explanation
+
     monkeypatch.setattr(
-        "maniac.sources.resolution.discover_repo",
-        lambda tool, **kwargs: raw_source,
+        "maniac.orchestration.why.explain",
+        lambda tool, config: Explanation(tool, [], "generated"),
+    )
+    source = RepoSource(name="tmux", target="tmux/tmux", is_local=False)
+    monkeypatch.setattr(
+        ResolvedTool, "documentation_source", property(lambda self: source)
+    )
+    monkeypatch.setattr(
+        "maniac.orchestration.context.resolution.find_installation",
+        lambda name, bin_dir=None, **_: None,
     )
     observed: list[RepoSource] = []
     monkeypatch.setattr(
@@ -253,12 +306,13 @@ def test_cli_source_docs(monkeypatch: pytest.MonkeyPatch) -> None:
             or ([DocFile(rel_path="README.md", content="Content")], False)
         ),
     )
-    result = runner.invoke(app, ["source", "docs", "mytool"])
-    assert result.exit_code == 0
-    assert "Discovered repository source" in result.output
-    assert "README.md" in result.output
-    assert raw_source.target == "tmux/tmux-builds"
-    assert observed == [RepoSource(name="tmux", target="tmux/tmux", is_local=False)]
+
+    result = runner.invoke(app, ["why", "--docs", "tmux"])
+
+    assert result.exit_code == 0, result.output
+    assert "1 documents from tmux/tmux, from the default branch:" in result.output
+    assert "README.md (7 characters)" in result.output
+    assert observed == [source]
 
 
 def test_cli_install_dry_run(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

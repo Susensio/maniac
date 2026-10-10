@@ -24,13 +24,13 @@ When a phase lands, it updates the README for what became live and marks the ADR
   Before, `install ls` would quietly have generated a page from `ls --help`, despite ADR-0059.
 - [x] Integration test through the real CLI, inside an activated venv: the notice for a global tool, then a venv-only tool refused, `--force`, and `list` following the recorded copy to `outdated`.
 
-### P2 `why <tool>` (rule 3): next
+### P2 `why <tool>` (rule 3): done (2026-10-10)
 
-- [ ] `$PATH`: the login `$PATH` used, the entries the invoking shell has that it left out, and why.
-- [ ] Binary: the hit, a shim's target, the installer and its version, or "no installer".
-- [ ] Page: what `man -w` shows now, whether maniac owns it, its state and the evidence behind it.
-- [ ] Sources: `shipped` candidates, the `upstream` repository and tag result, and what `generated` would use (help commands found, docs found), each with why it was used or passed over.
-- [ ] `source crawl` and `source docs` are removed; `why --help-text` / `why --docs` print their raw material.
+- [x] `PATH`: where the login `$PATH` came from, each directory this shell has that it left out and holds a copy of the tool (with why: a virtualenv, conda, a mise activation, or not set by the login profile), and a count of the rest.
+- [x] Binary: the login hit, a shim's `$HOME` target, the installer, package, version and root, or "no installer" with its own `--version`; a system binary; a project-only install with `--force` offered; this shell's copy if another.
+- [x] Page: maniac's page with what it documents, the installed version and its state (the same rows as `list`); or the page `man` shows, whose it is and its state; or none.
+- [x] Sources, in `install`'s order, each with why it was used or passed over, from the same `select_install_root` / `select_repository` calls; an upstream check that did not complete is reported as the refusal it causes.
+- [x] `source crawl` and `source docs` are removed; `why --help-text` / `why --docs` print their raw material, crawled from the binary maniac documents and fetched through the documentation-repository redirect.
 
 ### P3 `list` is maniac's pages; `update` (rules 1 and 4): done (2026-10-10, done before P2)
 
@@ -41,7 +41,7 @@ When a phase lands, it updates the README for what became live and marks the ADR
 - [x] The old discovery `list` is `scan`, unchanged until P4 (it still has `--managed`).
 - [x] A page forced onto a system binary is pinned too, so `update` reinstalls it without asking `--force` again.
 
-### P4 `scan` (rule 3)
+### P4 `scan` (rule 3): next
 
 - [ ] Discovery across the login `$PATH` moves from unnamed `list` to `scan`, for tools maniac does not manage.
 - [ ] States `ok`, `outdated`, `unknown`, `available` and `missing`, with filters as `list` has today.
@@ -75,3 +75,4 @@ When a phase lands, it updates the README for what became live and marks the ADR
 - 2026-10-09: P1 done: `--here` (manifest `binary`, Mise project installs accepted when asked for), refusals that offer `--here`, a shim refusal that no longer says "remove the stale link", ADR-0059 and ADR-0062 marked superseded in part. Checked live: venv and Mise project, plain and `--here`.
 - 2026-10-09: `--here` replaced by `--force` as the single override, covering system binaries too (user's decision); ADR-0065 Corrections, contract, README and tests updated. Integration test: global copy noted, venv-only tool refused, `--force` documents and records it, `list` follows it.
 - 2026-10-10: P3 done: `list` and `update` over maniac's own pages, discovery renamed `scan`, rule 4 (`unknown`) for managed pages. Integration: install, upgrade, `list --outdated`, `update`, `ok`; a pinned venv copy updated for that copy, and `unknown` once the project is deleted. Checked live with a real uv tool.
+- 2026-10-10: P2 done: `why <tool>` with PATH / Binary / Page / Sources and the `install` verdict; `source` group removed. Integration: a wrapper with a venv copy before and after its page is installed, npm's `marked` and its shipped page, a tool nowhere on `$PATH`. Checked live: ruff in a venv, a mise shim pinned by a project, `ls`.

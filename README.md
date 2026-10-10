@@ -239,17 +239,25 @@ maniac uninstall howdoi
 maniac uninstall howdoi --purge
 ```
 
-### 6. Inspect Subcommands or Upstream Docs
+### 6. Ask Why
 
-Debug and inspect extracted CLI help trees and upstream doc files independently, under the `source` group:
+`why <tool>` explains every decision maniac makes about a tool, and what `install` would do with it:
 
 ```bash
-# Inspect the scraped help tree for deep subcommands
-maniac source crawl uv pip
-
-# Discover the upstream repository and inspect extracted reference files
-maniac source docs hx
+$ cd ~/proj && . .venv/bin/activate && maniac why ruff
+PATH     read from `/bin/bash -lc` started in $HOME: 14 directories
+         left out: ~/proj/.venv/bin, an activated virtualenv (VIRTUAL_ENV) (holds a copy of this tool)
+Binary   login $PATH reaches ~/.local/bin/ruff
+         installed by uv as ruff (0.6.9), root ~/.local/share/uv/tools/ruff
+         this shell runs ~/proj/.venv/bin/ruff instead
+Page     `man` finds no page for it
+Sources  shipped: none in ~/.local/share/uv/tools/ruff
+         upstream: astral-sh/ruff at 0.6.9: no manpage
+         generated: from its own --help (`why --help-text`) and astral-sh/ruff's docs (`why --docs`)
+install  generated
 ```
+
+`--help-text` also prints the `--help` output, subcommands included, that a generated page would be written from; `--docs` lists the repository documents it would use.
 
 ---
 

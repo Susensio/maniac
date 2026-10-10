@@ -9,6 +9,7 @@ integration suite reads as green while proving nothing.
 import os
 import shutil
 import stat
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -60,3 +61,43 @@ def faketool(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 def model_response() -> str:
     """What a model returns for `faketool`: fenced, as models often do."""
     return (FIXTURES / "faketool.1.md").read_text(encoding="utf-8")
+
+
+NPM_PACKAGES = ("cowsay@1.6.0", "marked@16.4.2")
+
+
+def _require(tool: str) -> str:
+    found = shutil.which(tool)
+    if found is None:
+        pytest.fail(f"provider integration tests need `{tool}` on $PATH", pytrace=False)
+    return found
+
+
+def _run(cmd: list[str], env: dict[str, str] | None = None) -> None:
+    result = subprocess.run(
+        cmd, capture_output=True, text=True, check=False, env=env, timeout=300
+    )
+    if result.returncode != 0:
+        pytest.fail(
+            f"`{' '.join(cmd)}` failed ({result.returncode}):\n{result.stderr[-2000:]}",
+            pytrace=False,
+        )
+
+
+@pytest.fixture(scope="session")
+def npm_prefix(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """`npm install -g --prefix`: `<prefix>/bin/<tool>` -> `lib/node_modules/`."""
+    prefix = tmp_path_factory.mktemp("npm-global")
+    _run(
+        [
+            _require("npm"),
+            "install",
+            "--global",
+            "--prefix",
+            str(prefix),
+            "--no-audit",
+            "--no-fund",
+            *NPM_PACKAGES,
+        ]
+    )
+    return prefix
