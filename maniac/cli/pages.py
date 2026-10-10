@@ -10,11 +10,7 @@ from ..listing.models import ActionState
 from . import app, console, get_config, require_login_path
 from .options import DryRunOption, ModelOption
 
-_STATE_COLOR = {
-    ActionState.OK: "green",
-    ActionState.OUTDATED: "yellow",
-    ActionState.UNKNOWN: "yellow",
-}
+LIST_TITLE = "Pages maniac installed"
 
 
 @app.command(name="list")
@@ -79,24 +75,28 @@ def list_pages(
 
 
 def _render(rows: list[Any]) -> None:
-    from rich.table import Table
+    from rich.text import Text
+
+    from .table import frame, state_cell, tool_column_width
 
     if not rows:
         console.print(
             "maniac has installed no pages yet. `maniac scan` shows your tools."
         )
         return
-    table = Table(box=None, pad_edge=False, show_edge=False)
-    for column in ("Tool", "State", "Documents", "Installed", "Source"):
-        table.add_column(column, overflow="fold")
+    table = frame(LIST_TITLE, tool_width=tool_column_width([r.tool for r in rows]))
+    # Versions fold rather than truncate: a cut version could hide the very
+    # difference that makes a page `outdated`.
+    table.add_column("Documents", overflow="fold")
+    table.add_column("Installed", overflow="fold")
+    table.add_column("Source", no_wrap=True)
     notes = []
     for row in rows:
-        color = _STATE_COLOR.get(row.state, "red")
         table.add_row(
-            row.tool,
-            f"[{color}]{row.state.value}[/{color}]",
-            row.documented or "-",
-            row.installed or "-",
+            Text(row.tool),
+            state_cell(row.state),
+            Text(row.documented or "-"),
+            Text(row.installed or "-"),
             row.source.value,
         )
         if row.copy is not None:

@@ -223,3 +223,41 @@ def test_installing_a_pinned_copy_that_is_gone_is_refused(tmp_path: Path) -> Non
 
     with pytest.raises(InstallRefused, match="which is gone"):
         run_install("tool", copy=gone, config=_config(tmp_path))
+
+
+def test_list_on_a_terminal_draws_the_frame_scan_draws(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`list` and `scan` share one frame: title, box, Tool and State first;
+    `list` then adds its version comparison."""
+    import io
+
+    from rich.console import Console
+
+    import maniac.cli as cli_module
+    from maniac.cli.pages import LIST_TITLE
+
+    output = io.StringIO()
+    monkeypatch.setattr(
+        cli_module.console,
+        "_instance",
+        Console(file=output, force_terminal=True, color_system=None, width=100),
+    )
+    cfg = Config()
+    _page(cfg, "older", version="1.0.0")
+    _claimed(monkeypatch, {"older": "2.0.0"})
+
+    result = runner.invoke(app, ["list"])
+
+    assert result.exit_code == 0, result.output
+    lines = output.getvalue().splitlines()
+    assert lines[0].strip() == LIST_TITLE
+    assert lines[1].startswith("┏")
+    assert [cell.strip() for cell in lines[2].split("┃")[1:-1]] == [
+        "Tool",
+        "State",
+        "Documents",
+        "Installed",
+        "Source",
+    ]
+    assert "│ older │ outdated  │ 1.0.0" in output.getvalue()

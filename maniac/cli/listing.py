@@ -32,22 +32,15 @@ from ..models import RepoSource
 from ..sources.resolution import Skip
 from . import app, console, get_config, require_login_path
 from .render import _repo_cell
-
-# Traffic-light by what remains to be done: green needs nothing, yellow
-# needs a free reinstall or install, red needs an LLM.
-_STATE_COLOR: dict[ActionState, str] = {
-    ActionState.OK: "green",
-    ActionState.UNKNOWN: "yellow",
-    ActionState.OUTDATED: "yellow",
-    ActionState.AVAILABLE: "yellow",
-    ActionState.MISSING: "red",
-    ActionState.ERROR: "bold red",
-}
-
-_STATE_COLUMN_WIDTH = max(
-    len("checking…"), *(len(state.value) for state in ActionState)
+from .table import (
+    STATE_COLUMN_WIDTH,
+    frame,
+    state_cell,
+    tool_column_width,
 )
-_TOOL_COLUMN_MAX_WIDTH = 24
+
+SCAN_TITLE = "Other tools on your $PATH"
+
 # A provable owning package can render in place of "system" (`_source_cell`),
 # and Debian package names run long -- "python3.12-minimal" is 19 already.
 # Capped the same way Tool is, so the longest name on a real system cannot
@@ -176,13 +169,6 @@ def _upstream_cell(upstream: RepoSource | None) -> Any:
     return _repo_cell(upstream, blank_when_unresolvable=True)
 
 
-def _tool_column_width(labels: list[str]) -> int:
-    """Widest Tool label, capped, and never below the header."""
-    return min(
-        _TOOL_COLUMN_MAX_WIDTH, max([len("Tool"), *(len(label) for label in labels)])
-    )
-
-
 def _source_label(row: ToolRow) -> str:
     """The text `_source_cell` renders: an error, a provable owning package, else the source.
 
@@ -222,8 +208,8 @@ def _upstream_budget(
     shrink State instead, truncating `unknown` and `checking…`.
     """
     fixed = (
-        _tool_column_width(tool_labels)
-        + _STATE_COLUMN_WIDTH
+        tool_column_width(tool_labels)
+        + STATE_COLUMN_WIDTH
         + source_width
         + _TABLE_CHROME_WIDTH
     )
@@ -297,15 +283,7 @@ def _list_table(rows: list[ToolRow], *, terminal_width: int) -> Table:
         for label, row in _grouped_for_display(rows)
     ]
     source_width = _source_column_width([_source_label(row) for _, row, _ in rendered])
-    table = Table(title="Manpage Reachability")
-    table.add_column(
-        "Tool",
-        style="cyan",
-        max_width=_TOOL_COLUMN_MAX_WIDTH,
-        no_wrap=True,
-        overflow="ellipsis",
-    )
-    table.add_column("State", width=_STATE_COLUMN_WIDTH, no_wrap=True)
+    table = frame(SCAN_TITLE)
     table.add_column(
         "Source", max_width=_SOURCE_COLUMN_MAX_WIDTH, no_wrap=True, overflow="ellipsis"
     )
@@ -324,11 +302,11 @@ def _list_table(rows: list[ToolRow], *, terminal_width: int) -> Table:
     )
 
     for label, row, upstream in rendered:
-        state = (
-            f"[{_STATE_COLOR[row.state]}]{row.state.value}[/{_STATE_COLOR[row.state]}]"
-        )
         table.add_row(
-            _tool_cell(label, drift=row.drift), state, _source_cell(row), upstream
+            _tool_cell(label, drift=row.drift),
+            state_cell(row.state),
+            _source_cell(row),
+            upstream,
         )
     return table
 
@@ -365,17 +343,8 @@ def _streaming_table(
         upstream_width = _upstream_width(
             upstream_cells, _upstream_budget(tool_labels, source_width, terminal_width)
         )
-    tool_width = _tool_column_width(tool_labels)
-    table = Table(title="Manpage Reachability")
-    table.add_column(
-        "Tool", style="cyan", width=tool_width, no_wrap=True, overflow="ellipsis"
-    )
-    table.add_column(
-        "State",
-        width=_STATE_COLUMN_WIDTH,
-        no_wrap=True,
-        overflow="ellipsis",
-    )
+    tool_width = tool_column_width(tool_labels)
+    table = frame(SCAN_TITLE, tool_width=tool_width)
     table.add_column(
         "Source",
         width=source_width,
@@ -391,13 +360,7 @@ def _streaming_table(
     for index, (row, upstream) in enumerate(
         zip(visible_rows, upstream_cells, strict=True)
     ):
-        state = (
-            "[dim]checking…[/dim]"
-            if index in pending
-            else (
-                f"[{_STATE_COLOR[row.state]}]{row.state.value}[/{_STATE_COLOR[row.state]}]"
-            )
-        )
+        state = "[dim]checking…[/dim]" if index in pending else state_cell(row.state)
         table.add_row(
             _tool_cell(row.tool, drift=row.drift), state, _source_cell(row), upstream
         )

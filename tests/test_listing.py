@@ -19,9 +19,8 @@ import maniac.cli as cli_module
 from maniac.cli import app
 from maniac.cli.listing import (
     _SOURCE_COLUMN_MAX_WIDTH,
-    _STATE_COLUMN_WIDTH,
-    _TOOL_COLUMN_MAX_WIDTH,
     _UPSTREAM_COLUMN_MAX_WIDTH,
+    SCAN_TITLE,
     _filter_rows,
     _grouped_for_display,
     _list_table,
@@ -34,6 +33,7 @@ from maniac.cli.listing import (
     _StreamingList,
     _TerminalObserver,
 )
+from maniac.cli.table import STATE_COLUMN_WIDTH, TOOL_COLUMN_MAX_WIDTH
 from maniac.listing import ActionState, PageSource, ToolError, ToolRow, compute_rows
 from maniac.models import RepoSource
 from maniac.sources.packages import ExternalPageFreshness, ExternalPageVerification
@@ -478,7 +478,7 @@ def test_cli_tall_streaming_prints_one_complete_table_after_alt_screen(
     assert live_options[0]["screen"] is True
     assert live_options[0]["vertical_overflow"] == "crop"
     final = output.getvalue()
-    assert final.count("Manpage Reachability") == 1
+    assert final.count(SCAN_TITLE) == 1
     assert "checking…" not in final
     assert final.index("alpha") < final.index("beta") < final.index("gamma")
 
@@ -591,7 +591,7 @@ def test_streaming_table_keeps_column_geometry_for_long_upstreams() -> None:
         for column in resolved_columns
     ]
     assert checking_columns[0].width == len("long-tool-name")
-    assert checking_columns[1].width == _STATE_COLUMN_WIDTH
+    assert checking_columns[1].width == STATE_COLUMN_WIDTH
     assert checking_columns[2].width == _SOURCE_COLUMN_MAX_WIDTH
     assert checking_columns[3].width == _UPSTREAM_COLUMN_MAX_WIDTH
     assert not checking.expand
@@ -617,7 +617,7 @@ def test_streaming_table_renders_unknown_without_truncation() -> None:
     output = io.StringIO()
     Console(file=output, force_terminal=True, no_color=True, width=80).print(table)
 
-    assert table.columns[1].width == _STATE_COLUMN_WIDTH
+    assert table.columns[1].width == STATE_COLUMN_WIDTH
     assert "unknown" in output.getvalue()
     assert "unverifi…" not in output.getvalue()
 
@@ -1069,7 +1069,7 @@ def test_cli_streaming_keeps_siblings_apart_absent_proven_shared_target(
     assert result.exit_code == 0
     final = output.getvalue()
     # Live frames are transient, so only the grouped table survives the run.
-    table = final[final.rindex("Manpage Reachability") :]
+    table = final[final.rindex(SCAN_TITLE) :]
     assert "pandoc" in table
     assert "pandoc-lua" in table
     assert "pandoc-server" in table
@@ -1101,7 +1101,7 @@ def test_cli_verbose_list_disables_streaming(
     result = runner.invoke(app, ["--verbose", "scan"])
 
     assert result.exit_code == 0
-    assert "Manpage Reachability" in output.getvalue()
+    assert SCAN_TITLE in output.getvalue()
 
 
 def test_cli_streaming_stops_row_progress_after_the_skeleton(
@@ -1270,7 +1270,7 @@ def test_cli_list_explicit_tools_on_a_terminal_render_a_final_table(
     result = runner.invoke(app, ["scan", "gum"])
 
     assert result.exit_code == 0
-    assert "Manpage Reachability" in result.output
+    assert SCAN_TITLE in result.output
     assert "gum" in result.output
 
 
@@ -1605,7 +1605,7 @@ def test_render_list_tty_shows_the_four_column_table() -> None:
     )
 
     output = buf.getvalue()
-    assert "Manpage Reachability" in output
+    assert SCAN_TITLE in output
     assert "pandoc" in output
     assert ActionState.AVAILABLE.value in output
     assert PageSource.VENDOR.value in output
@@ -1734,7 +1734,7 @@ def test_render_list_drift_marker_survives_ellipsis_on_a_capped_label() -> None:
     appended there would be the first thing cut, hiding drift silently."""
     buf = io.StringIO()
     test_console = Console(file=buf, force_terminal=True, no_color=True)
-    long_name = "a" * (_TOOL_COLUMN_MAX_WIDTH + 5)
+    long_name = "a" * (TOOL_COLUMN_MAX_WIDTH + 5)
 
     _render_list(
         test_console,
@@ -1942,7 +1942,7 @@ def test_cli_list_tty_shows_table(
 
     res = runner.invoke(app, ["scan"])
     assert res.exit_code == 0
-    assert "Manpage Reachability" in res.output
+    assert SCAN_TITLE in res.output
 
 
 def test_scan_leaves_out_maniacs_pages_and_counts_every_skip_on_stderr(
