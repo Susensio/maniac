@@ -19,6 +19,11 @@ integration *args:
     set -euo pipefail
     uv run pytest -m integration "$@"
 
+# Re-record the CLI output snapshots after a change meant to alter what users see;
+# review the `.ambr` diff like code.
+snapshots-update:
+    uv run pytest -m integration tests/integration/test_snapshots.py --snapshot-update
+
 # Run ruff linter
 lint:
     uv run ruff check .

@@ -39,7 +39,8 @@ Measured at the start:
 ## How each phase is verified
 
 A1, A2, A3, A5 and A6 are refactors: observable behaviour must not change (CLAUDE.md).
-Each is verified by `just check`, and by a behaviour snapshot: every command's output on a fixed set of tools (`install`, `list`, `update`, `scan`, `remove`, `why`), captured before the phase and compared after it.
+Each is verified by `just check`, which includes the CLI snapshots (`tests/integration/test_snapshots.py`, syrupy): every command's exit code and output, on the integration fixtures' real tools, offline and normalized, compared with `__snapshots__/test_snapshots.ambr`.
+A refactor leaves that file untouched; a change meant to alter output re-records it (`just snapshots-update`) and its diff is the change.
 A4 carries the one intended behaviour change (pruning), in its own commit, test first.
 
 ## Phases
@@ -47,6 +48,7 @@ A4 carries the one intended behaviour change (pruning), in its own commit, test 
 ### A0 The audit and this plan: done (2026-10-10)
 
 - [x] `tools/audit.py`, `audit.toml`, `just audit` (ratchet) and `just audit-suggest` (complexipy's refactor hints, advisory); `audit` joins `check`.
+- [x] CLI output snapshots with syrupy: 27 commands through the real CLI, the behaviour every later phase is checked against; `just snapshots-update`.
 
 ### A1 Dead code: next
 
@@ -87,3 +89,4 @@ A4 carries the one intended behaviour change (pruning), in its own commit, test 
 ## Log
 
 - 2026-10-10: A0 landed: the review, this plan, `just audit` with today's numbers as ceilings.
+- 2026-10-10: CLI snapshots added (syrupy) instead of an ad-hoc before/after script: they live in the suite, run in CI, and outlast the refactor. Reading them found one wording leak to fix before A1: the refusal to generate over an incomplete upstream check still says "tier-2 repository check".

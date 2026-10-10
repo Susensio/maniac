@@ -1,0 +1,410 @@
+# serializer version: 1
+# name: test_every_command_as_a_user_sees_it[maniac --help]
+  '''
+  $ maniac --help
+  [exit 0]
+  
+   Usage: maniac [OPTIONS] COMMAND [ARGS]...
+  
+   Manpages for the tools you install, kept matching their versions: the page a tool ships, else its project's, else one
+   an LLM writes from its --help.
+  
+  ╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+  │ --verbose             -v        Also print diagnostic detail as maniac works. [env var: MANIAC_VERBOSE]              │
+  │ --install-completion            Install completion for the current shell.                                            │
+  │ --show-completion               Show completion for the current shell, to copy it or customize the installation.     │
+  │ --help                          Show this message and exit.                                                          │
+  ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+  ╭─ Commands ───────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+  │ install  Install a page for each tool: shipped, else upstream, else generated.                                       │
+  │ update   Reinstall each page maniac installed whose tool changed version.                                            │
+  │ remove   Remove the pages maniac installed, and restore any page each replaced.                                      │
+  │ list     The pages maniac installed: the version each documents, the version installed.                              │
+  │ scan     Your other tools and their pages, found across your login $PATH.                                            │
+  │ why      Explain every decision maniac makes about a tool, and what `install` would do.                              │
+  ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+  
+  
+  '''
+# ---
+# name: test_every_command_as_a_user_sees_it[maniac install --help]
+  '''
+  $ maniac install --help
+  [exit 0]
+  
+   Usage: maniac install [OPTIONS] [tools]...
+  
+   Install a page for each tool: shipped, else upstream, else generated.
+  
+   Shipped is the page the tool installed itself; upstream, its project's
+   page for the installed version; generated, one an LLM writes from its
+   --help and its project's docs.
+  
+   A page already current is left alone. With no tools it does nothing, so
+   `maniac scan --available | xargs maniac install` is safe when the list
+   is empty.
+  
+  ╭─ Arguments ──────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+  │   tools      <str>  Tools to install pages for.                                                                      │
+  ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+  ╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+  │ --model                <str>  LLM model ID (e.g. 'gemini/gemini-3.5-flash').                                         │
+  │ --no-generate                 Use only a shipped or upstream page; never call an LLM.                                │
+  │ --force        -f             Install where maniac would refuse: over a page it did not install (kept as a backup),  │
+  │                               for a tool installed only in this project, or for a system package's tool. Also        │
+  │                               reinstalls a page already current.                                                     │
+  │ --dry-run                     Preview without installing or generating anything.                                     │
+  │ --help                        Show this message and exit.                                                            │
+  ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+  
+  
+  '''
+# ---
+# name: test_every_command_as_a_user_sees_it[maniac install cowsay --no-generate]
+  '''
+  $ maniac install cowsay --no-generate
+  [exit 1]
+  cowsay   not installed: the check for an upstream page in piuccio/cowsay did not complete (network or git?), so whether one exists is unknown; rerun once it can
+    documents <npm>/bin/cowsay (npm, 1.6.0)
+  
+  '''
+# ---
+# name: test_every_command_as_a_user_sees_it[maniac install faketool marked cowsay]
+  '''
+  $ maniac install faketool marked cowsay
+  [exit 1]
+  faketool   installed: generated page, from --help (3 commands)
+    documents <tmp>/bin/faketool (no installer; it reports faketool 2.3.1)
+  
+  marked   installed: shipped page (16.4.2)
+    documents <npm>/bin/marked (npm, 16.4.2)
+  
+  cowsay   not installed: Could not confirm whether piuccio/cowsay has a manpage for 'cowsay' -- the tier-2 repository check failed rather than returning a definitive answer, so synthesizing over it could silently paper over a network or git failure. Rerun once the check can complete; `maniac why cowsay` shows what was tried.
+  
+  1 of 3 not installed.
+  
+  '''
+# ---
+# name: test_every_command_as_a_user_sees_it[maniac install marked (already current)]
+  '''
+  $ maniac install marked
+  [exit 0]
+  marked   already up to date (16.4.2); --force reinstalls it
+    documents <npm>/bin/marked (npm, 16.4.2)
+  
+  '''
+# ---
+# name: test_every_command_as_a_user_sees_it[maniac install marked --dry-run --force]
+  '''
+  $ maniac install marked --dry-run --force
+  [exit 0]
+  marked   would install: shipped page (16.4.2)
+    documents <npm>/bin/marked (npm, 16.4.2)
+  
+  '''
+# ---
+# name: test_every_command_as_a_user_sees_it[maniac install nowhere-xyz]
+  '''
+  $ maniac install nowhere-xyz
+  [exit 1]
+  nowhere-xyz   not installed: 'nowhere-xyz' is not on your login shell's $PATH -- and a manpage would be installed globally and permanently. Install it globally first, or make your login profile put it on $PATH.
+  
+  '''
+# ---
+# name: test_every_command_as_a_user_sees_it[maniac install]
+  '''
+  $ maniac install
+  [exit 0]
+  
+  '''
+# ---
+# name: test_every_command_as_a_user_sees_it[maniac list (terminal) (after remove)]
+  '''
+  $ maniac list
+  [exit 0]
+                          Pages maniac installed
+  ┏━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━┳━━━━━━━━━━━┓
+  ┃ Tool     ┃ State     ┃ Documents      ┃ Installed      ┃ Source    ┃
+  ┡━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━╇━━━━━━━━━━━┩
+  │ faketool │ ok        │ faketool 2.3.1 │ faketool 2.3.1 │ generated │
+  └──────────┴───────────┴────────────────┴────────────────┴───────────┘
+  
+  '''
+# ---
+# name: test_every_command_as_a_user_sees_it[maniac list (terminal)]
+  '''
+  $ maniac list
+  [exit 0]
+                          Pages maniac installed
+  ┏━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━┳━━━━━━━━━━━┓
+  ┃ Tool     ┃ State     ┃ Documents      ┃ Installed      ┃ Source    ┃
+  ┡━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━╇━━━━━━━━━━━┩
+  │ faketool │ ok        │ faketool 2.3.1 │ faketool 2.3.1 │ generated │
+  │ marked   │ ok        │ 16.4.2         │ 16.4.2         │ shipped   │
+  └──────────┴───────────┴────────────────┴────────────────┴───────────┘
+  
+  '''
+# ---
+# name: test_every_command_as_a_user_sees_it[maniac list --help]
+  '''
+  $ maniac list --help
+  [exit 0]
+  
+   Usage: maniac list [OPTIONS] [tools]...
+  
+   The pages maniac installed: the version each documents, the version installed.
+  
+   `scan` shows your other tools.
+  
+  ╭─ Arguments ──────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+  │   tools      <str>  Tools to show. With none, every page maniac installed.                                           │
+  ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+  ╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+  │ --names             Bare tool names, one per line, even on a terminal.                                               │
+  │ --outdated          Only pages that document another version.                                                        │
+  │ --unknown           Only pages whose version nothing proves either way.                                              │
+  │ --help              Show this message and exit.                                                                      │
+  ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+  
+  
+  '''
+# ---
+# name: test_every_command_as_a_user_sees_it[maniac list cowsay faketool]
+  '''
+  $ maniac list cowsay faketool
+  [exit 1]
+  faketool
+  cowsay   maniac installed no page for it; `maniac scan cowsay` shows its state.
+  
+  '''
+# ---
+# name: test_every_command_as_a_user_sees_it[maniac list]
+  '''
+  $ maniac list
+  [exit 0]
+  faketool
+  marked
+  
+  '''
+# ---
+# name: test_every_command_as_a_user_sees_it[maniac remove --help]
+  '''
+  $ maniac remove --help
+  [exit 0]
+  
+   Usage: maniac remove [OPTIONS] {tools}...
+  
+   Remove the pages maniac installed, and restore any page each replaced.
+  
+  ╭─ Arguments ──────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+  │ *    tools      <str>  Tools whose pages to remove. [required]                                                       │
+  ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+  ╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+  │ --help          Show this message and exit.                                                                          │
+  ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+  
+  
+  '''
+# ---
+# name: test_every_command_as_a_user_sees_it[maniac remove marked nowhere-xyz]
+  '''
+  $ maniac remove marked nowhere-xyz
+  [exit 1]
+  marked   removed
+  nowhere-xyz   maniac installed no page for it.
+  
+  '''
+# ---
+# name: test_every_command_as_a_user_sees_it[maniac scan --help]
+  '''
+  $ maniac scan --help
+  [exit 0]
+  
+   Usage: maniac scan [OPTIONS] [tools]...
+  
+   Your other tools and their pages, found across your login $PATH.
+  
+   Best effort. With no tools: every tool an installer put on your login
+   $PATH that maniac has no page for (`list` shows those it has), then a
+   count of everything passed over, and why. With tools: exactly those.
+  
+  ╭─ Arguments ──────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+  │   tools      <str>  Tools to report on. With none, every tool on your login $PATH maniac has no page for.            │
+  ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+  ╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+  │ --names              Bare tool names, one per line, even on a terminal.                                              │
+  │ --outdated           Only pages that document another version.                                                       │
+  │ --unknown            Only pages whose version nothing proves either way.                                             │
+  │ --available          Only tools with a shipped or upstream page not yet installed.                                   │
+  │ --missing            Only tools with no page to install; only a generated one is left.                               │
+  │ --help               Show this message and exit.                                                                     │
+  ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+  
+  
+  '''
+# ---
+# name: test_every_command_as_a_user_sees_it[maniac scan --missing]
+  '''
+  $ maniac scan --missing
+  [exit 0]
+  cowsay
+  cowthink
+  --- stderr
+  Not shown: 2 more on your $PATH
+        1 have a page from maniac: `maniac list`
+        1 no installer claims: `maniac why <tool>`
+  
+  '''
+# ---
+# name: test_every_command_as_a_user_sees_it[maniac scan cowsay marked faketool (terminal)]
+  '''
+  $ maniac scan cowsay marked faketool
+  [exit 0]
+  
+                Other tools on your $PATH
+  ┏━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┓
+  ┃ Tool     ┃ State     ┃ Source    ┃ Upstream        ┃
+  ┡━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━┩
+  │ cowsay   │ missing   │           │ piuccio/cowsay  │
+  │ faketool │ ok        │ generated │                 │
+  │ marked   │ ok        │ shipped   │ markedjs/marked │
+  └──────────┴───────────┴───────────┴─────────────────┘
+  
+  '''
+# ---
+# name: test_every_command_as_a_user_sees_it[maniac scan]
+  '''
+  $ maniac scan
+  [exit 0]
+  cowsay
+  cowthink
+  --- stderr
+  Not shown: 2 more on your $PATH
+        1 have a page from maniac: `maniac list`
+        1 no installer claims: `maniac why <tool>`
+  
+  '''
+# ---
+# name: test_every_command_as_a_user_sees_it[maniac update --help]
+  '''
+  $ maniac update --help
+  [exit 0]
+  
+   Usage: maniac update [OPTIONS] [tools]...
+  
+   Reinstall each page maniac installed whose tool changed version.
+  
+   Only `outdated` pages: one whose version is `unknown` is left alone until
+   you name it to `maniac install`. Each tool commits on its own, so an
+   interrupted update resumes by running it again.
+  
+  ╭─ Arguments ──────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+  │   tools      <str>  Pages to update. With none, every outdated page maniac installed.                                │
+  ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+  ╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+  │ --model              <str>  LLM model ID (e.g. 'gemini/gemini-3.5-flash').                                           │
+  │ --no-generate               Use only a shipped or upstream page; never call an LLM.                                  │
+  │ --dry-run                   Preview without installing or generating anything.                                       │
+  │ --help                      Show this message and exit.                                                              │
+  ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+  
+  
+  '''
+# ---
+# name: test_every_command_as_a_user_sees_it[maniac update marked cowsay]
+  '''
+  $ maniac update marked cowsay
+  [exit 1]
+  cowsay   maniac installed no page for it.
+  marked   up to date
+  
+  '''
+# ---
+# name: test_every_command_as_a_user_sees_it[maniac update]
+  '''
+  $ maniac update
+  [exit 0]
+  Every page maniac installed is up to date.
+  
+  '''
+# ---
+# name: test_every_command_as_a_user_sees_it[maniac why --help]
+  '''
+  $ maniac why --help
+  [exit 0]
+  
+   Usage: maniac why [OPTIONS] {tool}
+  
+   Explain every decision maniac makes about a tool, and what `install` would do.
+  
+  ╭─ Arguments ──────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+  │ *    tool      <str>  The tool to explain. [required]                                                                │
+  ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+  ╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+  │ --help-text          Also print the --help output a generated page would be written from.                            │
+  │ --docs               Also list the repository documents a generated page would use.                                  │
+  │ --help               Show this message and exit.                                                                     │
+  ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+  
+  
+  '''
+# ---
+# name: test_every_command_as_a_user_sees_it[maniac why cowsay]
+  '''
+  $ maniac why cowsay
+  [exit 0]
+  PATH     read from `/bin/sh -lc` started in $HOME: <n> directories
+           <n> more this shell has are left out; none holds this tool
+  Binary   login $PATH reaches <npm>/bin/cowsay
+           installed by npm as cowsay (1.6.0), root <npm>/lib/node_modules/cowsay
+  Page     `man` finds no page for it
+  Sources  shipped: none in <npm>/lib/node_modules/cowsay
+           upstream: piuccio/cowsay at 1.6.0: the check failed (network?), so install refuses to generate
+           generated: from its own --help (`why --help-text`) and piuccio/cowsay's docs (`why --docs`)
+  install  refused: the upstream check did not complete
+  
+  '''
+# ---
+# name: test_every_command_as_a_user_sees_it[maniac why faketool]
+  '''
+  $ maniac why faketool
+  [exit 0]
+  PATH     read from `/bin/sh -lc` started in $HOME: <n> directories
+           <n> more this shell has are left out; none holds this tool
+  Binary   login $PATH reaches <tmp>/bin/faketool
+           no installer claims it; it reports faketool 2.3.1
+  Page     maniac's (generated): documents faketool 2.3.1, installed faketool 2.3.1: ok
+  Sources  shipped: no installer, so no install root to look in
+           upstream: no installer, so no repository or version known
+           generated: from its own --help (`why --help-text` shows it)
+  install  already up to date (faketool 2.3.1); --force reinstalls it (generated)
+  
+  '''
+# ---
+# name: test_every_command_as_a_user_sees_it[maniac why marked]
+  '''
+  $ maniac why marked
+  [exit 0]
+  PATH     read from `/bin/sh -lc` started in $HOME: <n> directories
+           <n> more this shell has are left out; none holds this tool
+  Binary   login $PATH reaches <npm>/bin/marked
+           installed by npm as marked (16.4.2), root <npm>/lib/node_modules/marked
+  Page     maniac's (shipped): documents 16.4.2, installed 16.4.2: ok
+  Sources  shipped: <npm>/lib/node_modules/marked/man/marked.1
+  install  already up to date (16.4.2); --force reinstalls it (shipped)
+  
+  '''
+# ---
+# name: test_every_command_as_a_user_sees_it[maniac why nowhere-xyz]
+  '''
+  $ maniac why nowhere-xyz
+  [exit 0]
+  PATH     read from `/bin/sh -lc` started in $HOME: <n> directories
+           <n> more this shell has are left out; none holds this tool
+  Binary   not on the login $PATH
+  Page     `man` finds no page for it
+  Sources  none tried: not installed globally
+  install  refused: not installed globally
+  
+  '''
+# ---
