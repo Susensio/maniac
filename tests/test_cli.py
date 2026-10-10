@@ -43,7 +43,14 @@ def _plain_console(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _listed_commands(output: str) -> list[str]:
-    """The command names Typer's Commands panel lists, in order."""
+    """The command names Typer's Commands panel lists, in order.
+
+    Unstyled first: Typer forces colour when `GITHUB_ACTIONS` is set, so CI
+    sees escape codes a local run does not.
+    """
+    import click
+
+    output = click.unstyle(output)
     panel = output[output.index("─ Commands ─") :]
     return [
         line[2:].split()[0]
