@@ -1118,7 +1118,7 @@ def test_classify_source_keeps_vendor_provenance_when_manifest_owns_the_page(
     )
 
     assert _classification_pair(None, None, "tool", cfg) == (
-        ActionState.OK,
+        ActionState.UNKNOWN,
         PageSource.VENDOR,
     )
 
@@ -1201,7 +1201,7 @@ def test_classify_source_is_unverified_when_resolved_page_is_external(
     inst = _installation(root=tmp_path / "install_root")
 
     assert _classification_pair(_FakeProvider(), inst, "tool", cfg) == (
-        ActionState.UNVERIFIED,
+        ActionState.UNKNOWN,
         PageSource.SYSTEM,
     )
 
@@ -1236,7 +1236,7 @@ def test_classify_managed_page_can_be_compressed(
     )
 
     assert _classification_pair(None, None, "tool", cfg) == (
-        ActionState.OK,
+        ActionState.UNKNOWN,
         PageSource.VENDOR,
     )
 
@@ -1271,7 +1271,7 @@ def test_classify_managed_page_matched_through_a_symlink(
     )
 
     assert _classification_pair(None, None, "tool", cfg) == (
-        ActionState.OK,
+        ActionState.UNKNOWN,
         PageSource.VENDOR,
     )
 
@@ -1508,10 +1508,11 @@ def test_classify_ok_when_mise_latest_and_binary_advance_together(
     )
 
 
-def test_classify_ok_when_entry_records_no_version(
+def test_classify_unknown_when_entry_records_no_version(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """`local_lib` never reports a version; absent evidence reads `ok`, permanently."""
+    """`local_lib` never reports a version: with nothing recorded, the page
+    reads `unknown` (CONTRACT.md rule 4), never `ok` by default."""
     cfg = _config(tmp_path)
     cfg.man_dir.mkdir(parents=True)
     installed = cfg.man_dir / "tool.1"
@@ -1534,12 +1535,12 @@ def test_classify_ok_when_entry_records_no_version(
     inst = _installation(version="2.0.0")
 
     assert _classification_pair(None, inst, "tool", cfg) == (
-        ActionState.OK,
+        ActionState.UNKNOWN,
         PageSource.MANIAC,
     )
 
 
-def test_classify_ok_when_installation_version_is_unknown(
+def test_classify_unknown_when_installation_version_is_unknown(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     cfg = _config(tmp_path)
@@ -1564,7 +1565,7 @@ def test_classify_ok_when_installation_version_is_unknown(
     inst = _installation(version=None)
 
     assert _classification_pair(None, inst, "tool", cfg) == (
-        ActionState.OK,
+        ActionState.UNKNOWN,
         PageSource.MANIAC,
     )
 
@@ -1650,11 +1651,11 @@ def test_classify_ok_when_unclaimed_binarys_own_version_matches(
     assert asked == [[str(resolved)]]
 
 
-def test_classify_ok_when_unclaimed_binarys_version_is_unavailable(
+def test_classify_unknown_when_unclaimed_binarys_version_is_unavailable(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """`get_version` returning `None` is absence of evidence, not evidence of
-    staleness (ADR-0018's positive-evidence rule) -- never `outdated`."""
+    """`get_version` returning `None` is absence of evidence: never
+    `outdated`, and not `ok` either -- `unknown` (CONTRACT.md rule 4)."""
     cfg = _config(tmp_path)
     cfg.man_dir.mkdir(parents=True)
     installed = cfg.man_dir / "tool.1"
@@ -1683,7 +1684,7 @@ def test_classify_ok_when_unclaimed_binarys_version_is_unavailable(
     )
 
     assert _classification_pair(None, None, "tool", cfg) == (
-        ActionState.OK,
+        ActionState.UNKNOWN,
         PageSource.MANIAC,
     )
 
@@ -1734,7 +1735,7 @@ def test_classify_no_subprocess_for_unowned_or_versionless_row(
         lambda man_bin, tool_name: versionless,
     )
     assert _classification_pair(None, None, "versionless", cfg) == (
-        ActionState.OK,
+        ActionState.UNKNOWN,
         PageSource.MANIAC,
     )
 
@@ -1758,7 +1759,7 @@ def test_classify_unverified_when_external_page_has_no_provenance(
     inst = _installation(version="2.0.0")
 
     assert _classification_pair(_FakeProvider(), inst, "tool", cfg) == (
-        ActionState.UNVERIFIED,
+        ActionState.UNKNOWN,
         PageSource.SYSTEM,
     )
 
@@ -1814,7 +1815,7 @@ def test_classify_surfaces_the_provable_external_owner(
 
     result = classify(_candidate(_FakeProvider(), _installation(), "python"), cfg)
 
-    assert result.state is ActionState.UNVERIFIED
+    assert result.state is ActionState.UNKNOWN
     assert result.source is PageSource.SYSTEM
     assert result.owning_package == "python3.12-minimal"
 
@@ -2062,7 +2063,7 @@ def test_classify_drift_false_when_link_is_sound(
     result = classify(_candidate(None, None, "tool"), cfg)
 
     assert result.drift is False
-    assert result.state is ActionState.OK
+    assert result.state is ActionState.UNKNOWN
 
 
 def test_classify_drift_false_for_pre_target_entry_with_page_present(

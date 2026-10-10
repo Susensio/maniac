@@ -110,7 +110,7 @@ def _unclaimed_version(tool: str, cfg: Config) -> str | None:
     return get_version([str(path)], config=cfg) if path is not None else None
 
 
-def _current_version(
+def current_version(
     candidate: Candidate, entry: manifest.Entry, cfg: Config
 ) -> str | None:
     """The installed version a managed page is compared with.
@@ -128,22 +128,42 @@ def _current_version(
     return inst.version if inst is not None else _unclaimed_version(candidate.tool, cfg)
 
 
+def managed_page_state(
+    documented: str | None,
+    installed: str | None,
+    *,
+    provider_target_current: bool,
+) -> ActionState:
+    """A managed page's state, from evidence only (CONTRACT.md rule 4).
+
+    A page linked to a provider's own target that still follows the
+    installation is current whatever was recorded (ADR-0029). Otherwise it
+    is `ok` only when the version it documents and the installed one are
+    both known and equal; `outdated` when both are known and differ; and
+    `unknown` when either is missing -- never `ok` by default.
+    """
+    if provider_target_current:
+        return ActionState.OK
+    if documented is None or installed is None:
+        return ActionState.UNKNOWN
+    return ActionState.OK if documented == installed else ActionState.OUTDATED
+
+
 def _managed_page_state(
     candidate: Candidate, cfg: Config, evidence: _PageEvidence
 ) -> ActionState:
-    """Return a managed page's state from positive version evidence only."""
+    """Return a managed page's state (CONTRACT.md rule 4)."""
     entry = evidence.entry
     assert entry is not None
-    if entry.version is None:
-        return ActionState.OK
-    current_version = _current_version(candidate, entry, cfg)
-    if (
-        current_version is not None
-        and entry.version != current_version
-        and not evidence.provider_target_current
-    ):
-        return ActionState.OUTDATED
-    return ActionState.OK
+    # Nothing recorded to compare with: no need to ask the binary.
+    installed = (
+        current_version(candidate, entry, cfg) if entry.version is not None else None
+    )
+    return managed_page_state(
+        entry.version,
+        installed,
+        provider_target_current=evidence.provider_target_current,
+    )
 
 
 def _external_page_state(
@@ -174,7 +194,7 @@ def _external_page_state(
     state = {
         ExternalPageFreshness.MATCH: ActionState.OK,
         ExternalPageFreshness.MISMATCH: ActionState.OUTDATED,
-        ExternalPageFreshness.UNVERIFIED: ActionState.UNVERIFIED,
+        ExternalPageFreshness.UNVERIFIED: ActionState.UNKNOWN,
     }[freshness]
     return state, verification.owner
 

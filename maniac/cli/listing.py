@@ -1,7 +1,7 @@
 """`list`: the terminal face of `maniac.listing`, and nothing else.
 
 Every reachability fact comes from the inventory service; this module only
-selects, groups and draws. `--unverified`/`--outdated`/
+selects, groups and draws. `--unknown`/`--outdated`/
 `--available`/`--missing` filters the State axis and `--managed` filters
 manifest ownership independently of page provenance. Filters union within
 an axis and intersect across axes; no flags means no filtering. There is
@@ -35,7 +35,7 @@ from .render import _repo_cell
 # needs a free reinstall or install, red needs an LLM.
 _STATE_COLOR: dict[ActionState, str] = {
     ActionState.OK: "green",
-    ActionState.UNVERIFIED: "yellow",
+    ActionState.UNKNOWN: "yellow",
     ActionState.OUTDATED: "yellow",
     ActionState.AVAILABLE: "yellow",
     ActionState.MISSING: "red",
@@ -217,7 +217,7 @@ def _upstream_budget(
 
     Upstream yields first because it is the one column whose ellipsis is
     expected; letting the cap push the table past the terminal makes Rich
-    shrink State instead, truncating `unverified` and `checking…`.
+    shrink State instead, truncating `unknown` and `checking…`.
     """
     fixed = (
         _tool_column_width(tool_labels)
@@ -258,7 +258,7 @@ def _source_cell(row: ToolRow) -> Any:
 def _selected_states(
     *,
     outdated: bool,
-    unverified: bool,
+    unknown: bool,
     available: bool,
     missing: bool,
 ) -> frozenset[ActionState]:
@@ -267,7 +267,7 @@ def _selected_states(
         state
         for state, flag in (
             (ActionState.OUTDATED, outdated),
-            (ActionState.UNVERIFIED, unverified),
+            (ActionState.UNKNOWN, unknown),
             (ActionState.AVAILABLE, available),
             (ActionState.MISSING, missing),
         )
@@ -642,10 +642,10 @@ def list_tools(
             help="Only rows positively proven to document another version.",
         ),
     ] = False,
-    unverified: Annotated[
+    unknown: Annotated[
         bool,
         typer.Option(
-            "--unverified",
+            "--unknown",
             help="Only rows whose external page cannot be proven current.",
         ),
     ] = False,
@@ -670,7 +670,7 @@ def list_tools(
     require_login_path()
     states = _selected_states(
         outdated=outdated,
-        unverified=unverified,
+        unknown=unknown,
         available=available,
         missing=missing,
     )

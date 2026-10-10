@@ -3,7 +3,7 @@
 | state      | means                                                                    |
 |------------|--------------------------------------------------------------------------|
 | ok         | a page resolves through `man` now and is current by local evidence       |
-| unverified | an external page resolves but its matching package cannot be proven      |
+| unknown    | a page resolves but nothing proves which version it documents           |
 | outdated   | a page resolves, and positive evidence says it documents another version |
 | available  | nothing resolves, but a page can be had without an LLM                   |
 | missing    | nothing resolves and no free page is known                               |

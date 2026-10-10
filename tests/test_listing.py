@@ -599,13 +599,13 @@ def test_streaming_table_keeps_column_geometry_for_long_upstreams() -> None:
     assert "…" in output.getvalue()
 
 
-def test_streaming_table_renders_unverified_without_truncation() -> None:
+def test_streaming_table_renders_unknown_without_truncation() -> None:
     rows = [
         ToolRow(
             "tool",
             "tool",
             "fake",
-            ActionState.UNVERIFIED,
+            ActionState.UNKNOWN,
             PageSource.SYSTEM,
             None,
         )
@@ -616,7 +616,7 @@ def test_streaming_table_renders_unverified_without_truncation() -> None:
     Console(file=output, force_terminal=True, no_color=True, width=80).print(table)
 
     assert table.columns[1].width == _STATE_COLUMN_WIDTH
-    assert "unverified" in output.getvalue()
+    assert "unknown" in output.getvalue()
     assert "unverifi…" not in output.getvalue()
 
 
@@ -1309,7 +1309,7 @@ def test_filter_rows_unions_within_the_state_axis() -> None:
         rows,
         states=_selected_states(
             outdated=False,
-            unverified=False,
+            unknown=False,
             available=True,
             missing=True,
         ),
@@ -1319,9 +1319,9 @@ def test_filter_rows_unions_within_the_state_axis() -> None:
     assert [row.tool for row in filtered] == ["avail", "miss"]
 
 
-def test_filter_rows_selects_unverified_rows() -> None:
+def test_filter_rows_selects_unknown_rows() -> None:
     rows = [
-        _row("unproven", ActionState.UNVERIFIED, PageSource.SYSTEM),
+        _row("unproven", ActionState.UNKNOWN, PageSource.SYSTEM),
         _row("current", ActionState.OK, PageSource.SYSTEM),
     ]
 
@@ -1329,7 +1329,7 @@ def test_filter_rows_selects_unverified_rows() -> None:
         rows,
         states=_selected_states(
             outdated=False,
-            unverified=True,
+            unknown=True,
             available=False,
             missing=False,
         ),
@@ -1350,7 +1350,7 @@ def test_filter_rows_intersects_across_axes() -> None:
         rows,
         states=_selected_states(
             outdated=True,
-            unverified=False,
+            unknown=False,
             available=False,
             missing=False,
         ),
@@ -1390,7 +1390,7 @@ def test_cli_list_pipe_emits_exactly_the_filtered_set(
     assert res.output == "gum\n"
 
 
-def test_cli_list_pipe_unverified_emits_exactly_the_filtered_set(
+def test_cli_list_pipe_unknown_emits_exactly_the_filtered_set(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     monkeypatch.setattr(
@@ -1415,7 +1415,7 @@ def test_cli_list_pipe_unverified_emits_exactly_the_filtered_set(
         ],
     )
 
-    res = runner.invoke(app, ["list", "--unverified"])
+    res = runner.invoke(app, ["list", "--unknown"])
 
     assert res.exit_code == 0
     assert res.output == "tool\n"
@@ -1584,7 +1584,7 @@ def test_system_source_shows_owning_package_when_provable() -> None:
         "python",
         "python",
         "mise",
-        ActionState.UNVERIFIED,
+        ActionState.UNKNOWN,
         PageSource.SYSTEM,
         None,
         owning_package="python3.12-minimal",
@@ -1599,9 +1599,7 @@ def test_system_source_shows_owning_package_when_provable() -> None:
 
 
 def test_system_source_without_provable_owner_still_shows_plain_system() -> None:
-    row = ToolRow(
-        "tool", "tool", "fake", ActionState.UNVERIFIED, PageSource.SYSTEM, None
-    )
+    row = ToolRow("tool", "tool", "fake", ActionState.UNKNOWN, PageSource.SYSTEM, None)
     output = io.StringIO()
     Console(file=output, force_terminal=True, color_system="standard").print(
         _source_cell(row)
@@ -1656,7 +1654,7 @@ def test_render_list_colors_the_state_column_per_category() -> None:
                 tool="unproven",
                 package="unproven",
                 provider="mise",
-                state=ActionState.UNVERIFIED,
+                state=ActionState.UNKNOWN,
                 source=PageSource.SYSTEM,
                 upstream=None,
             ),
@@ -1691,7 +1689,7 @@ def test_render_list_colors_the_state_column_per_category() -> None:
     assert "\x1b[33mavailable\x1b[0m" in output
     assert "\x1b[31mmissing\x1b[0m" in output
     assert "\x1b[32mok\x1b[0m" in output
-    assert "\x1b[33munverified\x1b[0m" in output
+    assert "\x1b[33munknown\x1b[0m" in output
     assert "\x1b[33moutdated\x1b[0m" in output
 
 

@@ -16,7 +16,8 @@ class ActionState(Enum):
     """The action-ladder state a binary's manpage reachability puts it in (ADR-0026)."""
 
     OK = "ok"
-    UNVERIFIED = "unverified"
+    UNKNOWN = "unknown"
+    """A page is reachable but no evidence proves which version it documents (CONTRACT.md rule 4)."""
     OUTDATED = "outdated"
     AVAILABLE = "available"
     MISSING = "missing"
