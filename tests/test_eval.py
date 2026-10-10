@@ -724,6 +724,7 @@ def test_cli_eval_smoke(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None
     res = runner.invoke(
         app,
         [
+            "dev",
             "eval",
             "tool",
             "--manpage-file",
@@ -738,6 +739,6 @@ def test_cli_eval_smoke(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None
 
 
 def test_cli_eval_missing_files() -> None:
-    res = runner.invoke(app, ["eval", "nonexistent_binary_xyz_123"])
+    res = runner.invoke(app, ["dev", "eval", "nonexistent_binary_xyz_123"])
     assert res.exit_code == 1
     assert "Error: Manpage not found" in res.output

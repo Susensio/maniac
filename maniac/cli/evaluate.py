@@ -18,7 +18,8 @@ import typer
 from ..config import Config
 from ..exceptions import ManiacError
 from ..models import ComparisonResult, EvaluationResult
-from . import app, console, get_config
+from . import console, get_config
+from .dev import dev
 from .options import ModelOption
 from .render import _render_comparison, _render_eval_table
 
@@ -182,7 +183,7 @@ def _render_compare_outcome(target_console: Any, outcome: CompareOutcome) -> Non
     )
 
 
-@app.command("eval")
+@dev.command("eval")
 def eval_cmd(
     ctx: typer.Context,
     tool: Annotated[str, typer.Argument(help="Name of the tool to evaluate.")],

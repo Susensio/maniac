@@ -46,7 +46,7 @@ audit:
 
 # Run the model x tool benchmark harness. Calls a real LLM -- costs money per run, not part of `check`.
 bench *args:
-    uv run python -m maniac.bench {{ args }}
+    uv run maniac dev bench {{ args }}
 
 # Cut a release: bump version, changelog, commit, tag, push.
 release *args: check

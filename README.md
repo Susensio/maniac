@@ -217,11 +217,11 @@ Run the automated LLM-as-a-Judge evaluation against the extracted documentation 
 
 ```bash
 # Grade the generated manual (0-100 score with category breakdown)
-maniac eval howdoi
-maniac eval uv --min-score 80
+maniac dev eval howdoi
+maniac dev eval uv --min-score 80
 
 # Judge the generated manual head-to-head against the one already installed
-maniac eval howdoi --against-installed
+maniac dev eval howdoi --against-installed
 ```
 
 ```text

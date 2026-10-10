@@ -42,13 +42,28 @@ def _plain_console(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
-def test_cli_help() -> None:
+def _listed_commands(output: str) -> list[str]:
+    """The command names a Typer help panel lists, in order."""
+    return [
+        line.split()[1]
+        for line in output.splitlines()
+        if line.startswith("│ ") and len(line.split()) > 2 and line.split()[1].isalpha()
+    ]
+
+
+def test_cli_help_lists_the_user_commands_and_hides_dev() -> None:
     result = runner.invoke(app, ["--help"])
+
     assert result.exit_code == 0
-    assert "Maniac:" in result.output
-    for command in ("install", "update", "list", "scan", "why", "remove", "eval"):
-        assert command in result.output
-    assert "source" not in result.output
+    commands = _listed_commands(result.output)
+    for command in ("install", "update", "remove", "list", "scan", "why"):
+        assert command in commands
+    assert "eval" not in commands
+    assert "dev" not in commands
+
+    dev = runner.invoke(app, ["dev", "--help"])
+    assert dev.exit_code == 0
+    assert {"eval", "bench"} <= set(_listed_commands(dev.output))
 
 
 def test_importing_cli_does_not_construct_config() -> None:

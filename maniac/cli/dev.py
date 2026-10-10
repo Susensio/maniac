@@ -1,22 +1,27 @@
-"""CLI entry point for the benchmark harness: `python -m maniac.bench`."""
+"""`maniac dev`: commands for working on maniac itself, left out of the main help.
+
+Both call a real LLM and cost money per run. `eval` registers here from its
+own module; the benchmark is defined below.
+"""
 
 from typing import Annotated
 
 import typer
 
-from ..config import Config
-from .harness import DEFAULT_MODELS, DEFAULT_TOOLS, run_benchmark
+from . import app
 
-app = typer.Typer(
+dev = typer.Typer(
     help=(
-        "Benchmark manpage generation across models and tools. "
-        "Calls a real LLM for both generation and judging -- costs money per run."
+        "Commands for working on maniac: judge a generated page, benchmark "
+        "models. Each calls a real LLM and costs money per run."
     ),
+    no_args_is_help=True,
 )
+app.add_typer(dev, name="dev", hidden=True)
 
 
-@app.command()
-def main(
+@dev.command("bench")
+def bench(
     tool: Annotated[
         list[str] | None,
         typer.Option(
@@ -34,16 +39,16 @@ def main(
         int, typer.Option(help="Retry attempts per generation/evaluation step.")
     ] = 2,
 ) -> None:
-    """Generate and judge a manpage for every (model, tool) combination."""
+    """Generate and judge a page for every (model, tool) combination."""
+    from ..bench.harness import DEFAULT_MODELS, DEFAULT_TOOLS, run_benchmark
+    from ..config import Config
+
     cfg = Config()
-    tools = tool or DEFAULT_TOOLS
     models = (
         [(m, cfg.resolve_model(m), cfg.resolve_reasoning_effort()) for m in model]
         if model
         else DEFAULT_MODELS
     )
-    run_benchmark(tools=tools, models=models, config=cfg, retries=retries)
-
-
-if __name__ == "__main__":
-    app()
+    run_benchmark(
+        tools=tool or DEFAULT_TOOLS, models=models, config=cfg, retries=retries
+    )

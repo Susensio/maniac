@@ -305,6 +305,7 @@ def test_cli_eval_against_installed_smoke(
     res = runner.invoke(
         app,
         [
+            "dev",
             "eval",
             "tool",
             "--against-installed",

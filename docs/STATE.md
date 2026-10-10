@@ -54,7 +54,7 @@ When a phase lands, it updates the README for what became live and marks the ADR
 - [x] `--no-synthesize` becomes `--no-generate`, one shared option for `install` and `update`.
 - [ ] Help text without internal terms (tiers, providers, "positively proven"), and without the stale `$(maniac status)`.
 - [ ] `install`'s output carries only what the user needs: diagnostic log lines ("Synthesis source material found") move behind `-v`, or into `why`.
-- [ ] `maniac dev` (hidden) holds `eval` and the benchmark.
+- [x] `maniac dev` (hidden) holds `eval` and the benchmark (`maniac dev bench`, was `python -m maniac.bench`; `just bench` calls it).
 - [ ] README rewritten around the contract.
 
 ## Decisions taken (2026-10-09)
