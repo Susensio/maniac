@@ -50,6 +50,14 @@ def explain(tool: str, config: Config) -> Explanation:
     binary, claim, binary_path, refusal = _binary_section(tool, config)
     page = _page_section(tool, claim, config)
     sources, verdict = _sources_section(tool, claim, binary_path, refusal, config)
+    if refusal is None:
+        from .install import already_current
+
+        # `install` checks this before any source (rule 3: `why` says what
+        # `install` would do, not what it would do with `--force`).
+        current = already_current(tool, config)
+        if current is not None:
+            verdict = f"{current.detail} ({verdict})"
     return Explanation(tool, [path, binary, page, sources], verdict)
 
 

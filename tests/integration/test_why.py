@@ -76,6 +76,13 @@ def test_why_explains_a_wrapper_before_and_after_its_page_is_installed(
         "maniac's (generated): documents faketool 2.3.1, installed faketool 2.3.1: ok"
         in after
     )
+    # What `install` would do now: leave it alone, as it does.
+    assert (
+        "install already up to date (faketool 2.3.1); --force reinstalls it (generated)"
+        in after
+    )
+    again = runner.invoke(app, ["install", "faketool"])
+    assert "already up to date (faketool 2.3.1)" in _flat(again.output)
 
 
 def test_why_finds_the_page_npm_shipped(

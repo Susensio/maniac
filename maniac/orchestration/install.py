@@ -161,7 +161,7 @@ def run_install(
             tool = replace(tool, pinned=True)
 
     if not force and bin_dir is None:
-        current = _already_current(tool_name, cfg)
+        current = already_current(tool_name, cfg)
         if current is not None:
             return replace(current, resolution=_resolution(tool, bin_dir=None))
 
@@ -179,7 +179,7 @@ def run_install(
     )
 
 
-def _already_current(tool_name: str, cfg: Config) -> InstallOutcome | None:
+def already_current(tool_name: str, cfg: Config) -> InstallOutcome | None:
     """maniac's page for `tool_name`, when `list` reads it `ok` for this copy.
 
     Installing it again would redo the work -- for a generated page, another
