@@ -490,9 +490,8 @@ def _refuse_companion_uninstall(tool_name: str, entries: dict[str, Entry]) -> No
     if entry.group not in entries:
         return
     raise UninstallRefused(
-        f"'{tool_name}' is part of '{entry.group}'s installation (bundled "
-        f"in the same release, ADR-0042) -- run 'maniac remove "
-        f"{entry.group}' to remove the whole group."
+        f"{tool_name}   not removed: its page came with {entry.group}'s, in the "
+        f"same release; `maniac remove {entry.group}` removes them together"
     )
 
 

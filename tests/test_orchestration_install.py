@@ -1346,7 +1346,7 @@ def test_run_install_refuses_synthesis_after_a_non_definitive_repository_probe(
 
     message = str(excinfo.value)
     assert "owner/tool" in message
-    assert "tier-2" in message
+    assert "did not complete" in message
     assert "--no-generate" not in message
     assert "`maniac why tool`" in message
 

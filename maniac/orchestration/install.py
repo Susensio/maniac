@@ -334,12 +334,13 @@ def _select_page(
             ),
         )
     if not repository_definitive:
+        # The same words `--no-generate` uses, plus why nothing was generated:
+        # a page generated over a failed check could hide the real one.
         raise InstallRefused(
-            f"Could not confirm whether {upstream} has a manpage for '{tool_name}' -- "
-            "the tier-2 repository check failed rather than returning a "
-            "definitive answer, so synthesizing over it could silently paper "
-            "over a network or git failure. Rerun once the check can complete; "
-            f"`maniac why {tool_name}` shows what was tried."
+            f"the check for an upstream page in {upstream} did not complete "
+            "(network or git?), so whether one exists is unknown and maniac "
+            "will not generate one in its place; rerun once the check can "
+            f"complete, or see `maniac why {tool_name}`"
         )
 
     from .pipeline import synthesize  # deferred: tier 3 only, never on --no-generate

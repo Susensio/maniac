@@ -1051,7 +1051,7 @@ def test_uninstalling_a_companion_refuses_and_redirects_to_the_primary(
     cfg = _eza_config(tmp_path)
     installed = _install_eza_release(tmp_path, cfg)
 
-    with pytest.raises(UninstallRefused, match=r"eza_colors.*'eza'"):
+    with pytest.raises(UninstallRefused, match=r"eza_colors.*`maniac remove eza`"):
         uninstall_manpage("eza_colors", config=cfg)
 
     for path in installed.values():

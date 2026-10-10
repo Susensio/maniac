@@ -79,7 +79,7 @@
   marked   installed: shipped page (16.4.2)
     documents <npm>/bin/marked (npm, 16.4.2)
   
-  cowsay   not installed: Could not confirm whether piuccio/cowsay has a manpage for 'cowsay' -- the tier-2 repository check failed rather than returning a definitive answer, so synthesizing over it could silently paper over a network or git failure. Rerun once the check can complete; `maniac why cowsay` shows what was tried.
+  cowsay   not installed: the check for an upstream page in piuccio/cowsay did not complete (network or git?), so whether one exists is unknown and maniac will not generate one in its place; rerun once the check can complete, or see `maniac why cowsay`
   
   1 of 3 not installed.
   

@@ -722,9 +722,8 @@ def test_cli_remove_refused_companion(monkeypatch: pytest.MonkeyPatch) -> None:
 
     def _raise(tool: str, config: object) -> UninstallResult:
         raise UninstallRefused(
-            f"'{tool}' is part of 'eza's installation (bundled in the same "
-            f"release, ADR-0042) -- run 'maniac remove eza' to remove "
-            f"the whole group."
+            f"{tool}   not removed: its page came with eza's, in the same "
+            "release; `maniac remove eza` removes them together"
         )
 
     monkeypatch.setattr("maniac.installer.uninstall_manpage", _raise)
