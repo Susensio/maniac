@@ -203,11 +203,6 @@ class Config:
     )
     llm_api_key: str | None = cast(str | None, _UNSET)
     llm_reasoning_effort: str | None = cast(str | None, _UNSET)
-    max_arg_limit: int = field(
-        default_factory=lambda: cast(dict[str, int], _load_defaults()["limits"])[
-            "max_arg_limit"
-        ]
-    )
     max_total_doc_chars: int = field(
         default_factory=lambda: cast(dict[str, int], _load_defaults()["limits"])[
             "max_total_doc_chars"

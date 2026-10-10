@@ -3,8 +3,8 @@
 ADR-0016's tiers and tier-3 synthesis all need the same facts about one
 binary: which provider claims it, where it is installed, at what version,
 and which repository documents it. Resolving those once keeps ADR-0019's
-version-match evidence inside a single flow, instead of tier 3 asking
-`find_installation` and `discover_repo` again for answers tiers 1-2 already
+version-match evidence inside a single flow, instead of tier 3 resolving
+the installation and its repository again for answers tiers 1-2 already
 had.
 """
 

@@ -91,6 +91,6 @@ def test_clone_url_local_source_is_never_linked() -> None:
 
 
 def test_clone_url_unresolved_binary_registry_match_is_not_linked() -> None:
-    """`discover_repo`'s fallback sets target == name with no "/" at all."""
+    """A bare-name registry match (target == name, no "/") is never linked."""
     source = RepoSource(name="rg", target="rg", is_local=False)
     assert source.clone_url is None

@@ -483,12 +483,3 @@ def _clean_git_url(url: str) -> str:
     if match:
         return match.group(1)
     return url
-
-
-def _extract_mise_tool_id(path: Path) -> str | None:
-    parts = path.parts
-    if "installs" in parts:
-        idx = parts.index("installs")
-        if idx + 1 < len(parts):
-            return parts[idx + 1]
-    return None

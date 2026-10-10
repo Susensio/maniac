@@ -12,9 +12,8 @@ from dataclasses import replace
 from enum import Enum
 from pathlib import Path
 
-from ..config import Config
 from ..exceptions import MalformedToolMetadata, NotGloballySelected, ShimRunsNothing
-from ..models import Installation, RepoSource
+from ..models import Installation
 from .pathcache import path_dirs, resolve_bin_path, which_here
 from .providers.base import Provider
 from .providers.mise import is_shim, shim_target, shim_target_here
@@ -66,7 +65,7 @@ def find_installation(
 ) -> tuple[Provider, Installation] | None:
     """Return the provider and `Installation` a binary resolves to, if any.
 
-    Shares `discover_repo`'s own bin-path resolution but stops at the
+    Resolves the bin path the same way every caller does, but stops at the
     `Installation` itself rather than resolving its source -- ADR-0016's
     tier 1 (install root) and tier 2 (repository, version matched) both
     need the install root and version directly, not only what
@@ -86,26 +85,6 @@ def installation_at(bin_path: Path) -> tuple[Provider, Installation] | None:
         return _detect_via_registry(bin_path, here=True)
     except _DiscoveryError:
         return None
-
-
-def discover_repo(
-    binary_name: str, bin_dir: str | Path | None = None, *, config: Config
-) -> RepoSource | None:
-    """Resolve a binary's upstream source from its provider-owned installation.
-
-    None means unresolvable: no provider (ADR-0015) detected an
-    installation behind this binary, so nothing installation-derived backs
-    a source for it. There is no bare-name fallback -- ADR-0015 rules that
-    "a tool with no provider is reported as unresolvable and nothing is
-    generated for it", closing the gap where this used to return
-    `RepoSource(name=binary, target=binary)`, reachable by tier-3 synthesis
-    and liable to synthesize a page for a genuinely unresolved tool.
-    """
-    found = find_installation(binary_name, bin_dir=bin_dir)
-    if found is None:
-        return None
-    provider, inst = found
-    return registry.resolve_source(inst, config=config, provider=provider)
 
 
 class Skip(Enum):

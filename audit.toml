@@ -98,5 +98,5 @@ ignore_names = [
   "clear_login_path",
   "transient",
 ]
-ceiling = 9
+ceiling = 0
 target = 0

@@ -582,8 +582,6 @@ def evaluate_manpage(
         config=config,
     )
 
-    result.deterministic_passed = det_passed
-    result.deterministic_defects = det_defects
     if cov is not None:
         result.coverage = cov
 

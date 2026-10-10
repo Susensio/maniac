@@ -50,12 +50,12 @@ A4 carries the one intended behaviour change (pruning), in its own commit, test 
 - [x] `tools/audit.py`, `audit.toml`, `just audit` (ratchet) and `just audit-suggest` (complexipy's refactor hints, advisory); `audit` joins `check`.
 - [x] CLI output snapshots with syrupy: 27 commands through the real CLI, the behaviour every later phase is checked against; `just snapshots-update`.
 
-### A1 Dead code: next
+### A1 Dead code: done (2026-10-10)
 
-- [ ] Delete what nothing runs: `Config.max_arg_limit`, `EvaluationResult.deterministic_passed/defects`, `InstallOutcome.source_path/pipeline`, `discovery._extract_mise_tool_id`, `resolution.discover_repo`; tests that exist only to call them go, tests that cover behaviour through them call the live path instead.
+- [x] Delete what nothing runs: `Config.max_arg_limit`, `EvaluationResult.deterministic_passed/defects`, `InstallOutcome.source_path/pipeline`, `discovery._extract_mise_tool_id`, `resolution.discover_repo`; tests that exist only to call them go, tests that cover behaviour through them call the live path instead.
 - Done when `dead_code` is 0.
 
-### A2 One resolution seam
+### A2 One resolution seam: next
 
 - [ ] `locate(tool)` answers which binary the login `$PATH` reaches, through a mise shim, which installer claims it, at what version, whether it is a system binary, and the copy this shell runs if another, as one value: found, not on `$PATH`, a shim that runs nothing, not globally selected, or unreadable metadata. No exception escapes it.
 - [ ] `install`, `why`, `list` and `scan` map that value to what they print; `enumerate_installations` becomes a walk over the login `$PATH` calling `locate`.
@@ -90,3 +90,4 @@ A4 carries the one intended behaviour change (pruning), in its own commit, test 
 
 - 2026-10-10: A0 landed: the review, this plan, `just audit` with today's numbers as ceilings.
 - 2026-10-10: CLI snapshots added (syrupy) instead of an ad-hoc before/after script: they live in the suite, run in CI, and outlast the refactor. Reading them found one wording leak to fix before A1: the refusal to generate over an incomplete upstream check still says "tier-2 repository check".
+- 2026-10-10: A1 done: dead code deleted (`dead_code` 9 to 0). Started by a session that stalled mid-edit, its deletion of `discover_repo` having also taken the `Skip` class with it; finished here. The three `discover_repo` tests now assert the same behaviour through `find_installation`.

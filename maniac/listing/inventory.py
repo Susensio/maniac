@@ -108,8 +108,7 @@ class InventoryObserver:
 def named_candidate(tool: str) -> Candidate:
     """Resolve one tool by name; a tool nothing claims still gets a candidate.
 
-    No `resolution.discover_repo(tool)` fallback when nothing is found: it
-    shares `find_installation`'s own bin-path resolution. A tool whose
+    No bare-name repository fallback when nothing is found (ADR-0015). A tool whose
     metadata is unreadable, or refused as not globally selected, carries
     why in `Candidate.error`.
     """

@@ -18,7 +18,6 @@ from maniac.sources import discovery, pathcache, resolution
 from maniac.sources.discovery import (
     _check_mise_config,
     _clean_git_url,
-    _extract_mise_tool_id,
     _load_mise_registry,
     _mise_config_data,
     _mise_config_files,
@@ -27,7 +26,7 @@ from maniac.sources.discovery import (
     _resolve_from_mise,
     _run_mise,
 )
-from maniac.sources.resolution import discover_repo, enumerate_installations
+from maniac.sources.resolution import enumerate_installations, find_installation
 
 
 def _compressed_mise_registry(entries: dict[str, bytes]) -> bytes:
@@ -47,14 +46,6 @@ def test_clean_git_url() -> None:
         _clean_git_url("https://github.com/helix-editor/helix") == "helix-editor/helix"
     )
     assert _clean_git_url("https://github.com/d4nj1/TLPUI/") == "d4nj1/TLPUI"
-
-
-def test_extract_mise_tool_id() -> None:
-    p = Path("/home/user/.local/share/mise/installs/glow/2.1.2/glow")
-    assert _extract_mise_tool_id(p) == "glow"
-
-    p_non_mise = Path("/usr/local/bin/something")
-    assert _extract_mise_tool_id(p_non_mise) is None
 
 
 def test_check_mise_config_tool_alias(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -254,17 +245,16 @@ def test_run_mise_scrubs_activation_vars_but_keeps_user_mise_config(
     assert "MISE_SHELL" not in observed_env
 
 
-def test_discover_repo_fallback(monkeypatch, tmp_path: Path) -> None:
+def test_an_unresolvable_binary_is_not_a_bare_name_guess(
+    monkeypatch, tmp_path: Path
+) -> None:
     """A binary nothing on disk resolves to is unresolvable, not a bare-name guess."""
     monkeypatch.setattr(discovery, "_load_mise_registry", dict)
     monkeypatch.setenv("PATH", str(tmp_path))
-    assert (
-        discover_repo("nonexistent_unknown_tool", bin_dir=tmp_path, config=Config())
-        is None
-    )
+    assert find_installation("nonexistent_unknown_tool", bin_dir=tmp_path) is None
 
 
-def test_discover_repo_has_no_implicit_local_bin_default(
+def test_resolution_has_no_implicit_local_bin_default(
     monkeypatch, tmp_path: Path
 ) -> None:
     """With no explicit `bin_dir`, resolution is the inherited `$PATH`
@@ -278,16 +268,16 @@ def test_discover_repo_has_no_implicit_local_bin_default(
     monkeypatch.setenv("HOME", str(fake_home))
     monkeypatch.setattr(pathcache, "which", lambda name: None)
 
-    assert discover_repo("tool", config=Config()) is None
+    assert find_installation("tool") is None
 
 
-def test_discover_repo_does_not_use_the_registry_without_an_installation(
+def test_resolution_does_not_use_the_registry_without_an_installation(
     monkeypatch, tmp_path: Path
 ) -> None:
     """ADR-0015's ruling on Stage 2's gap: name-only registry matching is gone
     everywhere. A binary with no detected installation stays unresolved even
-    where the registry would have matched it by bare name -- this is
-    `discover_repo("envsubst")` ceasing to return "a8m/envsubst".
+    where the registry would have matched it by bare name: "envsubst" no
+    longer resolves to "a8m/envsubst".
     """
     monkeypatch.setattr(pathcache, "which", lambda name: None)
     monkeypatch.setattr(
@@ -296,7 +286,7 @@ def test_discover_repo_does_not_use_the_registry_without_an_installation(
         lambda: {"envsubst": "a8m/envsubst"},
     )
 
-    assert discover_repo("envsubst", bin_dir=tmp_path, config=Config()) is None
+    assert find_installation("envsubst", bin_dir=tmp_path) is None
 
 
 def _fake_installation(binary: str, *, provider: str = "fake") -> Installation:

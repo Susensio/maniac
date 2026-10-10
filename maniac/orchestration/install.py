@@ -80,9 +80,7 @@ class InstallOutcome:
     tool: str
     tier: Tier | None
     detail: str
-    source_path: Path | None = None
     installed_path: Path | None = None
-    pipeline: PipelineResult | None = None
     resolution: Resolution | None = None
     overrides: tuple[str, ...] = ()
     """Each refusal `--force` overrode, said the way the user reads it."""
@@ -366,18 +364,14 @@ def _select_page(
                 tool=tool_name,
                 tier=None,
                 detail=f"{detail}, but {e.found} is too old to compile it",
-                source_path=pipeline_result.roff_path,
                 installed_path=None,
-                pipeline=pipeline_result,
             )
         if pandoc is None:
             return InstallOutcome(
                 tool=tool_name,
                 tier=None,
                 detail=f"{detail}, but pandoc is missing to compile it",
-                source_path=pipeline_result.roff_path,
                 installed_path=None,
-                pipeline=pipeline_result,
             )
     elif pipeline_result.installed_path is None:
         detail += ", but it could not be compiled into a page"
@@ -385,9 +379,7 @@ def _select_page(
         tool=tool_name,
         tier=Tier.SYNTHESIS,
         detail=detail,
-        source_path=pipeline_result.roff_path,
         installed_path=pipeline_result.installed_path,
-        pipeline=pipeline_result,
     )
 
 
@@ -540,7 +532,6 @@ def _try_install_root(
             tool=inst.binary,
             tier=Tier.INSTALL_ROOT,
             detail=detail,
-            source_path=candidate.discovered_page,
             installed_path=None,
         )
     # Every page of one install root records the primary's manifest key as
@@ -591,7 +582,6 @@ def _try_install_root(
         tool=inst.binary,
         tier=Tier.INSTALL_ROOT,
         detail=detail,
-        source_path=candidate.discovered_page,
         installed_path=installed_path,
     )
 
@@ -645,7 +635,6 @@ def _try_repository(
                 tool=inst.binary,
                 tier=Tier.REPOSITORY,
                 detail=f"upstream page ({inst.version})",
-                source_path=candidate.primary.path,
                 installed_path=None,
             ),
             True,
@@ -695,7 +684,6 @@ def _try_repository(
             tool=inst.binary,
             tier=Tier.REPOSITORY,
             detail=detail,
-            source_path=candidate.primary.path,
             installed_path=installed_path,
         ),
         True,

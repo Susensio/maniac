@@ -225,8 +225,6 @@ class EvaluationResult:
     rubric_breakdown: dict[str, int]
     defects: list[str] = field(default_factory=list)
     summary: str = ""
-    deterministic_passed: bool = True
-    deterministic_defects: list[str] = field(default_factory=list)
     coverage: CoverageStats | None = None
 
 

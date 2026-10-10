@@ -383,7 +383,6 @@ def test_try_install_root_dry_run_reports_the_page_without_installing(
     assert outcome is not None
     assert outcome.tier is Tier.INSTALL_ROOT
     assert outcome.installed_path is None
-    assert outcome.source_path == page
     assert outcome.detail.endswith("page (1.2.3)")
 
 
@@ -460,7 +459,6 @@ def test_try_repository_dry_run_reports_the_page_without_installing(
     assert definitive is True
     assert outcome.tier is Tier.REPOSITORY
     assert outcome.installed_path is None
-    assert outcome.source_path == page
     assert outcome.detail.endswith("page (1.2.3)")
 
 
@@ -1991,10 +1989,8 @@ def test_install_reaching_tier_3_resolves_the_tool_once_not_twice(
     """The duplicated work one `ResolvedTool` exists to remove.
 
     `run_install` resolved the installation for tiers 1-2, and tier 3 then
-    resolved it again -- and the repository with it -- through
-    `discover_repo`. One context now carries both facts through all three
-    tiers, so each resolution runs exactly once and `discover_repo` is never
-    reached.
+    resolved it again, and the repository with it. One context now carries
+    both facts through all three tiers, so each resolution runs exactly once.
     """
     calls: Counter[str] = Counter()
     source = RepoSource(name="tool", target="owner/tool", is_local=False)
@@ -2015,14 +2011,10 @@ def test_install_reaching_tier_3_resolves_the_tool_once_not_twice(
         calls["resolve_source"] += 1
         return resolve_source(installation, config=config, provider=provider)
 
-    def _discover_repo(*args: object, **kwargs: object) -> None:
-        raise AssertionError("tier 3 resolved the repository a second time")
-
     monkeypatch.setattr(
         "maniac.orchestration.context.resolution.find_installation", _find_installation
     )
     monkeypatch.setattr(registry, "resolve_source", _resolve_source)
-    monkeypatch.setattr("maniac.sources.resolution.discover_repo", _discover_repo)
     # Tier 1 finds no page and tier 2 no repository page, so the install
     # falls through to a real (dry-run) tier-3 synthesis.
     monkeypatch.setattr(
