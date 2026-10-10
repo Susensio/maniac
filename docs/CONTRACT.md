@@ -1,7 +1,6 @@
 # How maniac decides
 
-> This is the contract maniac is moving to ([ADR-0065](adr/0065-a-user-contract-and-a-smaller-command-surface.md)).
-> [`docs/STATE.md`](STATE.md) tracks which parts are live; until a part is, the README describes what the commands do today.
+> Adopted in [ADR-0065](adr/0065-a-user-contract-and-a-smaller-command-surface.md), live since 2026-10-10.
 
 maniac gives the command-line tools you installed yourself a correct `man` page.
 Everything a user can observe it doing follows from the four rules below.

@@ -1,6 +1,6 @@
 # ADR-0065: Adopt a user contract and a smaller, more obvious command surface
 
-Status: Accepted
+Status: Accepted; completed 2026-10-10 (see Outcome)
 Date: 2026-10-09
 
 ## Context
@@ -58,7 +58,7 @@ Decisions the user took on 2026-10-09:
   The existing ADRs stay as history.
 - **Developer commands leave the main help.** `source` folds into `why`; `eval` and the benchmark move under `maniac dev`.
 
-The redesign is built in phases tracked in `docs/STATE.md`, each leaving `just check` green.
+The redesign was built in phases tracked in `docs/STATE.md`, each leaving `just check` green; the file was deleted when the last landed, and its history keeps the log.
 
 ## Consequences
 
@@ -107,3 +107,19 @@ The contract's command table called `scan` "your tools with no usable page", and
 The plan, and P4 as built, keep discovery a report of every tool maniac does not manage, in all five states, with the state filters `list` had.
 Showing only `available` and `missing` by default would hide `ok`, `unknown` and `outdated` pages behind a filter without an `--ok` to reach them (ADR-0018), which is the kind of hidden default this redesign removes.
 The table now reads "your other tools and the state of their pages", and the pipe example names `--available --missing`.
+
+## Outcome
+
+2026-10-10: every phase landed; `docs/CONTRACT.md` describes what maniac does.
+
+Decisions taken while building it, each by the rules or by the user:
+
+- `scan` shows every state, not only tools with no usable page (Corrections above).
+- `list` and `scan` share one table frame and differ only in the columns their questions need: `list` compares the version documented with the version installed; `scan` names the page's source and where an upstream page would come from.
+- Source labels name how a page came to exist (`shipped`, `upstream`, `generated`, `system`), in the tables, in `why` and in `install`'s own output; "vendor" no longer also means "a page maniac did not install".
+- `install` leaves a page `list` reads `ok` alone and says so; `--force` reinstalls it (rules 1 and 4).
+- `install --no-generate` reports an upstream check that did not complete as such, never as "no page" (rule 4).
+- `remove` takes many tools and always deletes what maniac made to generate a page; `--purge` is gone (user's decision: a previous generation is no seed for the next). A tool maniac has no page for exits 1, as in `list` and `update`.
+- Developer commands are `maniac dev eval` and `maniac dev bench`; `python -m maniac.bench` is gone.
+- The shell-completion options stay in the main help: hiding them with Typer also turns completion off.
+- Diagnostics (source-material counts, crawler warnings, the first-run manifest note, each removed file) print only with `-v`.

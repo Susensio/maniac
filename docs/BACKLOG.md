@@ -27,7 +27,7 @@ Settled decisions live in `docs/adr/`; defects with a line to sit beside are mar
 ## Features and discovery
 
 - Seed synthesis with an outdated, human-written page of the same software.
-  A page documenting another version carries structure, prose and examples that `--help` lacks: a losing `$PATH` copy's own page (`Installation.losers`, retained for this and shown nowhere), an upstream page at a non-matching tag (refused by tier 2, ADR-0016), a displaced vendor page.
+  A page documenting another version carries structure, prose and examples that `--help` lacks: a losing `$PATH` copy's own page (`Installation.losers`, retained for this and shown nowhere), an upstream page at a non-matching tag (refused by tier 2, ADR-0016), a page maniac replaced (its backup).
   Give it to the model labelled with the version it documents; the current `--help` wins wherever they disagree, and options it no longer lists are dropped.
   Only human-written pages qualify: one maniac synthesized (provenance signature, `Tier.SYNTHESIS`) or help2man generated (`is_help2man_content`) is derived from the same help and docs the model already gets, so it is no better a seed than none and would carry the last model's errors forward.
   A loser's page needs proof of the same software first -- the same package or repository as the winner, as ADR-0055 requires -- since a shared name is not evidence.
@@ -42,14 +42,12 @@ Settled decisions live in `docs/adr/`; defects with a line to sit beside are mar
 - Consider Arch Wiki integration/configuration prose.
   Blocked on a reliable per-command extraction boundary: task-oriented articles and redirects make raw retrieval insufficient.
 - Add external-page freshness adapters for Arch, RPM-family systems and Homebrew, for pages whose `.TH`/`.Dt` header carries no version.
-  Blocked on a real fixture per system; unsupported systems stay `unverified`, never guessed.
-- Implement an update path for stale MANIAC-managed pages, including whether installation overwrites in place and when a vendor backup is retaken.
-  Re-derive pre-version manifest entries by reinstalling rather than stamping current versions; make the repair resumable.
+  Blocked on a real fixture per system; unsupported systems stay `unknown`, never guessed.
 - Pick up shell completions alongside manpages.
   Next step: decide scope and shape.
   The discovery problem transfers -- does the tool ship its own, can one be generated, is it reachable -- and many CLIs expose a completions subcommand the way others ship a manpage.
   The installation surface does not: completions have one convention per shell (bash-completion, zsh `fpath`, fish `completions/`), so this is closer to a second product than an extension of `install_manpage`.
-- Judge whether an existing vendor or shipped upstream manpage is worth replacing.
+- Judge whether an existing `shipped` or `system` page is worth replacing.
   ADR-0016 deferred the verdict layer; blocked on a robust classification model and real output to judge.
   `.HP` option counting has two known dead ends: unconditional counts mistake synopsis markers for options, and rendered bold-hyphen regexes miss common roff forms.
 

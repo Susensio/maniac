@@ -1,6 +1,6 @@
 # ADR-0047: Collapse the install tier-selection flags into one synthesis opt-out and drop forced synthesis
 
-Status: Accepted; flag name superseded in part by ADR-0065 (`--no-synthesize` is `--no-generate`)
+Status: Accepted; superseded in part by [ADR-0065](0065-a-user-contract-and-a-smaller-command-surface.md) (the flag name: `--no-synthesize` is `--no-generate`)
 Date: 2026-09-16
 Narrows: [ADR-0016](0016-authoritative-manpages-first.md)
 
