@@ -75,9 +75,9 @@ def _under_root(path: Path, root: Path) -> bool:
 def managed_source(entry: manifest.Entry) -> PageSource:
     """Return the content provenance recorded for a reachable managed page."""
     return {
-        manifest.Tier.INSTALL_ROOT: PageSource.VENDOR,
+        manifest.Tier.INSTALL_ROOT: PageSource.SHIPPED,
         manifest.Tier.REPOSITORY: PageSource.UPSTREAM,
-        manifest.Tier.SYNTHESIS: PageSource.MANIAC,
+        manifest.Tier.SYNTHESIS: PageSource.GENERATED,
     }[entry.tier]
 
 
@@ -90,7 +90,7 @@ def _installed_source(
         return managed_source(evidence.entry)
     inst = candidate.installation
     if inst is not None and _under_root(installed, inst.root):
-        return PageSource.VENDOR
+        return PageSource.SHIPPED
     return PageSource.SYSTEM
 
 
@@ -237,7 +237,7 @@ def _unresolved_page_classification(candidate: Candidate) -> LocalClassification
         if source is not None:
             return LocalClassification(
                 ActionState.AVAILABLE,
-                PageSource.VENDOR,
+                PageSource.SHIPPED,
                 False,
                 source.primary.path,
             )
@@ -292,7 +292,7 @@ def classify(
         assert entry is not None
         return LocalClassification(
             ActionState.OUTDATED,
-            PageSource.VENDOR,
+            PageSource.SHIPPED,
             True,
             entry.path,
             entry.source_uri,

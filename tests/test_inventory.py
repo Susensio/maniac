@@ -108,7 +108,7 @@ def test_compute_rows_no_args_walks_providers_not_the_manpath(
             package="tool",
             provider="fake",
             state=ActionState.AVAILABLE,
-            source=PageSource.VENDOR,
+            source=PageSource.SHIPPED,
             upstream=None,
             page_path=page,
             target_cluster=0,
@@ -223,7 +223,7 @@ def test_compute_rows_reflects_a_manifest_write_between_invocations(
     after = compute_rows(["tool"], config=cfg)
 
     assert before[0].source == PageSource.SYSTEM
-    assert after[0].source == PageSource.VENDOR
+    assert after[0].source == PageSource.SHIPPED
 
 
 def test_compute_rows_logs_phase_timing(
@@ -311,7 +311,7 @@ def test_compute_rows_resolves_upstream_for_a_vendor_page(
     row = compute_rows(config=_config(tmp_path))[0]
 
     assert row.state is ActionState.AVAILABLE
-    assert row.source is PageSource.VENDOR
+    assert row.source is PageSource.SHIPPED
     assert row.upstream is source
     assert registry_calls == [1]
 
@@ -345,7 +345,7 @@ def test_compute_rows_resolves_upstream_for_a_reachable_page(
     row = compute_rows(config=_config(tmp_path))[0]
 
     assert row.state is ActionState.OK
-    assert row.source is PageSource.VENDOR
+    assert row.source is PageSource.SHIPPED
     assert row.upstream is source
     assert registry_calls == [1]
 
@@ -1075,7 +1075,7 @@ def test_classify_available_when_install_root_ships_an_uninstalled_page(
 
     assert _classification_pair(provider, inst, "tool", cfg) == (
         ActionState.AVAILABLE,
-        PageSource.VENDOR,
+        PageSource.SHIPPED,
     )
 
 
@@ -1144,16 +1144,16 @@ def test_classify_source_keeps_vendor_provenance_when_manifest_owns_the_page(
 
     assert _classification_pair(None, None, "tool", cfg) == (
         ActionState.UNKNOWN,
-        PageSource.VENDOR,
+        PageSource.SHIPPED,
     )
 
 
 @pytest.mark.parametrize(
     ("tier", "source"),
     [
-        (Tier.INSTALL_ROOT, PageSource.VENDOR),
+        (Tier.INSTALL_ROOT, PageSource.SHIPPED),
         (Tier.REPOSITORY, PageSource.UPSTREAM),
-        (Tier.SYNTHESIS, PageSource.MANIAC),
+        (Tier.SYNTHESIS, PageSource.GENERATED),
     ],
 )
 def test_managed_page_keeps_content_provenance_separate_from_ownership(
@@ -1204,7 +1204,7 @@ def test_classify_source_is_vendor_when_resolved_page_sits_under_it(
 
     assert _classification_pair(_FakeProvider(), inst, "tool", cfg) == (
         ActionState.OK,
-        PageSource.VENDOR,
+        PageSource.SHIPPED,
     )
 
 
@@ -1262,7 +1262,7 @@ def test_classify_managed_page_can_be_compressed(
 
     assert _classification_pair(None, None, "tool", cfg) == (
         ActionState.UNKNOWN,
-        PageSource.VENDOR,
+        PageSource.SHIPPED,
     )
 
 
@@ -1297,7 +1297,7 @@ def test_classify_managed_page_matched_through_a_symlink(
 
     assert _classification_pair(None, None, "tool", cfg) == (
         ActionState.UNKNOWN,
-        PageSource.VENDOR,
+        PageSource.SHIPPED,
     )
 
 
@@ -1330,7 +1330,7 @@ def test_classify_outdated_when_recorded_version_differs_from_installed(
 
     assert _classification_pair(None, inst, "tool", cfg) == (
         ActionState.OUTDATED,
-        PageSource.MANIAC,
+        PageSource.GENERATED,
     )
 
 
@@ -1392,7 +1392,7 @@ def test_classify_outdated_when_mise_latest_alias_drifts(
 
     assert _classification_pair(provider, inst, "tool", cfg) == (
         ActionState.OUTDATED,
-        PageSource.VENDOR,
+        PageSource.SHIPPED,
     )
 
 
@@ -1436,7 +1436,7 @@ def test_classify_outdated_for_an_unaliased_mise_provider_target(
 
     assert _classification_pair(provider, inst, "tool", cfg) == (
         ActionState.OUTDATED,
-        PageSource.VENDOR,
+        PageSource.SHIPPED,
     )
 
 
@@ -1471,7 +1471,7 @@ def test_classify_ok_for_a_generic_direct_provider_target(
 
     assert _classification_pair(
         _FakeProvider(), _installation(root=root, version="1.0.0"), "tool", cfg
-    ) == (ActionState.OK, PageSource.VENDOR)
+    ) == (ActionState.OK, PageSource.SHIPPED)
 
 
 def test_classify_ok_when_mise_latest_and_binary_advance_together(
@@ -1529,7 +1529,7 @@ def test_classify_ok_when_mise_latest_and_binary_advance_together(
 
     assert _classification_pair(provider, inst, "tool", cfg) == (
         ActionState.OK,
-        PageSource.VENDOR,
+        PageSource.SHIPPED,
     )
 
 
@@ -1561,7 +1561,7 @@ def test_classify_unknown_when_entry_records_no_version(
 
     assert _classification_pair(None, inst, "tool", cfg) == (
         ActionState.UNKNOWN,
-        PageSource.MANIAC,
+        PageSource.GENERATED,
     )
 
 
@@ -1591,7 +1591,7 @@ def test_classify_unknown_when_installation_version_is_unknown(
 
     assert _classification_pair(None, inst, "tool", cfg) == (
         ActionState.UNKNOWN,
-        PageSource.MANIAC,
+        PageSource.GENERATED,
     )
 
 
@@ -1632,7 +1632,7 @@ def test_classify_outdated_when_unclaimed_binarys_own_version_differs(
 
     assert _classification_pair(None, None, "tool", cfg) == (
         ActionState.OUTDATED,
-        PageSource.MANIAC,
+        PageSource.GENERATED,
     )
     assert asked == [[str(resolved)]]
 
@@ -1671,7 +1671,7 @@ def test_classify_ok_when_unclaimed_binarys_own_version_matches(
 
     assert _classification_pair(None, None, "tool", cfg) == (
         ActionState.OK,
-        PageSource.MANIAC,
+        PageSource.GENERATED,
     )
     assert asked == [[str(resolved)]]
 
@@ -1710,7 +1710,7 @@ def test_classify_unknown_when_unclaimed_binarys_version_is_unavailable(
 
     assert _classification_pair(None, None, "tool", cfg) == (
         ActionState.UNKNOWN,
-        PageSource.MANIAC,
+        PageSource.GENERATED,
     )
 
 
@@ -1761,7 +1761,7 @@ def test_classify_no_subprocess_for_unowned_or_versionless_row(
     )
     assert _classification_pair(None, None, "versionless", cfg) == (
         ActionState.UNKNOWN,
-        PageSource.MANIAC,
+        PageSource.GENERATED,
     )
 
 
@@ -2022,7 +2022,7 @@ def test_classify_managed_file_present_but_unreachable_by_man_is_not_managed(
     inst = _installation()
     assert _classification_pair(provider, inst, "tool", cfg) == (
         ActionState.AVAILABLE,
-        PageSource.VENDOR,
+        PageSource.SHIPPED,
     )
 
 
@@ -2242,7 +2242,7 @@ def _cluster_row(tool: str, package: str = "python") -> ToolRow:
         package=package,
         provider="fake",
         state=ActionState.OK,
-        source=PageSource.MANIAC,
+        source=PageSource.GENERATED,
         upstream=None,
     )
 
@@ -2395,7 +2395,7 @@ def test_group_rows_key_includes_source_and_upstream() -> None:
             package="pandoc",
             provider="mise",
             state=ActionState.OK,
-            source=PageSource.MANIAC,
+            source=PageSource.GENERATED,
             upstream=None,
         ),
         ToolRow(
@@ -2425,7 +2425,7 @@ def test_group_rows_siblings_collapse_despite_differing_reposource_name() -> Non
             package="pandoc",
             provider="mise",
             state=ActionState.AVAILABLE,
-            source=PageSource.VENDOR,
+            source=PageSource.SHIPPED,
             upstream=RepoSource(name=name, target="jgm/pandoc", is_local=False),
         )
         for name in ("pandoc", "pandoc-lua", "pandoc-server")
@@ -2445,7 +2445,7 @@ def test_group_rows_differing_page_path_still_splits(tmp_path: Path) -> None:
             package="pandoc",
             provider="mise",
             state=ActionState.AVAILABLE,
-            source=PageSource.VENDOR,
+            source=PageSource.SHIPPED,
             upstream=None,
             page_path=tmp_path / "pandoc.1",
         ),
@@ -2454,7 +2454,7 @@ def test_group_rows_differing_page_path_still_splits(tmp_path: Path) -> None:
             package="pandoc",
             provider="mise",
             state=ActionState.AVAILABLE,
-            source=PageSource.VENDOR,
+            source=PageSource.SHIPPED,
             upstream=None,
             page_path=tmp_path / "pandoc-lua.1",
         ),

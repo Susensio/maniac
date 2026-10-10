@@ -73,7 +73,7 @@ def test_why_explains_a_wrapper_before_and_after_its_page_is_installed(
     after = _flat(runner.invoke(app, ["why", "faketool"]).output)
 
     assert (
-        "maniac's (maniac): documents faketool 2.3.1, installed faketool 2.3.1: ok"
+        "maniac's (generated): documents faketool 2.3.1, installed faketool 2.3.1: ok"
         in after
     )
 

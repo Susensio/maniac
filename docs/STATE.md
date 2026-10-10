@@ -50,7 +50,8 @@ When a phase lands, it updates the README for what became live and marks the ADR
 ### P5 Surface and words: next
 
 - [ ] `uninstall` becomes `remove`, taking many tools.
-- [ ] `--no-synthesize` becomes `--no-generate`; sources read `shipped` / `upstream` / `generated`; `unverified` becomes `unknown`.
+- [x] Sources read `shipped` / `upstream` / `generated` in `list`, `scan`, `why` and `install`'s own output (2026-10-10); `unverified` became `unknown` in P3.
+- [ ] `--no-synthesize` becomes `--no-generate`.
 - [ ] Help text without internal terms (tiers, providers, "positively proven"), and without the stale `$(maniac status)`.
 - [ ] `install`'s output carries only what the user needs: diagnostic log lines ("Synthesis source material found") move behind `-v`, or into `why`.
 - [ ] `maniac dev` (hidden) holds `eval` and the benchmark.
@@ -78,3 +79,4 @@ When a phase lands, it updates the README for what became live and marks the ADR
 - 2026-10-10: P2 done: `why <tool>` with PATH / Binary / Page / Sources and the `install` verdict; `source` group removed. Integration: a wrapper with a venv copy before and after its page is installed, npm's `marked` and its shipped page, a tool nowhere on `$PATH`. Checked live: ruff in a venv, a mise shim pinned by a project, `ls`.
 - 2026-10-10: P4 done: `scan` covers the tools maniac does not manage and ends with a count of what it passed over, by reason; `--managed` removed; the contract's `scan` row corrected to every state.
 - 2026-10-10: `list` gets back the boxed table it lost in P3, now built from the same frame as `scan` (title, Tool and State first, state colours); each keeps its own columns. Titles say what each table is.
+- 2026-10-10: Source labels renamed: `vendor` is `shipped`, `maniac` is `generated` (in `list`, `maniac` read as ownership on some rows only). `install` says `shipped page`, `upstream page`, `generated from ...`; the foreign-page refusal and uninstall's restore line no longer say `vendor`.

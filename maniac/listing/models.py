@@ -34,8 +34,8 @@ class PageSource(Enum):
     `available` describes one that would if installed.
     """
 
-    MANIAC = "maniac"
-    VENDOR = "vendor"
+    GENERATED = "generated"
+    SHIPPED = "shipped"
     UPSTREAM = "upstream"
     SYSTEM = "system"
     NONE = ""

@@ -307,11 +307,11 @@ def _select_page(
         dry_run=dry_run,
     )
     if pipeline_result.command_count and pipeline_result.doc_file_count:
-        detail = "synthesized from --help + repo docs"
+        detail = "generated from --help + repo docs"
     elif pipeline_result.doc_file_count:
-        detail = "synthesized from repo docs only"
+        detail = "generated from repo docs only"
     else:
-        detail = "synthesized from --help only"
+        detail = "generated from --help only"
     if dry_run:
         # A real run's page depends on pandoc compiling the synthesized
         # Markdown (`compile_to_man`); `synthesize` skips that step under
@@ -369,7 +369,7 @@ def _refuse_unmanaged_destination(dest_file: Path, cfg: Config, *, force: bool) 
     if force or not _holds_a_foreign_page(dest_file, cfg):
         return
     raise InstallRefused(
-        f"A foreign or vendor manpage already exists at '{dest_file}'. "
+        f"A manpage maniac did not install already exists at '{dest_file}'. "
         f"Use --force to create a backup and overwrite."
     )
 
@@ -476,7 +476,7 @@ def _try_install_root(
         _refuse_unmanaged_destination(
             _manpage_directory(page.path, cfg) / dest_name, cfg, force=force
         )
-    detail = "upstream manpage from install root"
+    detail = "shipped page"
     if inst.version:
         detail += f" ({inst.version})"
     if dry_run:
@@ -589,8 +589,7 @@ def _try_repository(
             InstallOutcome(
                 tool=inst.binary,
                 tier=Tier.REPOSITORY,
-                detail=f"upstream manpage from repository ({inst.version})"
-                "   [dry run, no synthesis]",
+                detail=f"upstream page ({inst.version})   [dry run, no synthesis]",
                 source_path=candidate.primary.path,
                 installed_path=None,
             ),
@@ -635,7 +634,7 @@ def _try_repository(
         for result, page in zip(installed, candidate.pages, strict=True)
         if page == candidate.primary
     )
-    detail = f"upstream manpage from repository ({inst.version})   [no synthesis]"
+    detail = f"upstream page ({inst.version})   [no synthesis]"
     return (
         InstallOutcome(
             tool=inst.binary,

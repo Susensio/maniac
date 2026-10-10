@@ -218,7 +218,7 @@ def _take_backup(
         return existing.backup, False
     if not force:
         raise FileExistsError(
-            f"A foreign or vendor manpage already exists at '{dest_file}'. "
+            f"A manpage maniac did not install already exists at '{dest_file}'. "
             f"Use --force to create a backup and overwrite."
         )
     cfg.backup_dir.mkdir(parents=True, exist_ok=True)

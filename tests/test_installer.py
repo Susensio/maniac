@@ -207,7 +207,7 @@ def test_install_manpage_foreign_without_force_fails(tmp_path: Path) -> None:
             force=False,
         )
 
-    assert "foreign or vendor manpage already exists" in str(exc_info.value)
+    assert "manpage maniac did not install already exists" in str(exc_info.value)
     assert existing_dest.read_text(encoding="utf-8") == ".TH TOOL 1 Official vendor doc"
     assert manifest_module.lookup("tool") is None
 

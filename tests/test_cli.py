@@ -335,7 +335,7 @@ def test_cli_install_dry_run(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) ->
 
     result = runner.invoke(app, ["install", "mytool", "--dry-run"])
     assert result.exit_code == 0
-    assert "synthesized from --help" in result.output
+    assert "generated from --help" in result.output
 
 
 def test_cli_install_exits_nonzero_when_synthesis_produces_no_page(
@@ -445,7 +445,7 @@ def test_cli_install_reuses_config_for_existing_destination(
     result = runner.invoke(app, ["install", "mytool"])
 
     assert result.exit_code != 0
-    assert "foreign or vendor manpage already exists" in result.output
+    assert "manpage maniac did not install already exists" in result.output
     assert len(constructed) == 1
     assert observed == constructed
 
@@ -908,8 +908,8 @@ def test_render_install_does_not_swallow_bracketed_detail() -> None:
     """M-bracket-escape: `[no synthesis]` is literal text, not Rich markup.
 
     Rich reads an unescaped `[...]` as a style tag and silently drops it,
-    so an un-escaped render would print "pandoc   upstream manpage from
-    install root (3.10.2)" with the `[no synthesis]` suffix missing.
+    so an un-escaped render would print "pandoc   shipped page
+    (3.10.2)" with the `[no synthesis]` suffix missing.
     """
     import io
 
@@ -923,7 +923,7 @@ def test_render_install_does_not_swallow_bracketed_detail() -> None:
     outcome = InstallOutcome(
         tool="pandoc",
         tier=Tier.INSTALL_ROOT,
-        detail="upstream manpage from install root (3.10.2)   [no synthesis]",
+        detail="shipped page (3.10.2)   [no synthesis]",
         installed_path=Path("/usr/share/man/man1/pandoc.1"),
     )
 

@@ -1,6 +1,6 @@
 # ADR-0027: Keep page provenance in Source instead of labeling every MANIAC-installed page maniac
 
-Status: Accepted
+Status: Accepted; labels superseded in part by ADR-0065 (`vendor` is `shipped`, `maniac` is `generated`)
 Date: 2026-09-13
 
 ## Context

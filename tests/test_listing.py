@@ -1438,7 +1438,7 @@ def test_grouped_for_display_solo_tool_keeps_its_own_name() -> None:
             package="pandoc",
             provider="mise",
             state=ActionState.AVAILABLE,
-            source=PageSource.VENDOR,
+            source=PageSource.SHIPPED,
             upstream=None,
         )
     ]
@@ -1456,7 +1456,7 @@ def test_grouped_for_display_many_siblings_render_as_package_and_count() -> None
             package="python",
             provider="mise",
             state=ActionState.OK,
-            source=PageSource.MANIAC,
+            source=PageSource.GENERATED,
             upstream=None,
         )
         for name in ("python3", "pip", "pydoc", "idle", "2to3")
@@ -1475,7 +1475,7 @@ def test_grouped_for_display_label_tie_breaks_alphabetically() -> None:
             package="tool",
             provider="mise",
             state=ActionState.OK,
-            source=PageSource.MANIAC,
+            source=PageSource.GENERATED,
             upstream=None,
         )
         for name in ("zeta", "alfa")
@@ -1496,7 +1496,7 @@ def test_grouped_for_display_sorts_by_rendered_label_not_first_encounter() -> No
             package="zoxide",
             provider="mise",
             state=ActionState.OK,
-            source=PageSource.VENDOR,
+            source=PageSource.SHIPPED,
             upstream=None,
         ),
         ToolRow(
@@ -1504,7 +1504,7 @@ def test_grouped_for_display_sorts_by_rendered_label_not_first_encounter() -> No
             package="alpha",
             provider="mise",
             state=ActionState.OK,
-            source=PageSource.VENDOR,
+            source=PageSource.SHIPPED,
             upstream=None,
         ),
     ]
@@ -1524,7 +1524,7 @@ def test_vendor_source_keyword_links_to_the_local_manpage(tmp_path: Path) -> Non
         "tool",
         "fake",
         ActionState.AVAILABLE,
-        PageSource.VENDOR,
+        PageSource.SHIPPED,
         None,
         page_path=page,
     )
@@ -1598,7 +1598,7 @@ def test_render_list_tty_shows_the_four_column_table() -> None:
                 package="pandoc",
                 provider="mise",
                 state=ActionState.AVAILABLE,
-                source=PageSource.VENDOR,
+                source=PageSource.SHIPPED,
                 upstream=None,
             )
         ],
@@ -1608,7 +1608,7 @@ def test_render_list_tty_shows_the_four_column_table() -> None:
     assert SCAN_TITLE in output
     assert "pandoc" in output
     assert ActionState.AVAILABLE.value in output
-    assert PageSource.VENDOR.value in output
+    assert PageSource.SHIPPED.value in output
 
 
 def test_render_list_colors_the_state_column_per_category() -> None:
@@ -1625,7 +1625,7 @@ def test_render_list_colors_the_state_column_per_category() -> None:
                 package="pandoc",
                 provider="mise",
                 state=ActionState.AVAILABLE,
-                source=PageSource.VENDOR,
+                source=PageSource.SHIPPED,
                 upstream=None,
             ),
             ToolRow(
@@ -1649,7 +1649,7 @@ def test_render_list_colors_the_state_column_per_category() -> None:
                 package="tmux",
                 provider="mise",
                 state=ActionState.OK,
-                source=PageSource.MANIAC,
+                source=PageSource.GENERATED,
                 upstream=None,
             ),
             ToolRow(
@@ -1657,7 +1657,7 @@ def test_render_list_colors_the_state_column_per_category() -> None:
                 package="rg",
                 provider="mise",
                 state=ActionState.OUTDATED,
-                source=PageSource.MANIAC,
+                source=PageSource.GENERATED,
                 upstream=None,
             ),
         ],
@@ -1715,7 +1715,7 @@ def test_render_list_marks_drift_next_to_the_tool_name() -> None:
                 package="sound",
                 provider="mise",
                 state=ActionState.OK,
-                source=PageSource.MANIAC,
+                source=PageSource.GENERATED,
                 upstream=None,
                 drift=False,
             ),
@@ -1771,7 +1771,7 @@ def test_render_list_drift_marker_survives_grouping_by_any_sibling() -> None:
                 package="shared",
                 provider="mise",
                 state=ActionState.OK,
-                source=PageSource.MANIAC,
+                source=PageSource.GENERATED,
                 upstream=None,
                 drift=True,
             ),
@@ -1780,7 +1780,7 @@ def test_render_list_drift_marker_survives_grouping_by_any_sibling() -> None:
                 package="shared",
                 provider="mise",
                 state=ActionState.OK,
-                source=PageSource.MANIAC,
+                source=PageSource.GENERATED,
                 upstream=None,
                 drift=False,
             ),

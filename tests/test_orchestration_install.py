@@ -100,7 +100,7 @@ def test_run_install_uses_the_install_root_page_first(
     outcome = run_install("tool")
 
     assert outcome.tier is Tier.INSTALL_ROOT
-    assert "install root" in outcome.detail
+    assert outcome.detail.startswith("shipped page")
     assert "1.2.3" in outcome.detail
     assert "[no synthesis]" in outcome.detail
     assert outcome.installed_path == Path("/installed/tool.1")
@@ -283,7 +283,7 @@ def test_run_install_falls_through_to_repository_when_no_install_root_page(
     outcome = run_install("tool")
 
     assert outcome.tier is Tier.REPOSITORY
-    assert "repository" in outcome.detail
+    assert outcome.detail.startswith("upstream page")
     assert "1.2.3" in outcome.detail
 
 
@@ -596,7 +596,7 @@ def test_run_install_reports_repository_docs_only_synthesis(
 
     outcome = run_install("tool")
 
-    assert outcome.detail == "synthesized from repo docs only"
+    assert outcome.detail == "generated from repo docs only"
 
 
 def test_resolved_tool_runs_the_login_path_binary_not_the_bare_name(

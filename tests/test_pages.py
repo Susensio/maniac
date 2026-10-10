@@ -95,7 +95,7 @@ def test_each_page_compares_what_it_documents_with_what_is_installed(
         ("unrecorded", ActionState.UNKNOWN, None, "3.0.0"),
     ]
     assert rows[2].note == "no version was recorded for this page"
-    assert {r.source for r in rows} == {PageSource.MANIAC}
+    assert {r.source for r in rows} == {PageSource.GENERATED}
 
 
 def test_companions_answer_to_their_primary_and_unmanaged_names_come_back(

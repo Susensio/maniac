@@ -51,7 +51,7 @@ def _render_uninstall(target_console: Any, outcome: UninstallOutcome) -> None:
         for p in result.removed:
             target_console.print(f" • Removed: {p}")
         for p in result.restored:
-            target_console.print(f" • Restored vendor backup: {p}")
+            target_console.print(f" • Restored the page it had replaced: {p}")
 
     if result.foreign_kept is not None:
         target_console.print(

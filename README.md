@@ -107,8 +107,8 @@ It reports which one answered:
 
 ```bash
 $ maniac install pandoc hx
-pandoc   upstream manpage from install root (3.10.2)   [no synthesis]
-hx       synthesized from --help + repo docs
+pandoc   shipped page (3.10.2)   [no synthesis]
+hx       generated from --help + repo docs
 ```
 
 `--no-synthesize` restricts this to the first two tiers and never calls an LLM.
@@ -117,7 +117,7 @@ Under each tool, `install` prints the binary the page documents and where its ve
 
 ```bash
 $ cd ~/proj && . .venv/bin/activate && maniac install ruff
-ruff     synthesized from --help + repo docs
+ruff     generated from --help + repo docs
   documents ~/.local/bin/ruff (uv, 0.6.9)
   this shell runs ~/proj/.venv/bin/ruff instead
 ```
@@ -181,8 +181,8 @@ An *unknown* page is left alone until you name it to `maniac install`. A page `-
 
 `scan` discovers the tools maniac has no page for across your login `$PATH`, best effort, and reports the state of each one's page: *ok*, *unknown*, *outdated*, *available* (a page can be had without LLM synthesis), *missing* (no free page is known). Use `--unknown`, `--outdated`, `--available`, or `--missing` to select a state.
 The table carries four columns: Tool, State, Source, and Upstream.
-Source reports who produced the page: `vendor` for a page shipped with the installed tool, `upstream` for one fetched from its repository, `maniac` for an LLM-generated page, and `system` for another page already on the manpath.
-The Source keyword links to the exact local page for `vendor`, `system`, and `maniac`; for GitHub sources, `upstream` links to the version-pinned repository file or release asset that supplied it, never MANIAC's cache. Upstream links to the repository itself. Other Git hosts remain plain Source text until MANIAC has an exact-file URL adapter for that host.
+Source reports where the page came from: `shipped` for a page installed with the tool itself, `upstream` for one fetched from its repository, `generated` for one an LLM wrote, and `system` for another package's page already on the manpath.
+The Source keyword links to the exact local page for `shipped`, `system`, and `generated`; for GitHub sources, `upstream` links to the version-pinned repository file or release asset that supplied it, never MANIAC's cache. Upstream links to the repository itself. Other Git hosts remain plain Source text until MANIAC has an exact-file URL adapter for that host.
 
 ```bash
 maniac scan              # every tool an installer claims and maniac has no page for
@@ -240,7 +240,7 @@ maniac eval howdoi --against-installed
 
 ### 5. Manage Installed Manpages
 
-`list` (section 2) shows every page MANIAC installed, with the source its content came from: a page shipped with the tool reads `vendor`, one from its repository `upstream`, and only a generated page `maniac`.
+`list` (section 2) shows every page MANIAC installed, with the source its content came from: a page shipped with the tool reads `shipped`, one from its repository `upstream`, and one an LLM wrote `generated`.
 Uninstall safely restores any vendor backup:
 
 ```bash
