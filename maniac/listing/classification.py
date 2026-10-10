@@ -145,21 +145,70 @@ def managed_page_state(
     return ActionState.OK if documented == installed else ActionState.OUTDATED
 
 
-def _managed_page_state(
-    candidate: Candidate, cfg: Config, evidence: _PageEvidence
-) -> ActionState:
-    """Return a managed page's state (CONTRACT.md rule 4)."""
-    entry = evidence.entry
-    assert entry is not None
-    # Nothing recorded to compare with: no need to ask the binary.
+@dataclass(frozen=True, slots=True)
+class ManagedPage:
+    """A page maniac installed, judged: the one answer `list`, `scan`, `why`
+    and `install`'s already-current check all read (CONTRACT.md rule 4).
+
+    `installed` is the version installed now; `note` says why the page is
+    `unknown`, or what is wrong with its link (`drift`).
+    """
+
+    state: ActionState
+    installed: str | None
+    note: str | None
+    drift: bool
+
+
+def managed_page(
+    candidate: Candidate,
+    entry: manifest.Entry,
+    cfg: Config,
+    *,
+    read_unrecorded: bool = True,
+) -> ManagedPage:
+    """Judge a page maniac installed against the tool installed now.
+
+    A page linked to a provider's own target is judged by whether that
+    target still follows the installation (ADR-0029); every other page by
+    the version it documents against the one installed. `read_unrecorded`
+    asks the installed version even when the page recorded none -- `list`
+    shows it -- where `scan` saves the `--version` call it cannot use.
+    """
+    freshness = (
+        provider_target_freshness(candidate, entry.target)
+        if entry.provider_target
+        else None
+    )
+    note: str | None = None
     installed = (
-        current_version(candidate, entry, cfg) if entry.version is not None else None
+        current_version(candidate, entry, cfg)
+        if read_unrecorded or entry.version is not None
+        else None
     )
-    return managed_page_state(
-        entry.version,
-        installed,
-        provider_target_current=evidence.provider_target_current,
+    if candidate.error is not None and entry.binary is None:
+        installed, note = None, candidate.error.reason
+    state = managed_page_state(
+        entry.version, installed, provider_target_current=freshness is True
     )
+    if freshness is False:
+        state = ActionState.OUTDATED
+    if state is ActionState.UNKNOWN and note is None:
+        note = _unknown_because(entry, installed)
+    drift = manifest.link_state(entry) is manifest.Link.BROKEN
+    if drift:
+        note = "its man link is missing or was replaced"
+    return ManagedPage(state, installed, note, drift)
+
+
+def _unknown_because(entry: manifest.Entry, installed: str | None) -> str:
+    if entry.version is None:
+        return "no version was recorded for this page"
+    if entry.binary is not None and not entry.binary.is_file():
+        return f"the copy it documents, {entry.binary}, is gone"
+    if installed is None:
+        return "the installed version cannot be read"
+    return "no evidence of the version"
 
 
 def _external_page_state(
@@ -206,7 +255,7 @@ def _resolved_page_classification(
     if evidence.owned:
         assert evidence.entry is not None
         return LocalClassification(
-            _managed_page_state(candidate, cfg, evidence),
+            managed_page(candidate, evidence.entry, cfg, read_unrecorded=False).state,
             source,
             True,
             installed,

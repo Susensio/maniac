@@ -11,12 +11,7 @@ from pathlib import Path
 
 from .. import manifest
 from ..config import Config
-from .classification import (
-    current_version,
-    managed_page_state,
-    managed_source,
-    provider_target_freshness,
-)
+from .classification import managed_page, managed_source
 from .inventory import named_candidate
 from .models import ActionState, PageSource
 
@@ -65,46 +60,17 @@ def managed_pages(
 
 
 def _page_row(tool: str, entry: manifest.Entry, config: Config) -> PageRow:
-    candidate = named_candidate(tool)
-    note: str | None = None
-    installed = current_version(candidate, entry, config)
-    if candidate.error is not None and entry.binary is None:
-        installed, note = None, candidate.error.reason
-    freshness = (
-        provider_target_freshness(candidate, entry.target)
-        if entry.provider_target
-        else None
-    )
-    state = managed_page_state(
-        entry.version, installed, provider_target_current=freshness is True
-    )
-    if freshness is False:
-        state = ActionState.OUTDATED
-    if state is ActionState.UNKNOWN and note is None:
-        note = _unknown_because(entry, installed)
-    drift = manifest.link_state(entry) is manifest.Link.BROKEN
-    if drift:
-        note = "its man link is missing or was replaced"
+    judged = managed_page(named_candidate(tool), entry, config)
     return PageRow(
         tool=tool,
-        state=state,
+        state=judged.state,
         source=managed_source(entry),
         documented=_first_line(entry.version),
-        installed=_first_line(installed),
+        installed=_first_line(judged.installed),
         copy=entry.binary,
-        drift=drift,
-        note=note,
+        drift=judged.drift,
+        note=judged.note,
     )
-
-
-def _unknown_because(entry: manifest.Entry, installed: str | None) -> str:
-    if entry.version is None:
-        return "no version was recorded for this page"
-    if entry.binary is not None and not entry.binary.is_file():
-        return f"the copy it documents, {entry.binary}, is gone"
-    if installed is None:
-        return "the installed version cannot be read"
-    return "no evidence of the version"
 
 
 def _first_line(text: str | None) -> str | None:

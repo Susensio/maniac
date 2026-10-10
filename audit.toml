@@ -48,7 +48,7 @@ kind = "modules_calling"
 why = "A managed page's state must be computed in one place; call it instead of combining its ingredients."
 names = ["managed_page_state", "provider_target_freshness", "link_state"]
 allowed = ["maniac/manifest.py"]
-ceiling = 2
+ceiling = 1
 target = 1
 
 [metric.package_cycles]

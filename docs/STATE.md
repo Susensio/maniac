@@ -62,12 +62,12 @@ A4 carries the one intended behaviour change (pruning), in its own commit, test 
 - [x] `ResolvedTool` (`tool_from`) and `Candidate` (`candidate_from`, which now carries the binary) are built from it. Merging the two types was left: each still serves one side (install's tiers, scan's rows), and both are now one line from a `Located`.
 - `resolution_implementations` and `over_complex` are 0. `resolution_exceptions_handled` is 1: `scan`'s catch around `resolve_upstream`, which reads repository identity, not the binary; it goes with A4.
 
-### A3 One page state: next
+### A3 One page state: done (2026-10-10)
 
-- [ ] One function gives a managed page's state, installed version, note and drift; `list`, `scan`, `why` and `install`'s already-current check call it.
+- [x] One function (`classification.managed_page`) gives a managed page's state, installed version, note and drift; `list`, `scan`, `why` and `install`'s already-current check call it.
 - Done when `page_state_implementations` is 1.
 
-### A4 One source order
+### A4 One source order: next
 
 - [ ] The source list is written once: each source yields an attempt (found, none, or a check that did not complete). `install` installs the first hit, `why` prints every attempt, `scan` maps the first to `available` or `missing`; `scan` and `install` ask upstream the same way.
 - [ ] One function installs a found set of pages, whatever its source.
@@ -92,3 +92,4 @@ A4 carries the one intended behaviour change (pruning), in its own commit, test 
 - 2026-10-10: CLI snapshots added (syrupy) instead of an ad-hoc before/after script: they live in the suite, run in CI, and outlast the refactor. Reading them found one wording leak to fix before A1: the refusal to generate over an incomplete upstream check still says "tier-2 repository check".
 - 2026-10-10: A1 done: dead code deleted (`dead_code` 9 to 0). Started by a session that stalled mid-edit, its deletion of `discover_repo` having also taken the `Skip` class with it; finished here. The three `discover_repo` tests now assert the same behaviour through `find_installation`.
 - 2026-10-10: A2 done: one lookup (`resolution.locate`, `locate_file`, `locate_all`, `this_shell_runs`) returning a `Located` value; `why`'s hand-written chain, `install`'s refusals, `list`'s and `scan`'s lookups all map it. `resolution_implementations` 5 to 0, `resolution_exceptions_handled` 10 to 1, `over_complex` 1 to 0. A test reloading the resolution module re-created its classes under later tests; it now checks the import in a fresh interpreter.
+- 2026-10-10: A3 done: `managed_page` judges a page maniac installed (state, installed version, note, drift); `list` and `scan` call it, `scan` without reading an unrecorded version. `page_state_implementations` 2 to 1.
