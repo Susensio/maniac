@@ -15,6 +15,7 @@ import hashlib
 from collections.abc import Callable, Mapping
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass, field, replace
+from enum import Enum
 from functools import cache
 from itertools import count
 from pathlib import Path
@@ -24,11 +25,10 @@ from typing import Any
 
 from .. import manifest
 from ..config import Config
-from ..exceptions import MalformedToolMetadata, NotGloballySelected
+from ..exceptions import MalformedToolMetadata
 from ..logging import logger
 from ..models import Installation, RepoSource
 from ..sources import resolution
-from ..sources.resolution import Skip
 from .classification import classify
 from .models import (
     ActionState,
@@ -43,7 +43,6 @@ from .models import (
 # Both name a tool's own broken evidence (ADR-0060, ADR-0061): a metadata
 # file that cannot be read, or a Mise install that resolves but isn't
 # globally selected. Every discovery-time catch here treats them alike.
-_DiscoveryError = (MalformedToolMetadata, NotGloballySelected)
 from .upstream import (
     ProbeKey,
     ProbePage,
@@ -58,6 +57,17 @@ UPSTREAM_PROBE_WORKERS = 8
 
 _LocalResult = tuple[LocalClassification, RepoSource | None]
 _Launch = tuple[ProbeKey, RepoSource, Installation]
+
+
+class Skip(Enum):
+    """Why discovery passed over a binary on the login `$PATH` (CONTRACT.md rule 3)."""
+
+    SYSTEM = "system"
+    """A system package's binary: its package ships and upgrades its page (ADR-0059)."""
+    UNCLAIMED = "unclaimed"
+    """No installer claims it: a wrapper script, a hand-copied binary."""
+    SHIM_RUNS_NOTHING = "shim"
+    """A mise shim that runs nothing from `$HOME`: a project-only tool's."""
 
 
 MANAGED = "managed"
@@ -112,17 +122,38 @@ def named_candidate(tool: str) -> Candidate:
     metadata is unreadable, or refused as not globally selected, carries
     why in `Candidate.error`.
     """
-    try:
-        found = resolution.find_installation(tool)
-    except _DiscoveryError as e:
+    return candidate_from(resolution.locate(tool))
+
+
+def candidate_from(located: resolution.Located) -> Candidate:
+    """The row a lookup stands for: its claim, or why it was refused."""
+    if located.error is not None:
         return Candidate(
-            tool=tool,
+            tool=located.tool,
             provider=None,
             installation=None,
-            error=ToolError(e.path, e.reason),
+            error=ToolError(located.error.path, located.error.reason),
         )
-    provider, inst = found if found else (None, None)
-    return Candidate(tool=tool, provider=provider, installation=inst)
+    return Candidate(
+        tool=located.tool,
+        provider=located.provider,
+        installation=located.installation,
+        binary=located.binary,
+    )
+
+
+def _skip_reason(located: resolution.Located) -> Skip | None:
+    """Why `scan` passes over a name on the login `$PATH`, or None to show it.
+
+    Refused tools are shown, with why: one broken tool never hides itself.
+    A shim that runs nothing from `$HOME` is no tool of this machine.
+    """
+    if located.outcome is resolution.Outcome.SHIM_RUNS_NOTHING:
+        return Skip.SHIM_RUNS_NOTHING
+    if located.outcome is not resolution.Outcome.FOUND or located.installation:
+        return None
+    assert located.hit is not None
+    return Skip.SYSTEM if resolution.is_system_binary(located.hit) else Skip.UNCLAIMED
 
 
 def _build_inventory(
@@ -142,25 +173,20 @@ def _build_inventory(
         return [named_candidate(tool) for tool in dict.fromkeys(tools)], False
     entries = entries or {}
 
-    errors: dict[str, ToolError] = {}
-    discovered = sorted(
-        resolution.enumerate_installations(
-            on_start=observer.discovery_started,
-            on_scan=observer.discovery_scanned,
-            on_error=lambda name, e: errors.__setitem__(
-                name, ToolError(e.path, e.reason)
-            ),
-            on_skip=observer.discovery_skipped,
-        ),
-        key=lambda item: item[1].binary,
-    )
-    candidates = [
-        Candidate(tool=inst.binary, provider=provider, installation=inst)
-        for provider, inst in discovered
-    ] + [
-        Candidate(tool=name, provider=None, installation=None, error=error)
-        for name, error in errors.items()
-    ]
+    candidates = []
+    for located in resolution.locate_all(
+        on_start=observer.discovery_started, on_scan=observer.discovery_scanned
+    ):
+        skip = _skip_reason(located)
+        if skip is not None:
+            observer.discovery_skipped(located.tool, skip)
+        elif located.installation is not None:
+            # Named as its installer names it, the way `install` will.
+            candidates.append(
+                replace(candidate_from(located), tool=located.installation.binary)
+            )
+        else:
+            candidates.append(candidate_from(located))
     # `list` shows maniac's own pages (CONTRACT.md); `scan` is for the rest.
     managed = [c for c in candidates if c.tool in entries]
     for candidate in managed:
@@ -522,7 +548,7 @@ def compute_rows(
 ) -> list[ToolRow]:
     """One row per binary: every provider-detected installation, or exactly the named tools.
 
-    With no names, walks `$PATH` (`resolution.enumerate_installations`) and
+    With no names, walks `$PATH` (`resolution.locate_all`) and
     reports every binary some provider claims. With names, resolves exactly
     those, unfiltered; a name no provider claims still gets a row (`MISSING`,
     unless `man` or the manifest says otherwise) rather than nothing, per

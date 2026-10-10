@@ -7,6 +7,7 @@ from maniac.config import Config
 from maniac.listing import Candidate, InventoryObserver, RowSnapshot
 from maniac.models import Installation, RepoSource
 from maniac.sources.providers.base import SourceResolver
+from maniac.sources.resolution import Located, Outcome
 
 
 class _FakeProvider:
@@ -59,6 +60,17 @@ def _candidate(
     provider: Any = None, inst: Installation | None = None, tool: str = "tool"
 ) -> Candidate:
     return Candidate(tool=tool, provider=provider, installation=inst)
+
+
+def _located_all(claims: Any) -> list[Located]:
+    """What `resolution.locate_all` returns for these `(provider, installation)`
+    claims: each found, at its own binary, claimed by that provider."""
+    return [
+        Located(
+            inst.binary, Outcome.FOUND, inst.bin_path, inst.bin_path, provider, inst
+        )
+        for provider, inst in claims
+    ]
 
 
 def _config(tmp_path: Path) -> Config:

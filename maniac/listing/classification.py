@@ -14,7 +14,6 @@ from pathlib import Path
 
 from .. import manifest
 from ..config import Config
-from ..exceptions import ManiacError
 from ..sources.candidates import select_install_root
 from ..sources.crawler import get_version
 from ..sources.manpages import (
@@ -24,7 +23,7 @@ from ..sources.manpages import (
 from ..sources.packages import ExternalPageFreshness, verify_external_page
 from ..sources.pathcache import resolve_cached
 from ..sources.providers.base import DirectPageProvider
-from ..sources.resolution import binary_path, installation_at
+from ..sources.resolution import locate_file
 from ..sources.roff import verify_page_header
 from .models import ActionState, Candidate, LocalClassification, PageSource
 
@@ -94,19 +93,16 @@ def _installed_source(
     return PageSource.SYSTEM
 
 
-def _unclaimed_version(tool: str, cfg: Config) -> str | None:
-    """`--version` of the binary that runs for `tool` from `$HOME` (ADR-0062, ADR-0063).
+def _unclaimed_version(candidate: Candidate, cfg: Config) -> str | None:
+    """`--version` of the binary that runs for the tool from `$HOME` (ADR-0062, ADR-0063).
 
     Run by path, never by bare name: `subprocess` would search the inherited
     `$PATH`, so inside an activated venv the venv's copy would answer for the
-    global binary the page documents.
+    global binary the page documents. No binary reached (a shim that runs
+    nothing from $HOME, mise failing behind one) is no version evidence,
+    never `outdated`.
     """
-    try:
-        path = binary_path(tool)
-    except ManiacError:
-        # A shim that runs nothing from $HOME, or mise failing behind one:
-        # no binary to ask, so no version evidence (never `outdated`).
-        return None
+    path = candidate.binary
     return get_version([str(path)], config=cfg) if path is not None else None
 
 
@@ -120,12 +116,12 @@ def current_version(
     other page is compared with what the login `$PATH` reaches.
     """
     if entry.binary is not None:
-        claim = installation_at(entry.binary)
-        if claim is not None:
-            return claim[1].version
+        pinned = locate_file(entry.binary)
+        if pinned.installation is not None:
+            return pinned.installation.version
         return get_version([str(entry.binary)], config=cfg)
     inst = candidate.installation
-    return inst.version if inst is not None else _unclaimed_version(candidate.tool, cfg)
+    return inst.version if inst is not None else _unclaimed_version(candidate, cfg)
 
 
 def managed_page_state(

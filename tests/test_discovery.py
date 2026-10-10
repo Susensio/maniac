@@ -26,7 +26,7 @@ from maniac.sources.discovery import (
     _resolve_from_mise,
     _run_mise,
 )
-from maniac.sources.resolution import enumerate_installations, find_installation
+from maniac.sources.resolution import Outcome, find_installation, locate_all
 
 
 def _compressed_mise_registry(entries: dict[str, bytes]) -> bytes:
@@ -289,6 +289,11 @@ def test_resolution_does_not_use_the_registry_without_an_installation(
     assert find_installation("envsubst", bin_dir=tmp_path) is None
 
 
+def _claimed(located):
+    """The `(provider, installation)` claims among `locate_all`'s answers."""
+    return [(found.provider, found.installation) for found in located if found.claim]
+
+
 def _fake_installation(binary: str, *, provider: str = "fake") -> Installation:
     return Installation(
         binary=binary,
@@ -301,7 +306,7 @@ def _fake_installation(binary: str, *, provider: str = "fake") -> Installation:
     )
 
 
-def test_enumerate_installations_walks_path_and_keeps_only_claimed_binaries(
+def test_locate_all_walks_path_and_answers_for_every_executable(
     monkeypatch, tmp_path: Path
 ) -> None:
     claimed = tmp_path / "claimed"
@@ -317,12 +322,14 @@ def test_enumerate_installations_walks_path_and_keeps_only_claimed_binaries(
 
     monkeypatch.setattr(resolution, "_detect_via_registry", fake_detect)
 
-    found = enumerate_installations()
+    found = {located.tool: located for located in locate_all()}
 
-    assert [inst.binary for _, inst in found] == ["claimed"]
+    assert [inst.binary for _, inst in _claimed(found.values())] == ["claimed"]
+    assert found["unclaimed"].outcome is Outcome.FOUND
+    assert found["unclaimed"].installation is None
 
 
-def test_enumerate_installations_resolves_a_name_once_at_its_first_path_entry(
+def test_locate_all_resolves_a_name_once_at_its_first_path_entry(
     monkeypatch, tmp_path: Path
 ) -> None:
     """ADR-0016's tie-break: two providers claiming one name, the first `$PATH` wins."""
@@ -339,12 +346,12 @@ def test_enumerate_installations_resolves_a_name_once_at_its_first_path_entry(
 
     monkeypatch.setattr(resolution, "_detect_via_registry", fake_detect)
 
-    [(provider, inst)] = enumerate_installations()
+    [(provider, inst)] = _claimed(locate_all())
 
     assert (provider, inst.binary) == ("fake-provider-first", "tool")
 
 
-def test_enumerate_installations_retains_a_later_path_occurrences_claim_as_a_loser(
+def test_locate_all_retains_a_later_path_occurrences_claim_as_a_loser(
     monkeypatch, tmp_path: Path
 ) -> None:
     """A shadowed same-name binary later on `$PATH` is discarded as the winner
@@ -364,14 +371,14 @@ def test_enumerate_installations_retains_a_later_path_occurrences_claim_as_a_los
 
     monkeypatch.setattr(resolution, "_detect_via_registry", fake_detect)
 
-    [(provider, inst)] = enumerate_installations()
+    [(provider, inst)] = _claimed(locate_all())
 
     assert provider == "fake-provider-first"
     assert inst.provider == "first"
     assert [loser.provider for loser in inst.losers] == ["second"]
 
 
-def test_enumerate_installations_leaves_losers_empty_with_no_shadow(
+def test_locate_all_leaves_losers_empty_with_no_shadow(
     monkeypatch, tmp_path: Path
 ) -> None:
     claimed = tmp_path / "claimed"
@@ -383,18 +390,17 @@ def test_enumerate_installations_leaves_losers_empty_with_no_shadow(
         lambda p: ("fake-provider", _fake_installation(p.name)),
     )
 
-    [(_, inst)] = enumerate_installations()
+    [(_, inst)] = _claimed(locate_all())
 
     assert inst.losers == ()
 
 
-def test_enumerate_installations_reports_and_drops_a_malformed_candidate(
+def test_locate_all_answers_unreadable_for_a_malformed_candidate(
     monkeypatch, tmp_path: Path
 ) -> None:
-    """`enumerate_installations`'s own try/except (not a fake standing in for
-    the whole function) reports a candidate whose provider raises
-    `MalformedToolMetadata` through `on_error`, and drops it from the
-    result without aborting the rest of the walk (ADR-0060)."""
+    """A candidate whose provider raises `MalformedToolMetadata` is answered
+    `unreadable`, with the error, without aborting the rest of the walk
+    (ADR-0060)."""
     broken = tmp_path / "broken"
     broken.touch(mode=0o755)
     ok = tmp_path / "ok"
@@ -408,19 +414,18 @@ def test_enumerate_installations_reports_and_drops_a_malformed_candidate(
         return ("fake-provider", _fake_installation("ok"))
 
     monkeypatch.setattr(resolution, "_detect_via_registry", fake_detect)
-    reported: list[tuple[str, MalformedToolMetadata | NotGloballySelected]] = []
+    found = {located.tool: located for located in locate_all()}
 
-    found = enumerate_installations(on_error=lambda name, e: reported.append((name, e)))
+    assert [inst.binary for _, inst in _claimed(found.values())] == ["ok"]
+    assert found["broken"].outcome is Outcome.UNREADABLE
+    assert found["broken"].error is error
 
-    assert [inst.binary for _, inst in found] == ["ok"]
-    assert reported == [("broken", error)]
 
-
-def test_enumerate_installations_reports_a_project_scoped_refusal_too(
+def test_locate_all_answers_a_project_scoped_refusal_too(
     monkeypatch, tmp_path: Path
 ) -> None:
-    """`NotGloballySelected` (ADR-0061) is caught through the same path as
-    `MalformedToolMetadata`, not left to escape unenumerated."""
+    """`NotGloballySelected` (ADR-0061) is answered `not global`, not left to
+    escape the walk."""
     refused = tmp_path / "refused"
     refused.touch(mode=0o755)
     monkeypatch.setenv("PATH", str(tmp_path))
@@ -428,15 +433,16 @@ def test_enumerate_installations_reports_a_project_scoped_refusal_too(
     monkeypatch.setattr(
         resolution, "_detect_via_registry", lambda p: (_ for _ in ()).throw(error)
     )
-    reported: list[tuple[str, object]] = []
+    [found] = locate_all()
 
-    found = enumerate_installations(on_error=lambda name, e: reported.append((name, e)))
+    assert (found.tool, found.outcome, found.error) == (
+        "refused",
+        Outcome.NOT_GLOBAL,
+        error,
+    )
 
-    assert found == []
-    assert reported == [("refused", error)]
 
-
-def test_enumerate_installations_drops_a_later_shadow_that_also_errors(
+def test_locate_all_drops_a_later_shadow_that_also_errors(
     monkeypatch, tmp_path: Path
 ) -> None:
     """A later `$PATH` shadow that also raises is dropped silently -- it
@@ -455,27 +461,24 @@ def test_enumerate_installations_drops_a_later_shadow_that_also_errors(
         raise MalformedToolMetadata(bin_path, "shadow is broken")
 
     monkeypatch.setattr(resolution, "_detect_via_registry", fake_detect)
-    reported: list[tuple[str, MalformedToolMetadata | NotGloballySelected]] = []
+    [found] = locate_all()
 
-    found = enumerate_installations(on_error=lambda name, e: reported.append((name, e)))
+    assert found.outcome is Outcome.FOUND
+    assert found.installation is not None
+    assert (found.installation.binary, found.installation.losers) == ("tool", ())
 
-    assert [inst.binary for _, inst in found] == ["tool"]
-    assert reported == []
 
-
-def test_enumerate_installations_skips_non_executable_files(
-    monkeypatch, tmp_path: Path
-) -> None:
+def test_locate_all_skips_non_executable_files(monkeypatch, tmp_path: Path) -> None:
     (tmp_path / "not_executable").touch(mode=0o644)
     monkeypatch.setenv("PATH", str(tmp_path))
     monkeypatch.setattr(
         resolution, "_detect_via_registry", lambda p: pytest.fail("must not be called")
     )
 
-    assert enumerate_installations() == []
+    assert locate_all() == []
 
 
-def test_enumerate_installations_on_start_and_on_scan_are_optional_and_no_op_by_default(
+def test_locate_all_on_start_and_on_scan_are_optional_and_no_op_by_default(
     monkeypatch, tmp_path: Path
 ) -> None:
     """Existing callers omitting the callbacks see unchanged behaviour."""
@@ -488,12 +491,12 @@ def test_enumerate_installations_on_start_and_on_scan_are_optional_and_no_op_by_
         lambda p: ("fake-provider", _fake_installation(p.name)),
     )
 
-    found = enumerate_installations()
+    found = locate_all()
 
-    assert [inst.binary for _, inst in found] == ["claimed"]
+    assert [inst.binary for _, inst in _claimed(found)] == ["claimed"]
 
 
-def test_enumerate_installations_reports_candidate_count_then_one_scan_per_candidate(
+def test_locate_all_reports_candidate_count_then_one_scan_per_candidate(
     monkeypatch, tmp_path: Path
 ) -> None:
     for name in ("one", "two", "three"):
@@ -515,7 +518,7 @@ def test_enumerate_installations_reports_candidate_count_then_one_scan_per_candi
         nonlocal scans
         scans += 1
 
-    enumerate_installations(on_start=on_start, on_scan=on_scan)
+    locate_all(on_start=on_start, on_scan=on_scan)
 
     assert starts == [3]
     assert scans == 3

@@ -184,7 +184,7 @@ class Installation:
     losers: tuple["Installation", ...] = ()
     """Other providers' claims for this same binary, discarded by PATH-first-wins
     or by losing to another provider at a later `$PATH` occurrence
-    (`resolution.enumerate_installations`). Empty unless populated there."""
+    (`resolution.locate_all`). Empty unless populated there."""
 
 
 @dataclass

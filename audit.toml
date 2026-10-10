@@ -8,18 +8,18 @@
 
 [metric.resolution_implementations]
 kind = "modules_calling"
-why = "Which binary, who installed it and what version must be answered in one place; call the resolution seam instead of its parts."
+why = "Which binary, who installed it and what version are answered in one place: call `resolution.locate`, `locate_file`, `locate_all` or `this_shell_runs` instead of their parts."
 names = [
   "find_installation",
   "binary_path",
-  "binary_here",
   "resolve_bin_path",
   "shim_target",
-  "installation_at",
-  "enumerate_installations",
+  "shim_target_here",
+  "which_here",
+  "_detect_via_registry",
 ]
 allowed = ["maniac/sources/resolution.py", "maniac/sources/pathcache.py", "maniac/sources/providers/*"]
-ceiling = 5
+ceiling = 0
 target = 0
 
 [metric.resolution_exceptions_handled]
@@ -32,7 +32,7 @@ names = [
   "_DiscoveryError",
 ]
 allowed = ["maniac/sources/resolution.py", "maniac/sources/discovery.py", "maniac/sources/providers/*"]
-ceiling = 10
+ceiling = 1
 target = 0
 
 [metric.source_order_implementations]
@@ -84,7 +84,7 @@ target = 0
 kind = "over_complex"
 why = "A function past the cognitive-complexity limit: split it by the decisions it makes."
 limit = 25
-ceiling = 1
+ceiling = 0
 target = 0
 
 [metric.dead_code]

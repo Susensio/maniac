@@ -66,9 +66,10 @@ class Candidate:
     provider: "Provider | None"
     installation: "Installation | None"
     error: ToolError | None = None
-    """Set when discovery itself raised `MalformedToolMetadata` or
-    `NotGloballySelected` (ADR-0060, ADR-0061) for this tool, before any
-    provider or installation could be resolved."""
+    """Set when the lookup refused this tool (ADR-0060, ADR-0061): unreadable
+    metadata, or a mise install or shim nothing global selects."""
+    binary: Path | None = None
+    """What runs for it from `$HOME`, when the lookup reached a binary."""
 
     @property
     def package(self) -> str:

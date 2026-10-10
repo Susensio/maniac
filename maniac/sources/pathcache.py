@@ -190,7 +190,7 @@ def which(binary_name: str) -> Path | None:
     another with no evidence for it.
 
     An entry that cannot be examined (a directory this user may not search)
-    is passed over, as a shell does and as `enumerate_installations`' bulk
+    is passed over, as a shell does and as `resolution.locate_all`' bulk
     walk already did -- it cannot be the binary that runs, so it is not the
     first hit either.
     """
@@ -225,7 +225,7 @@ def resolve_bin_path(binary_name: str, bin_dir: str | Path | None) -> Path | Non
     """Locate a binary's path: an explicit directory first, then the login `$PATH`.
 
     With no `bin_dir`, resolution is exactly `which` -- nothing else.
-    `enumerate_installations` applies the identical first-`$PATH`-entry-wins
+    `resolution.locate_all` applies the identical first-`$PATH`-entry-wins
     rule in bulk, by walking `$PATH` itself once for every name rather than
     calling `which` once per name; that walk, not a second notion of "which
     binary a name means", is the only reason the mechanics differ here.

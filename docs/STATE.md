@@ -55,14 +55,14 @@ A4 carries the one intended behaviour change (pruning), in its own commit, test 
 - [x] Delete what nothing runs: `Config.max_arg_limit`, `EvaluationResult.deterministic_passed/defects`, `InstallOutcome.source_path/pipeline`, `discovery._extract_mise_tool_id`, `resolution.discover_repo`; tests that exist only to call them go, tests that cover behaviour through them call the live path instead.
 - Done when `dead_code` is 0.
 
-### A2 One resolution seam: next
+### A2 One resolution seam: done (2026-10-10)
 
-- [ ] `locate(tool)` answers which binary the login `$PATH` reaches, through a mise shim, which installer claims it, at what version, whether it is a system binary, and the copy this shell runs if another, as one value: found, not on `$PATH`, a shim that runs nothing, not globally selected, or unreadable metadata. No exception escapes it.
-- [ ] `install`, `why`, `list` and `scan` map that value to what they print; `enumerate_installations` becomes a walk over the login `$PATH` calling `locate`.
-- [ ] `ResolvedTool` and `Candidate` are built from it, or replaced by it, whichever leaves fewer types.
-- Done when `resolution_implementations`, `resolution_exceptions_handled` and `over_complex` are 0.
+- [x] `locate(tool)` answers which binary the login `$PATH` reaches, through a mise shim, which installer claims it, at what version, whether it is a system binary, and the copy this shell runs if another, as one value: found, not on `$PATH`, a shim that runs nothing, not globally selected, or unreadable metadata. No exception escapes it.
+- [x] `install`, `why`, `list` and `scan` map that value to what they print; `enumerate_installations` is `locate_all`, a walk over the login `$PATH` answering for every name, and `scan` decides what it skips (`Skip` moved to `listing`).
+- [x] `ResolvedTool` (`tool_from`) and `Candidate` (`candidate_from`, which now carries the binary) are built from it. Merging the two types was left: each still serves one side (install's tiers, scan's rows), and both are now one line from a `Located`.
+- `resolution_implementations` and `over_complex` are 0. `resolution_exceptions_handled` is 1: `scan`'s catch around `resolve_upstream`, which reads repository identity, not the binary; it goes with A4.
 
-### A3 One page state
+### A3 One page state: next
 
 - [ ] One function gives a managed page's state, installed version, note and drift; `list`, `scan`, `why` and `install`'s already-current check call it.
 - Done when `page_state_implementations` is 1.
@@ -91,3 +91,4 @@ A4 carries the one intended behaviour change (pruning), in its own commit, test 
 - 2026-10-10: A0 landed: the review, this plan, `just audit` with today's numbers as ceilings.
 - 2026-10-10: CLI snapshots added (syrupy) instead of an ad-hoc before/after script: they live in the suite, run in CI, and outlast the refactor. Reading them found one wording leak to fix before A1: the refusal to generate over an incomplete upstream check still says "tier-2 repository check".
 - 2026-10-10: A1 done: dead code deleted (`dead_code` 9 to 0). Started by a session that stalled mid-edit, its deletion of `discover_repo` having also taken the `Skip` class with it; finished here. The three `discover_repo` tests now assert the same behaviour through `find_installation`.
+- 2026-10-10: A2 done: one lookup (`resolution.locate`, `locate_file`, `locate_all`, `this_shell_runs`) returning a `Located` value; `why`'s hand-written chain, `install`'s refusals, `list`'s and `scan`'s lookups all map it. `resolution_implementations` 5 to 0, `resolution_exceptions_handled` 10 to 1, `over_complex` 1 to 0. A test reloading the resolution module re-created its classes under later tests; it now checks the import in a fresh interpreter.

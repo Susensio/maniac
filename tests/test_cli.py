@@ -448,7 +448,7 @@ def test_cli_install_reuses_config_for_existing_destination(
 
     monkeypatch.setattr(cli_module, "Config", TrackingConfig)
     monkeypatch.setattr(
-        "maniac.orchestration.install.resolve_bin_path",
+        "maniac.sources.resolution.resolve_bin_path",
         lambda tool, bin_dir=None, **_: Path(f"/nonexistent/maniac-tests/bin/{tool}"),
     )
     monkeypatch.setattr(

@@ -1,6 +1,9 @@
 """Resolve PATH binaries through the ordered installer-provider registry.
 
-The one place that knows both how a binary is named and which providers exist.
+The one place that knows both how a binary is named and which providers
+exist, and the one place commands ask: `locate` (one tool), `locate_file` (a
+pinned copy), `locate_all` (the login `$PATH`) and `this_shell_runs`. Each
+answers with a `Located` value; no resolution exception escapes them.
 Providers and `discovery.py` sit below it and import nothing from here, so
 composition is carried by the registry passed down a call rather than by
 module- or class-global state.
@@ -8,7 +11,7 @@ module- or class-global state.
 
 import os
 from collections.abc import Callable
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from enum import Enum
 from pathlib import Path
 
@@ -18,11 +21,6 @@ from .pathcache import path_dirs, resolve_bin_path, which_here
 from .providers.base import Provider
 from .providers.mise import is_shim, shim_target, shim_target_here
 from .providers.registry import registry
-
-# Both name a claim `_detect_via_registry` could not complete (ADR-0060,
-# ADR-0061): a tool's own metadata file unreadable, or a Mise install
-# refused as not globally selected. Every catch below treats them alike.
-_DiscoveryError = (MalformedToolMetadata, NotGloballySelected)
 
 
 def binary_path(binary_name: str, bin_dir: str | Path | None = None) -> Path | None:
@@ -39,20 +37,6 @@ def binary_path(binary_name: str, bin_dir: str | Path | None = None) -> Path | N
     if found is None:
         return None
     return shim_target(found) or found
-
-
-def binary_here(binary_name: str) -> Path | None:
-    """The file the invoking shell runs for `binary_name`, or None.
-
-    The inherited `$PATH`'s first hit, a Mise shim followed as mise would
-    from the current directory. Compared with `binary_path`, it tells when
-    the shell maniac was run from would run another copy than the one a
-    page documents (CONTRACT.md rule 2).
-    """
-    found = which_here(binary_name)
-    if found is not None and is_shim(found):
-        return shim_target_here(found) or found
-    return found
 
 
 def is_system_binary(bin_path: Path) -> bool:
@@ -75,72 +59,161 @@ def find_installation(
     return _detect_via_registry(bin_path, here=here) if bin_path is not None else None
 
 
-def installation_at(bin_path: Path) -> tuple[Provider, Installation] | None:
-    """Who installed the file at `bin_path`, global or not; None if no one or unreadable.
+class Outcome(Enum):
+    """What looking a tool up on the login `$PATH` found (CONTRACT.md rule 2)."""
 
-    For a page that documents a copy `install --force` chose (CONTRACT.md rule
-    2): its version is checked on that copy, project-scoped or not.
+    FOUND = "found"
+    """A binary runs for it from `$HOME`; an installer may or may not claim it."""
+    NOT_ON_PATH = "not on path"
+    SHIM_RUNS_NOTHING = "shim runs nothing"
+    """A mise shim no globally selected tool provides (ADR-0063 Corrections)."""
+    NOT_GLOBAL = "not global"
+    """A mise install no global config selects (ADR-0061)."""
+    UNREADABLE = "unreadable"
+    """Its installer's metadata, or mise behind a shim, could not be read (ADR-0060)."""
+
+
+@dataclass(frozen=True, slots=True)
+class Located:
+    """One tool's lookup: the one answer every command maps to what it prints.
+
+    `hit` is what the login `$PATH` (or an explicit directory) reaches, a
+    mise shim itself if that is what sits there; `binary` is what actually
+    runs for it from `$HOME`. `error` carries the refusal for the outcomes
+    that are not `FOUND`, with its path and reason.
+    """
+
+    tool: str
+    outcome: Outcome
+    hit: Path | None = None
+    binary: Path | None = None
+    provider: Provider | None = None
+    installation: Installation | None = None
+    error: MalformedToolMetadata | NotGloballySelected | None = None
+
+    @property
+    def claim(self) -> tuple[Provider, Installation] | None:
+        if self.provider is None or self.installation is None:
+            return None
+        return self.provider, self.installation
+
+    @property
+    def via_shim(self) -> bool:
+        return self.hit is not None and is_shim(self.hit)
+
+    @property
+    def is_system(self) -> bool:
+        """An unclaimed binary a system package owns (ADR-0059)."""
+        return (
+            self.outcome is Outcome.FOUND
+            and self.installation is None
+            and self.binary is not None
+            and is_system_binary(self.binary)
+        )
+
+
+def locate(
+    tool: str, bin_dir: str | Path | None = None, *, accept_project: bool = False
+) -> Located:
+    """Look `tool` up as the login shell runs it from `$HOME`; never raises.
+
+    `bin_dir` looks in that directory first. `accept_project` answers with
+    an install mise would refuse as not globally selected: `install --force`
+    asked for that very copy (CONTRACT.md rule 2).
+    """
+    hit = resolve_bin_path(tool, bin_dir)
+    try:
+        claim = find_installation(tool, bin_dir=bin_dir, here=accept_project)
+        binary = claim[1].bin_path if claim is not None else binary_path(tool, bin_dir)
+    except ShimRunsNothing as e:
+        return Located(tool, Outcome.SHIM_RUNS_NOTHING, hit, error=e)
+    except NotGloballySelected as e:
+        return Located(
+            tool,
+            Outcome.NOT_GLOBAL,
+            hit,
+            binary=_reached(hit),
+            installation=e.installation,
+            error=e,
+        )
+    except MalformedToolMetadata as e:
+        return Located(tool, Outcome.UNREADABLE, hit, binary=_reached(hit), error=e)
+    if claim is None and binary is None:
+        return Located(tool, Outcome.NOT_ON_PATH)
+    provider, inst = claim if claim is not None else (None, None)
+    return Located(tool, Outcome.FOUND, hit, binary, provider, inst)
+
+
+def locate_file(bin_path: Path) -> Located:
+    """Who installed the file at `bin_path`, global or not.
+
+    For a page that documents a copy `install --force` chose (CONTRACT.md
+    rule 2): it is checked on that copy, project-scoped or not.
     """
     try:
-        return _detect_via_registry(bin_path, here=True)
-    except _DiscoveryError:
+        claim = _detect_via_registry(bin_path, here=True)
+    except (MalformedToolMetadata, NotGloballySelected) as e:
+        return Located(bin_path.name, Outcome.UNREADABLE, bin_path, bin_path, error=e)
+    provider, inst = claim if claim is not None else (None, None)
+    return Located(bin_path.name, Outcome.FOUND, bin_path, bin_path, provider, inst)
+
+
+def this_shell_runs(tool: str) -> Path | None:
+    """The file the invoking shell runs for `tool`, or None.
+
+    The inherited `$PATH`'s first hit, a mise shim followed as mise would
+    from the current directory. Compared with `Located.binary`, it tells when
+    the shell maniac was run from would run another copy than the one a page
+    documents (CONTRACT.md rule 2).
+    """
+    found = which_here(tool)
+    if found is not None and is_shim(found):
+        return shim_target_here(found) or found
+    return found
+
+
+def _reached(hit: Path | None) -> Path | None:
+    """What runs for `hit`, when that is all that can be said: its shim target,
+    or None when the shim itself could not be followed."""
+    if hit is None or not is_shim(hit):
+        return hit
+    try:
+        return shim_target(hit) or hit
+    except (MalformedToolMetadata, NotGloballySelected):
         return None
 
 
-class Skip(Enum):
-    """Why discovery passed over a binary on the login `$PATH` (CONTRACT.md rule 3)."""
-
-    SYSTEM = "system"
-    """A system package's binary: its package ships and upgrades its page (ADR-0059)."""
-    UNCLAIMED = "unclaimed"
-    """No installer claims it: a wrapper script, a hand-copied binary."""
-    SHIM_RUNS_NOTHING = "shim"
-    """A mise shim that runs nothing from `$HOME`: a project-only tool's."""
-
-
-def enumerate_installations(
+def locate_all(
     on_start: Callable[[int], None] | None = None,
     on_scan: Callable[[], None] | None = None,
-    on_error: Callable[[str, MalformedToolMetadata | NotGloballySelected], None]
-    | None = None,
-    on_skip: Callable[[str, Skip], None] | None = None,
-) -> list[tuple[Provider, Installation]]:
-    """Claim each first-PATH binary once, preserving PATH precedence.
+) -> list[Located]:
+    """Look up every name on the login `$PATH`, once each, at its first hit.
 
-    `status`'s enumeration (ADR-0016 Stage 7) inverts from scanning the
-    manpath to this: a binary is a unit MANIAC can act on because some
-    provider claims it, whether or not a manpage for it exists anywhere
-    yet -- capability the manpath scan could never see, not a page. A name
-    is resolved once, at its first `$PATH` occurrence, since that is the
-    binary that actually runs when two providers claim the same name
-    (ADR-0016's tie-break).
+    The binary that runs is the first one on `$PATH` (ADR-0016's
+    tie-break), so a later hit never wins; an installer that claims a later
+    one too is kept on the winner's `Installation.losers`, so `why` can say
+    when `$PATH` hides a better-documented install.
 
-    Walks the login shell's `$PATH` (ADR-0062) -- the answer describes the
-    machine, not the environment MANIAC happened to be run in, same as
-    `resolve_bin_path`.
-
-    `on_start`/`on_scan`, both `None` by default, split the work into two
-    phases to instrument: `on_start` fires once with the candidate count,
-    right after the directory scan and before the per-candidate
-    `_detect_via_registry` loop that dominates the cost; `on_scan` fires
-    once per candidate processed in that loop.
-
-    A candidate whose provider raises `MalformedToolMetadata` (ADR-0060: its
-    own metadata file is present but unreadable) or `NotGloballySelected`
-    (ADR-0061: a Mise install that resolves but is not among Mise's globally
-    selected tools) is reported through `on_error` -- `(name, error)` -- and
-    dropped from the result rather than aborting every other candidate's
-    enumeration. A
-    later `$PATH` shadow that also errors is silently dropped instead: it
-    never wins regardless, and does not have its own row to report an
-    error against.
-
-    A later `$PATH` occurrence of a claimed name never wins, but a provider
-    that claims it too is retained on the winner's `Installation.losers`
-    rather than discarded -- diagnostics can then show when PATH hides a
-    better-documented install, without this changing which one resolves.
+    `on_start` fires once with the number of names, after the directory
+    walk; `on_scan` once per name looked up.
     """
-    seen: dict[str, Path] = {}
+    first, shadowed = _path_names()
+    if on_start is not None:
+        on_start(len(first))
+    located = []
+    for name, bin_path in first.items():
+        found = _locate_hit(name, bin_path)
+        if found.installation is not None and shadowed.get(name):
+            found = _with_losers(found, shadowed[name])
+        located.append(found)
+        if on_scan is not None:
+            on_scan()
+    return located
+
+
+def _path_names() -> tuple[dict[str, Path], dict[str, list[Path]]]:
+    """Every executable name on the login `$PATH`: its first hit, and the rest."""
+    first: dict[str, Path] = {}
     shadowed: dict[str, list[Path]] = {}
     for entry in path_dirs():
         try:
@@ -153,53 +226,55 @@ def enumerate_installations(
                     continue
             except OSError:
                 continue
-            if child.name in seen:
+            if child.name in first:
                 shadowed.setdefault(child.name, []).append(Path(child.path))
             else:
-                seen[child.name] = Path(child.path)
+                first[child.name] = Path(child.path)
+    return first, shadowed
 
-    if on_start is not None:
-        on_start(len(seen))
 
-    found: list[tuple[Provider, Installation]] = []
-    for name, bin_path in seen.items():
-        try:
-            claim = _detect_via_registry(bin_path)
-        except ShimRunsNothing:
-            # From $HOME this name reaches no binary at all (ADR-0063
-            # Corrections) -- not a tool of this machine, so no row.
-            if on_skip is not None:
-                on_skip(name, Skip.SHIM_RUNS_NOTHING)
-            if on_scan is not None:
-                on_scan()
+def _locate_hit(name: str, hit: Path) -> Located:
+    """`locate` for a name whose `$PATH` hit is already known."""
+    try:
+        claim = _detect_via_registry(hit)
+    except ShimRunsNothing as e:
+        return Located(name, Outcome.SHIM_RUNS_NOTHING, hit, error=e)
+    except NotGloballySelected as e:
+        return Located(
+            name,
+            Outcome.NOT_GLOBAL,
+            hit,
+            binary=_reached(hit),
+            installation=e.installation,
+            error=e,
+        )
+    except MalformedToolMetadata as e:
+        return Located(name, Outcome.UNREADABLE, hit, binary=_reached(hit), error=e)
+    if claim is None:
+        return Located(name, Outcome.FOUND, hit, _reached(hit))
+    provider, inst = claim
+    return Located(name, Outcome.FOUND, hit, inst.bin_path, provider, inst)
+
+
+def _with_losers(found: Located, shadows: list[Path]) -> Located:
+    """`found`, its installation listing who also claims a later `$PATH` hit."""
+    assert found.installation is not None
+    losers = []
+    for shadow in shadows:
+        if shadow == found.installation.bin_path:
+            # The binary a shim fell through to is the winner itself.
             continue
-        except _DiscoveryError as e:
-            if on_error is not None:
-                on_error(name, e)
-            if on_scan is not None:
-                on_scan()
+        try:
+            claim = _detect_via_registry(shadow)
+        except (MalformedToolMetadata, NotGloballySelected):
             continue
         if claim is not None:
-            provider, inst = claim
-            losers: list[Installation] = []
-            for shadow_path in shadowed.get(name, ()):
-                if shadow_path == inst.bin_path:
-                    # The binary a shim fell through to is the winner itself.
-                    continue
-                try:
-                    shadow_claim = _detect_via_registry(shadow_path)
-                except _DiscoveryError:
-                    continue
-                if shadow_claim is not None:
-                    losers.append(shadow_claim[1])
-            if losers:
-                inst = replace(inst, losers=tuple(losers))
-            found.append((provider, inst))
-        elif on_skip is not None:
-            on_skip(name, Skip.SYSTEM if is_system_binary(bin_path) else Skip.UNCLAIMED)
-        if on_scan is not None:
-            on_scan()
-    return sorted(found, key=lambda item: item[1].binary)
+            losers.append(claim[1])
+    if not losers:
+        return found
+    return replace(
+        found, installation=replace(found.installation, losers=tuple(losers))
+    )
 
 
 def _detect_via_registry(

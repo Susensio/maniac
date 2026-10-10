@@ -11,7 +11,6 @@ from pathlib import Path
 
 from .. import manifest
 from ..config import Config
-from ..exceptions import MalformedToolMetadata, NotGloballySelected
 from .classification import (
     current_version,
     managed_page_state,
@@ -68,10 +67,7 @@ def managed_pages(
 def _page_row(tool: str, entry: manifest.Entry, config: Config) -> PageRow:
     candidate = named_candidate(tool)
     note: str | None = None
-    try:
-        installed = current_version(candidate, entry, config)
-    except (MalformedToolMetadata, NotGloballySelected) as e:
-        installed, note = None, e.reason
+    installed = current_version(candidate, entry, config)
     if candidate.error is not None and entry.binary is None:
         installed, note = None, candidate.error.reason
     freshness = (

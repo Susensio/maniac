@@ -1,7 +1,8 @@
 """Tests for `ProviderRegistry` (ADR-0015): registration, ordered iteration, composition."""
 
-import importlib
+import subprocess
 import sys
+import textwrap
 from pathlib import Path
 
 from maniac.config import Config
@@ -270,15 +271,28 @@ def test_resolve_source_uses_the_provider_the_caller_already_holds() -> None:
 def test_importing_resolution_mutates_no_provider_class() -> None:
     """ADR-0015 composition is passed, not installed: importing the resolver must
     not bind anything onto a provider class.
+
+    In a fresh interpreter: reloading the module in this one would re-create
+    its classes (`Outcome`, `Located`) under every later test's feet.
     """
-    before = {
-        provider.__class__.__name__: set(vars(provider.__class__))
-        for provider in registry
-    }
+    script = textwrap.dedent(
+        """
+        from maniac.sources.providers.registry import registry
 
-    importlib.reload(sys.modules["maniac.sources.resolution"])
+        def snapshot():
+            return {
+                provider.__class__.__name__: set(vars(provider.__class__))
+                for provider in registry
+            }
 
-    assert {
-        provider.__class__.__name__: set(vars(provider.__class__))
-        for provider in registry
-    } == before
+        before = snapshot()
+        import maniac.sources.resolution
+        assert snapshot() == before, "importing resolution changed a provider class"
+        """
+    )
+
+    result = subprocess.run(
+        [sys.executable, "-c", script], capture_output=True, text=True, check=False
+    )
+
+    assert result.returncode == 0, result.stderr

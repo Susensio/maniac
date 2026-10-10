@@ -34,11 +34,13 @@ from maniac.cli.listing import (
     _TerminalObserver,
 )
 from maniac.cli.table import STATE_COLUMN_WIDTH, TOOL_COLUMN_MAX_WIDTH
+from maniac.exceptions import ShimRunsNothing
 from maniac.listing import ActionState, PageSource, ToolError, ToolRow, compute_rows
 from maniac.models import RepoSource
 from maniac.sources.packages import ExternalPageFreshness, ExternalPageVerification
+from maniac.sources.resolution import Located, Outcome
 
-from .listing_support import _config, _FakeProvider, _installation
+from .listing_support import _config, _FakeProvider, _installation, _located_all
 
 runner = CliRunner()
 
@@ -60,10 +62,8 @@ def test_streaming_list_renders_checking_before_a_blocked_probe_finishes(
     provider = _FakeProvider(source=source)
     inst = _installation()
     monkeypatch.setattr(
-        "maniac.listing.inventory.resolution.enumerate_installations",
-        lambda on_start=None, on_scan=None, on_error=None, on_skip=None: [
-            (provider, inst)
-        ],
+        "maniac.listing.inventory.resolution.locate_all",
+        lambda on_start=None, on_scan=None: _located_all([(provider, inst)]),
     )
     probe_started = threading.Event()
     release_probe = threading.Event()
@@ -1022,11 +1022,13 @@ def test_cli_streaming_discards_the_live_frames_for_one_final_render(
     monkeypatch.setattr(cli_module, "Config", lambda: _config(tmp_path))
     monkeypatch.setattr("maniac.cli.listing.Live", FakeLive)
     monkeypatch.setattr(
-        "maniac.listing.inventory.resolution.enumerate_installations",
-        lambda on_start=None, on_scan=None, on_error=None, on_skip=None: (
-            on_start and on_start(1),
-            [(_FakeProvider(), _installation(binary="gum"))],
-        )[-1],
+        "maniac.listing.inventory.resolution.locate_all",
+        lambda on_start=None, on_scan=None: _located_all(
+            (
+                on_start and on_start(1),
+                [(_FakeProvider(), _installation(binary="gum"))],
+            )[-1]
+        ),
     )
     renders: list[Any] = []
 
@@ -1057,11 +1059,13 @@ def test_cli_streaming_keeps_siblings_apart_absent_proven_shared_target(
     monkeypatch.setattr(cli_module, "Config", lambda: _config(tmp_path))
     provider = _FakeProvider()
     monkeypatch.setattr(
-        "maniac.listing.inventory.resolution.enumerate_installations",
-        lambda on_start=None, on_scan=None, on_error=None, on_skip=None: [
-            (provider, _installation(binary=binary, package="pandoc"))
-            for binary in ("pandoc", "pandoc-lua", "pandoc-server")
-        ],
+        "maniac.listing.inventory.resolution.locate_all",
+        lambda on_start=None, on_scan=None: _located_all(
+            [
+                (provider, _installation(binary=binary, package="pandoc"))
+                for binary in ("pandoc", "pandoc-lua", "pandoc-server")
+            ]
+        ),
     )
 
     result = runner.invoke(app, ["scan"])
@@ -1092,10 +1096,10 @@ def test_cli_verbose_list_disables_streaming(
     )
     provider = _FakeProvider()
     monkeypatch.setattr(
-        "maniac.listing.inventory.resolution.enumerate_installations",
-        lambda on_start=None, on_scan=None, on_error=None, on_skip=None: [
-            (provider, _installation(binary="gum"))
-        ],
+        "maniac.listing.inventory.resolution.locate_all",
+        lambda on_start=None, on_scan=None: _located_all(
+            [(provider, _installation(binary="gum"))]
+        ),
     )
 
     result = runner.invoke(app, ["--verbose", "scan"])
@@ -1219,15 +1223,15 @@ def test_cli_streaming_error_keeps_provisional_rows_and_propagates(
         def stop(self) -> None:
             return None
 
-    def enumerate_installations(
-        on_start=None, on_scan=None, on_error=None, on_skip=None
-    ):
+    def enumerate_installations(on_start=None, on_scan=None):
         assert on_start is not None
         on_start(2)
-        return [
-            (provider, _installation(binary="alpha")),
-            (provider, _installation(binary="alpha-sub", package="alpha")),
-        ]
+        return _located_all(
+            [
+                (provider, _installation(binary="alpha")),
+                (provider, _installation(binary="alpha-sub", package="alpha")),
+            ]
+        )
 
     monkeypatch.setattr(
         cli_module.console, "_instance", Console(force_terminal=True, no_color=True)
@@ -1239,7 +1243,7 @@ def test_cli_streaming_error_keeps_provisional_rows_and_propagates(
         lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("local failed")),
     )
     monkeypatch.setattr(
-        "maniac.listing.inventory.resolution.enumerate_installations",
+        "maniac.listing.inventory.resolution.locate_all",
         enumerate_installations,
     )
 
@@ -1356,11 +1360,13 @@ def test_cli_list_pipe_emits_exactly_the_filtered_set(
     missing_provider = _FakeProvider(local_docs=[])
 
     monkeypatch.setattr(
-        "maniac.listing.inventory.resolution.enumerate_installations",
-        lambda on_start=None, on_scan=None, on_error=None, on_skip=None: [
-            (available_provider, _installation(binary="gum")),
-            (missing_provider, _installation(binary="ghost")),
-        ],
+        "maniac.listing.inventory.resolution.locate_all",
+        lambda on_start=None, on_scan=None: _located_all(
+            [
+                (available_provider, _installation(binary="gum")),
+                (missing_provider, _installation(binary="ghost")),
+            ]
+        ),
     )
 
     res = runner.invoke(app, ["scan", "--available"])
@@ -1387,10 +1393,10 @@ def test_cli_list_pipe_unknown_emits_exactly_the_filtered_set(
         ),
     )
     monkeypatch.setattr(
-        "maniac.listing.inventory.resolution.enumerate_installations",
-        lambda on_start=None, on_scan=None, on_error=None, on_skip=None: [
-            (_FakeProvider(), _installation())
-        ],
+        "maniac.listing.inventory.resolution.locate_all",
+        lambda on_start=None, on_scan=None: _located_all(
+            [(_FakeProvider(), _installation())]
+        ),
     )
 
     res = runner.invoke(app, ["scan", "--unknown"])
@@ -1408,14 +1414,16 @@ def test_cli_list_pipe_available_waits_for_upstream_classification(
     monkeypatch.setattr(cli_module, "Config", lambda: _config(tmp_path))
     source = RepoSource(name="fzf", target="junegunn/fzf", is_local=False)
     monkeypatch.setattr(
-        "maniac.listing.inventory.resolution.enumerate_installations",
-        lambda on_start=None, on_scan=None, on_error=None, on_skip=None: [
-            (
-                _FakeProvider(source=source),
-                _installation(binary="fzf", version="0.74.3"),
-            ),
-            (_FakeProvider(), _installation(binary="missing")),
-        ],
+        "maniac.listing.inventory.resolution.locate_all",
+        lambda on_start=None, on_scan=None: _located_all(
+            [
+                (
+                    _FakeProvider(source=source),
+                    _installation(binary="fzf", version="0.74.3"),
+                ),
+                (_FakeProvider(), _installation(binary="missing")),
+            ]
+        ),
     )
     monkeypatch.setattr(
         "maniac.listing.upstream.discover_repo_manpage",
@@ -1914,10 +1922,10 @@ def test_cli_list_pipe_emits_bare_names(
     )
     monkeypatch.setattr(cli_module, "Config", lambda: _config(tmp_path))
     monkeypatch.setattr(
-        "maniac.listing.inventory.resolution.enumerate_installations",
-        lambda on_start=None, on_scan=None, on_error=None, on_skip=None: [
-            (_FakeProvider(), _installation(binary="gum"))
-        ],
+        "maniac.listing.inventory.resolution.locate_all",
+        lambda on_start=None, on_scan=None: _located_all(
+            [(_FakeProvider(), _installation(binary="gum"))]
+        ),
     )
 
     res = runner.invoke(app, ["scan"])
@@ -1933,11 +1941,13 @@ def test_cli_list_tty_shows_table(
     )
     monkeypatch.setattr(cli_module, "Config", lambda: _config(tmp_path))
     monkeypatch.setattr(
-        "maniac.listing.inventory.resolution.enumerate_installations",
-        lambda on_start=None, on_scan=None, on_error=None, on_skip=None: (
-            on_start and on_start(1),
-            [(_FakeProvider(), _installation(binary="gum"))],
-        )[-1],
+        "maniac.listing.inventory.resolution.locate_all",
+        lambda on_start=None, on_scan=None: _located_all(
+            (
+                on_start and on_start(1),
+                [(_FakeProvider(), _installation(binary="gum"))],
+            )[-1]
+        ),
     )
 
     res = runner.invoke(app, ["scan"])
@@ -1952,7 +1962,6 @@ def test_scan_leaves_out_maniacs_pages_and_counts_every_skip_on_stderr(
     it passed over is counted by reason -- on stderr, so piped stdout is
     still exactly the names."""
     from maniac.manifest import Entry, Tier
-    from maniac.sources.resolution import Skip
 
     from .manifest_support import record_entry
 
@@ -1970,23 +1979,30 @@ def test_scan_leaves_out_maniacs_pages_and_counts_every_skip_on_stderr(
     )
     provider = _FakeProvider()
 
-    def enumerate_installations(
-        on_start=None, on_scan=None, on_error=None, on_skip=None
-    ):
-        assert on_skip is not None
-        on_skip("ls", Skip.SYSTEM)
-        on_skip("cat", Skip.SYSTEM)
-        on_skip("wrapper", Skip.UNCLAIMED)
-        on_skip("project-only", Skip.SHIM_RUNS_NOTHING)
+    def locate_all(on_start=None, on_scan=None):
         return [
-            (provider, _installation(binary="gum")),
-            (provider, _installation(binary="mine")),
+            Located("ls", Outcome.FOUND, Path("/usr/bin/ls"), Path("/usr/bin/ls")),
+            Located("cat", Outcome.FOUND, Path("/usr/bin/cat"), Path("/usr/bin/cat")),
+            Located(
+                "wrapper", Outcome.FOUND, tmp_path / "wrapper", tmp_path / "wrapper"
+            ),
+            Located(
+                "project-only",
+                Outcome.SHIM_RUNS_NOTHING,
+                tmp_path / "shims" / "project-only",
+                error=ShimRunsNothing(
+                    "project-only", tmp_path / "shims" / "project-only"
+                ),
+            ),
+            *_located_all(
+                [
+                    (provider, _installation(binary="gum")),
+                    (provider, _installation(binary="mine")),
+                ]
+            ),
         ]
 
-    monkeypatch.setattr(
-        "maniac.listing.inventory.resolution.enumerate_installations",
-        enumerate_installations,
-    )
+    monkeypatch.setattr("maniac.listing.inventory.resolution.locate_all", locate_all)
 
     res = runner.invoke(app, ["scan"])
 

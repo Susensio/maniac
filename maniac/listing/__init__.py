@@ -9,7 +9,7 @@
 | missing    | nothing resolves and no free page is known                               |
 | error      | this tool's own metadata file is present but malformed (ADR-0060)        |
 
-The unit is a binary a provider detected (`resolution.enumerate_installations`),
+The unit is a binary a provider detected (`resolution.locate_all`),
 not a manpath scan, since that is what bounds what a bulk install could act on.
 Each row's *state* is a reachability fact checked against `man` directly
 (ADR-0018, reversing ADR-0013/ADR-0016's "the manpath is never scanned").

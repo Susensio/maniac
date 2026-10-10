@@ -27,9 +27,8 @@ from ..listing import (
     compute_rows,
     group_rows,
 )
-from ..listing.inventory import MANAGED
+from ..listing.inventory import MANAGED, Skip
 from ..models import RepoSource
-from ..sources.resolution import Skip
 from . import app, console, get_config, require_login_path
 from .options import NamesOption, OutdatedOption, UnknownOption
 from .render import _repo_cell

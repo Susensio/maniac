@@ -21,8 +21,6 @@ from .. import manifest
 from ..config import Config
 from ..exceptions import (
     ManiacError,
-    NotGloballySelected,
-    ShimRunsNothing,
     UnsupportedPandoc,
 )
 from ..generation.compiler import require_supported_pandoc
@@ -42,9 +40,8 @@ from ..sources.candidates import select_install_root, select_repository
 from ..sources.crawler import get_version
 from ..sources.docs import discover_repo_manpages
 from ..sources.manpages import find_installed_manpage_path
-from ..sources.pathcache import resolve_bin_path
-from ..sources.resolution import binary_here, is_system_binary
-from .context import ResolvedTool, resolve_tool
+from ..sources.resolution import Outcome, is_system_binary, locate, this_shell_runs
+from .context import ResolvedTool, resolve_tool, tool_from
 
 __all__ = ["InstallOutcome", "InstallRefused", "Tier", "run_install"]
 
@@ -145,7 +142,7 @@ def run_install(
     except InstallRefused as refusal:
         if not force:
             raise
-        this_copy = binary_here(tool_name)
+        this_copy = this_shell_runs(tool_name)
         if this_copy is None:
             raise
         overrides.append(f"not installed globally; documenting {this_copy}")
@@ -213,36 +210,38 @@ def _resolve_global(
     tool_name: str, cfg: Config, bin_dir: str | Path | None
 ) -> ResolvedTool:
     """The copy the login `$PATH` reaches, or `InstallRefused` saying why not."""
-    bin_path = resolve_bin_path(tool_name, bin_dir)
-    if bin_path is None:
+    located = locate(tool_name, bin_dir)
+    if located.hit is None:
         raise InstallRefused(
             f"'{tool_name}' is not on your login shell's $PATH -- and a "
             "manpage would be installed globally and permanently. Install it "
             "globally first, or make your login profile put it on $PATH."
             + _force_hint(tool_name)
         )
-    try:
-        return resolve_tool(tool_name, config=cfg, bin_dir=bin_dir)
-    except ShimRunsNothing as e:
+    refused = located.error
+    if located.outcome is Outcome.SHIM_RUNS_NOTHING:
+        assert refused is not None
         raise InstallRefused(
-            f"'{tool_name}' is a Mise shim ({e.path}) that runs nothing from "
+            f"'{tool_name}' is a Mise shim ({refused.path}) that runs nothing from "
             "$HOME: no globally selected tool provides it, and nothing else on "
             "your login shell's $PATH does. Select it globally "
             "(`mise use -g ...`) to document it." + _force_hint(tool_name)
-        ) from e
-    except NotGloballySelected as e:
+        ) from refused
+    if located.outcome is Outcome.NOT_GLOBAL:
+        assert refused is not None
         raise InstallRefused(
-            f"'{tool_name}' resolves to {e.path}, which is not one of Mise's "
+            f"'{tool_name}' resolves to {refused.path}, which is not one of Mise's "
             "globally selected tools (`mise ls --current` from $HOME) -- "
             "selected only by a project config, or by none. Select it "
             "globally (`mise use -g ...`) or remove the stale link."
             + _force_hint(tool_name)
-        ) from e
+        ) from refused
+    return tool_from(located, config=cfg, bin_dir=bin_dir)
 
 
 def _force_hint(tool_name: str) -> str:
     """How to document the invoking shell's copy instead, when it has one."""
-    this_copy = binary_here(tool_name)
+    this_copy = this_shell_runs(tool_name)
     if this_copy is None:
         return ""
     return f" This shell runs {this_copy}; `--force` documents that copy."
@@ -258,7 +257,9 @@ def _resolution(tool: ResolvedTool, *, bin_dir: str | Path | None) -> Resolution
         installer = None
         reported = get_version([str(tool.bin_path)], config=tool.config)
         version = reported.splitlines()[0].strip() if reported else None
-    here = binary_here(tool.tool_name) if bin_dir is None and not tool.pinned else None
+    here = (
+        this_shell_runs(tool.tool_name) if bin_dir is None and not tool.pinned else None
+    )
     if here is not None and _same_file(here, tool.bin_path):
         here = None
     return Resolution(tool.bin_path, installer, version, here)

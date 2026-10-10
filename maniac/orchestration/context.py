@@ -102,22 +102,40 @@ def resolve_tool(
     bin_dir: str | Path | None = None,
     here: bool = False,
 ) -> ResolvedTool:
-    """Resolve a binary's installation once, for every tier that follows."""
-    found = resolution.find_installation(tool_name, bin_dir=bin_dir, here=here)
-    provider, installation = found if found is not None else (None, None)
+    """Resolve a binary's installation once, for every tier that follows.
+
+    Raises the lookup's refusal (`NotGloballySelected`, `ShimRunsNothing`,
+    `MalformedToolMetadata`) for a caller that has nothing better to say.
+    """
+    return tool_from(
+        resolution.locate(tool_name, bin_dir, accept_project=here),
+        config=config,
+        cache_dir=cache_dir,
+        bin_dir=bin_dir,
+        pinned=here,
+    )
+
+
+def tool_from(
+    located: resolution.Located,
+    *,
+    config: Config,
+    cache_dir: str | Path | None = None,
+    bin_dir: str | Path | None = None,
+    pinned: bool = False,
+) -> ResolvedTool:
+    """The resolved tool a lookup found; raises its refusal if it found none."""
+    if located.error is not None:
+        raise located.error
     return ResolvedTool(
         # What runs: the claimed file, else the unclaimed binary -- for a
         # Mise shim either way its `$HOME` target, never the shim (ADR-0063).
-        bin_path=(
-            installation.bin_path
-            if installation is not None
-            else resolution.binary_path(tool_name, bin_dir)
-        ),
-        tool_name=tool_name,
+        bin_path=located.binary,
+        tool_name=located.tool,
         config=config,
         cache_dir=Path(cache_dir) if cache_dir is not None else config.cache_dir,
         bin_dir=Path(bin_dir) if bin_dir is not None else None,
-        provider=provider,
-        installation=installation,
-        pinned=here,
+        provider=located.provider,
+        installation=located.installation,
+        pinned=pinned,
     )

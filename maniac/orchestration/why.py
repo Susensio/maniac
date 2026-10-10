@@ -12,7 +12,6 @@ from pathlib import Path
 
 from .. import manifest
 from ..config import Config
-from ..exceptions import MalformedToolMetadata, NotGloballySelected, ShimRunsNothing
 from ..listing.classification import classify
 from ..listing.models import Candidate
 from ..listing.pages import managed_pages
@@ -22,11 +21,10 @@ from ..sources.candidates import select_install_root, select_repository
 from ..sources.crawler import get_version
 from ..sources.docs import discover_repo_manpages
 from ..sources.manpages import find_installed_manpage_path
-from ..sources.pathcache import path_dirs, resolve_bin_path
+from ..sources.pathcache import path_dirs
 from ..sources.providers.base import Provider
-from ..sources.providers.mise import is_shim, shim_target
 from ..sources.providers.registry import registry
-from ..sources.resolution import binary_here, find_installation, is_system_binary
+from ..sources.resolution import Outcome, locate, this_shell_runs
 
 
 @dataclass
@@ -106,46 +104,45 @@ def _binary_section(
 ) -> tuple[Section, tuple[Provider, Installation] | None, Path | None, str | None]:
     """The binary a page documents; the claim on it; and why not, if refused."""
     section = Section("Binary")
-    here = binary_here(tool)
-    hit = resolve_bin_path(tool, None)
-    if hit is None:
+    here = this_shell_runs(tool)
+    located = locate(tool)
+    if located.hit is None:
         section.lines.append("not on the login $PATH")
-        refusal = "not installed globally"
-        if here is not None:
-            section.lines.append(
-                f"this shell runs {_home(here)}; `--force` documents that copy"
-            )
-        return section, None, None, refusal
+        return _refused(section, here, "not installed globally")
 
-    section.lines.append(f"login $PATH reaches {_home(hit)}")
-    target = hit
-    if is_shim(hit):
-        try:
-            target = shim_target(hit) or hit
-            section.lines.append(f"a mise shim; from $HOME it runs {_home(target)}")
-        except ShimRunsNothing:
-            section.lines.append(
-                "a mise shim that runs nothing from $HOME: no globally selected "
-                "tool provides it"
-            )
-            return _refused(section, here, "not installed globally")
-        except MalformedToolMetadata as e:
-            section.lines.append(f"a mise shim, and mise failed: {e.reason}")
-            return section, None, None, e.reason
-
-    try:
-        claim = find_installation(tool)
-    except NotGloballySelected as e:
+    section.lines.append(f"login $PATH reaches {_home(located.hit)}")
+    target = located.binary
+    if located.outcome is Outcome.SHIM_RUNS_NOTHING:
         section.lines.append(
-            f"{_home(e.path)} is a mise install no global config selects"
+            "a mise shim that runs nothing from $HOME: no globally selected "
+            "tool provides it"
         )
         return _refused(section, here, "not installed globally")
-    except MalformedToolMetadata as e:
-        section.lines.append(
-            f"its installer's metadata is unreadable: {e.path}: {e.reason}"
-        )
-        return section, None, target, e.reason
+    if located.via_shim:
+        if target is None:
+            assert located.error is not None
+            section.lines.append(
+                f"a mise shim, and mise failed: {located.error.reason}"
+            )
+            return section, None, None, located.error.reason
+        section.lines.append(f"a mise shim; from $HOME it runs {_home(target)}")
 
+    if located.outcome is Outcome.NOT_GLOBAL:
+        assert located.error is not None
+        section.lines.append(
+            f"{_home(located.error.path)} is a mise install no global config selects"
+        )
+        return _refused(section, here, "not installed globally")
+    if located.outcome is Outcome.UNREADABLE:
+        assert located.error is not None
+        section.lines.append(
+            "its installer's metadata is unreadable: "
+            f"{located.error.path}: {located.error.reason}"
+        )
+        return section, None, target, located.error.reason
+
+    assert target is not None
+    claim = located.claim
     if claim is not None:
         provider, inst = claim
         version = inst.version or "no version reported"
@@ -160,7 +157,7 @@ def _binary_section(
             "no installer claims it; "
             + (f"it reports {first}" if first else "it reports no version")
         )
-        if is_system_binary(target):
+        if located.is_system:
             section.lines.append(
                 "a system package's binary: maniac leaves it to its package; "
                 "`--force` installs anyway"

@@ -19,6 +19,7 @@ from maniac.exceptions import (
     NotGloballySelected,
     ShimRunsNothing,
 )
+from maniac.listing.inventory import Skip, _skip_reason
 from maniac.orchestration.context import resolve_tool
 from maniac.sources import resolution
 from maniac.sources.providers import mise
@@ -182,19 +183,16 @@ def test_scan_counts_a_shim_that_runs_nothing_and_a_named_lookup_says_why(
         ),
     )
     monkeypatch.setenv("PATH", str(shim_dir))
-    errors: list[str] = []
-    skipped: list[tuple[str, resolution.Skip]] = []
+    found = {located.tool: located for located in resolution.locate_all()}
 
-    claims = resolution.enumerate_installations(
-        on_error=lambda name, error: errors.append(name),
-        on_skip=lambda name, reason: skipped.append((name, reason)),
-    )
-
-    assert [inst.binary for _, inst in claims] == ["cowsay"]
-    assert errors == []
-    assert skipped == [("project-only", resolution.Skip.SHIM_RUNS_NOTHING)]
-    with pytest.raises(NotGloballySelected):
-        resolution.find_installation("project-only")
+    assert found["cowsay"].installation is not None
+    assert found["cowsay"].installation.binary == "cowsay"
+    assert found["project-only"].outcome is resolution.Outcome.SHIM_RUNS_NOTHING
+    assert _skip_reason(found["project-only"]) is Skip.SHIM_RUNS_NOTHING
+    assert _skip_reason(found["cowsay"]) is None
+    named = resolution.locate("project-only")
+    assert named.outcome is resolution.Outcome.SHIM_RUNS_NOTHING
+    assert isinstance(named.error, NotGloballySelected)
 
 
 def test_mise_failing_behind_a_shim_is_malformed_metadata(
@@ -263,7 +261,11 @@ def test_shims_of_different_tools_stay_different_binaries_in_list(
     )
     monkeypatch.setenv("PATH", str(shim_dir))
 
-    claims = {inst.binary: inst for _, inst in resolution.enumerate_installations()}
+    claims = {
+        found.installation.binary: found.installation
+        for found in resolution.locate_all()
+        if found.installation is not None
+    }
 
     assert set(claims) == {"cowsay", "other"}
     assert claims["cowsay"].real_path != claims["other"].real_path
