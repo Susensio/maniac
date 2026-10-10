@@ -49,7 +49,7 @@ When a phase lands, it updates the README for what became live and marks the ADR
 
 ### P5 Surface and words: next
 
-- [ ] `uninstall` becomes `remove`, taking many tools.
+- [x] `uninstall` becomes `remove`, taking many tools; it always removes the generated source and context too (`--purge` is gone: they are no seed and nothing else uses them).
 - [x] Sources read `shipped` / `upstream` / `generated` in `list`, `scan`, `why` and `install`'s own output (2026-10-10); `unverified` became `unknown` in P3.
 - [ ] `--no-synthesize` becomes `--no-generate`.
 - [ ] Help text without internal terms (tiers, providers, "positively proven"), and without the stale `$(maniac status)`.
@@ -81,3 +81,4 @@ When a phase lands, it updates the README for what became live and marks the ADR
 - 2026-10-10: `list` gets back the boxed table it lost in P3, now built from the same frame as `scan` (title, Tool and State first, state colours); each keeps its own columns. Titles say what each table is.
 - 2026-10-10: Source labels renamed: `vendor` is `shipped`, `maniac` is `generated` (in `list`, `maniac` read as ownership on some rows only). `install` says `shipped page`, `upstream page`, `generated from ...`; the foreign-page refusal and uninstall's restore line no longer say `vendor`.
 - 2026-10-10: two install fixes outside the phases: `--no-synthesize` reports an incomplete upstream check as such (was "no page found"), and a page `list` reads `ok` is left alone unless `--force` (was redone, a model call for a generated page).
+- 2026-10-10: `remove` replaces `uninstall`: many tools, no `--purge` (user's decision), and a tool maniac has no page for exits 1, as in `list` and `update`.

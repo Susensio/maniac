@@ -1,6 +1,6 @@
 """`install`: resolve a manpage through ADR-0016's tiers and install it.
 
-The inverse of `uninstall`, per ADR-0016's rename from `generate`. Tries the
+The inverse of `remove`, per ADR-0016's rename from `generate`. Tries the
 install root, then the upstream repository with the version matched, then
 LLM synthesis, in that order; `--no-synthesize` restricts it to the first
 two tiers.

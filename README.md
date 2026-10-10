@@ -124,7 +124,7 @@ ruff     generated from --help + repo docs
   this shell runs ~/proj/.venv/bin/ruff instead
 ```
 
-Where `install` would refuse, `--force` installs anyway and prints a `forced:` line for each refusal it overrode. That covers a tool with no global copy (only a venv or a project has it: the copy this shell runs is documented, recorded, and checked by `list` from then on), a system package's tool (its package normally maintains its page), and a page maniac did not install sitting where it would write (kept as a backup that `uninstall` restores).
+Where `install` would refuse, `--force` installs anyway and prints a `forced:` line for each refusal it overrode. That covers a tool with no global copy (only a venv or a project has it: the copy this shell runs is documented, recorded, and checked by `list` from then on), a system package's tool (its package normally maintains its page), and a page maniac did not install sitting where it would write (kept as a backup that `remove` restores).
 
 Before synthesis, MANIAC reports how many commands, subcommands, and repository documents it found, which repository it used, and whether those documents matched the installed version.
 Root `--help` alone is enough to generate a page when no better source exists, but MANIAC warns that the source material is limited.
@@ -243,14 +243,10 @@ maniac eval howdoi --against-installed
 ### 5. Manage Installed Manpages
 
 `list` (section 2) shows every page MANIAC installed, with the source its content came from: a page shipped with the tool reads `shipped`, one from its repository `upstream`, and one an LLM wrote `generated`.
-Uninstall safely restores any vendor backup:
+`remove` takes out the pages maniac installed, with everything it made to generate them, and puts back any page one had replaced. A page maniac did not install is never touched:
 
 ```bash
-# Uninstall an installed manpage (automatically restoring vendor backups if present)
-maniac uninstall howdoi
-
-# Uninstall and purge generated Markdown source and intermediate context files
-maniac uninstall howdoi --purge
+maniac remove howdoi bat
 ```
 
 ### 6. Ask Why

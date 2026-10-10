@@ -430,7 +430,7 @@ def test_uninstall_manpage_and_restore_backup(tmp_path: Path) -> None:
         ),
         config=cfg,
     )
-    result = uninstall_manpage("tool", purge=False, config=cfg)
+    result = uninstall_manpage("tool", config=cfg)
 
     assert installed_file not in result.removed
     assert installed_file.exists()  # Restored from backup!
@@ -471,7 +471,7 @@ def test_uninstall_manpage_compressed_page_restores_backup(tmp_path: Path) -> No
         ),
         config=cfg,
     )
-    result = uninstall_manpage("pandoc", purge=False, config=cfg)
+    result = uninstall_manpage("pandoc", config=cfg)
 
     assert installed_file not in result.removed
     assert installed_file.exists()
@@ -505,7 +505,7 @@ def test_uninstall_manpage_null_backup_removes_and_restores_nothing(
         ),
         config=cfg,
     )
-    result = uninstall_manpage("tool", purge=False, config=cfg)
+    result = uninstall_manpage("tool", config=cfg)
 
     assert installed_file in result.removed
     assert not installed_file.exists()
@@ -546,7 +546,7 @@ def test_uninstall_manpage_restore_reports_restored_not_empty(tmp_path: Path) ->
         config=cfg,
     )
 
-    result = uninstall_manpage("tool", purge=False, config=cfg)
+    result = uninstall_manpage("tool", config=cfg)
 
     # The durable `output_dir` target itself is orphaned by the restore and
     # discarded (`lifecycle.discard_durable_target`) -- legitimately
@@ -597,8 +597,11 @@ def test_uninstall_manpage_restore_of_provider_target_reports_restored(
     assert installed.read_text(encoding="utf-8") == ".TH TOOL 1 vendor"
 
 
-def test_uninstall_manpage_purge(tmp_path: Path) -> None:
-    """M11: purge also removes the orphaned generated Markdown and context files."""
+def test_uninstall_manpage_removes_what_maniac_made_to_generate_it(
+    tmp_path: Path,
+) -> None:
+    """M11: removing a page also removes its generated Markdown and context
+    files -- nothing else uses them, and they are maniac's own."""
     man_dir = tmp_path / "man1"
     man_dir.mkdir(parents=True)
     out_dir = tmp_path / "data_manpages"
@@ -629,7 +632,7 @@ def test_uninstall_manpage_purge(tmp_path: Path) -> None:
         ),
         config=cfg,
     )
-    result = uninstall_manpage("tool", purge=True, config=cfg)
+    result = uninstall_manpage("tool", config=cfg)
 
     assert installed_file in result.removed
     assert not installed_file.exists()
@@ -651,7 +654,7 @@ def test_uninstall_manpage_foreign_kept(tmp_path: Path) -> None:
     stored_roff.write_text("roff", encoding="utf-8")
 
     cfg = Config(man_dir=man_dir, output_dir=out_dir)
-    result = uninstall_manpage("tool", purge=False, config=cfg)
+    result = uninstall_manpage("tool", config=cfg)
 
     assert result.foreign_kept == foreign_file
     assert result.modified_kept == []
@@ -694,7 +697,7 @@ def test_uninstall_removes_a_targetless_entry_with_changed_bytes_and_restores_ba
     # Bytes changed after install -- no longer what MANIAC put there.
     installed_file.write_text(".TH TOOL 1 edited by something else", encoding="utf-8")
 
-    result = uninstall_manpage("tool", purge=False, config=cfg)
+    result = uninstall_manpage("tool", config=cfg)
 
     assert result.modified_kept == []
     assert result.changed == [installed_file]
@@ -722,7 +725,7 @@ def test_uninstall_removes_a_durable_target_whose_bytes_changed_and_warns(
     assert entry is not None and entry.target is not None
     entry.target.write_text(".TH TOOL 1 edited by something else", encoding="utf-8")
 
-    result = uninstall_manpage("tool", purge=False, config=cfg)
+    result = uninstall_manpage("tool", config=cfg)
 
     assert result.foreign_kept is None
     assert result.modified_kept == []
@@ -895,7 +898,7 @@ def test_uninstall_manpage_vanished_entry_is_forgotten(tmp_path: Path) -> None:
         config=cfg,
     )
 
-    result = uninstall_manpage("tool", purge=False, config=cfg)
+    result = uninstall_manpage("tool", config=cfg)
 
     assert result.removed == []
     assert result.foreign_kept is None

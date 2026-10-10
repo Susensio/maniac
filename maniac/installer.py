@@ -491,7 +491,7 @@ def _refuse_companion_uninstall(tool_name: str, entries: dict[str, Entry]) -> No
         return
     raise UninstallRefused(
         f"'{tool_name}' is part of '{entry.group}'s installation (bundled "
-        f"in the same release, ADR-0042) -- run 'maniac uninstall "
+        f"in the same release, ADR-0042) -- run 'maniac remove "
         f"{entry.group}' to remove the whole group."
     )
 
@@ -506,8 +506,10 @@ def _remove_orphaned_roff(
         removed_paths.append(stored_roff)
 
 
-def _purge_artifacts(tool_name: str, cfg: Config, removed_paths: list[Path]) -> None:
-    """Remove optional generated sources and intermediates for a tool."""
+def _remove_generation_artifacts(
+    tool_name: str, cfg: Config, removed_paths: list[Path]
+) -> None:
+    """Remove the generated Markdown source and context maniac kept for a tool."""
     paths = (
         cfg.output_dir / f"{tool_name}.1.md",
         cfg.intermediate_dir / f"{tool_name}_context.md",
@@ -520,7 +522,6 @@ def _purge_artifacts(tool_name: str, cfg: Config, removed_paths: list[Path]) -> 
 
 def uninstall_manpage(
     tool_name: str,
-    purge: bool = False,
     config: Config | None = None,
 ) -> UninstallResult:
     """Uninstall a MANIAC-generated manpage and restore backups if present.
@@ -550,7 +551,7 @@ def uninstall_manpage(
     removed_paths: list[Path] = []
     with manifest.transaction(cfg) as txn:
         foreign_kept, modified_kept, changed, restored = _uninstall_group(
-            tool_name, txn, purge=purge, removed_paths=removed_paths
+            tool_name, txn, removed_paths=removed_paths
         )
     return UninstallResult(
         removed=removed_paths,
@@ -565,7 +566,6 @@ def _uninstall_group(
     tool_name: str,
     txn: manifest.Transaction,
     *,
-    purge: bool,
     removed_paths: list[Path],
 ) -> tuple[Path | None, list[Path], list[Path], list[Path]]:
     """Remove every member of `tool_name`'s release, reporting what was kept."""
@@ -596,7 +596,7 @@ def _uninstall_group(
         # 2. XDG data storage (output_dir / <tool>.1)
         _remove_orphaned_roff(member, cfg, entry, removed_paths)
 
-        if purge:
-            _purge_artifacts(member, cfg, removed_paths)
+        # 3. What maniac made to generate it: nothing else uses these.
+        _remove_generation_artifacts(member, cfg, removed_paths)
 
     return foreign_kept, modified_kept, changed, restored

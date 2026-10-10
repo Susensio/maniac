@@ -30,7 +30,7 @@ def _plain_console(monkeypatch: pytest.MonkeyPatch) -> None:
     behaviour.
 
     No width pin: commands now compute a result structure that tests assert
-    against directly (see `compute_eval`, `compute_compare`, `compute_uninstall`),
+    against directly (see `compute_eval`, `compute_compare`, `compute_remove`),
     so no remaining assertion depends on how Rich wraps a long dynamic value
     such as a path. A handful of rendering smoke tests below only check
     short, fixed strings that cannot wrap at any terminal width.
@@ -46,7 +46,7 @@ def test_cli_help() -> None:
     result = runner.invoke(app, ["--help"])
     assert result.exit_code == 0
     assert "Maniac:" in result.output
-    for command in ("install", "update", "list", "scan", "why", "uninstall", "eval"):
+    for command in ("install", "update", "list", "scan", "why", "remove", "eval"):
         assert command in result.output
     assert "source" not in result.output
 
@@ -664,57 +664,57 @@ def test_render_eval_table() -> None:
     assert "Minor defect note" in output
 
 
-def test_cli_uninstall(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    from maniac.cli.uninstall import compute_uninstall
+def test_cli_remove(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from maniac.cli.remove import compute_remove
 
     monkeypatch.setattr(
         "maniac.installer.uninstall_manpage",
-        lambda tool, purge, config: UninstallResult(removed=[tmp_path / f"{tool}.1"]),
+        lambda tool, config: UninstallResult(removed=[tmp_path / f"{tool}.1"]),
     )
-    outcome = compute_uninstall("mytool")
+    outcome = compute_remove("mytool")
     assert outcome.result == UninstallResult(removed=[tmp_path / "mytool.1"])
 
-    res = runner.invoke(app, ["uninstall", "mytool"])
+    res = runner.invoke(app, ["remove", "mytool"])
     assert res.exit_code == 0
-    assert "Uninstalled manpage for mytool!" in res.output
+    assert "mytool   removed" in res.output
 
 
-def test_cli_uninstall_not_found(monkeypatch: pytest.MonkeyPatch) -> None:
-    from maniac.cli.uninstall import compute_uninstall
+def test_cli_remove_not_found(monkeypatch: pytest.MonkeyPatch) -> None:
+    from maniac.cli.remove import compute_remove
 
     monkeypatch.setattr(
         "maniac.installer.uninstall_manpage",
-        lambda tool, purge, config: UninstallResult(),
+        lambda tool, config: UninstallResult(),
     )
-    outcome = compute_uninstall("nonexistent")
+    outcome = compute_remove("nonexistent")
     assert outcome.result == UninstallResult()
 
-    res = runner.invoke(app, ["uninstall", "nonexistent"])
-    assert res.exit_code == 0
-    assert "No installed manpage found for 'nonexistent'" in res.output
+    res = runner.invoke(app, ["remove", "nonexistent"])
+    assert res.exit_code == 1
+    assert "nonexistent   maniac installed no page for it." in res.output
 
 
-def test_cli_uninstall_refused_companion(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_cli_remove_refused_companion(monkeypatch: pytest.MonkeyPatch) -> None:
     """A companion request (ADR-0053) renders yellow, not red, and still
     exits non-zero (ADR-0048's reasoning for a deliberate refusal)."""
 
-    def _raise(tool: str, purge: bool, config: object) -> UninstallResult:
+    def _raise(tool: str, config: object) -> UninstallResult:
         raise UninstallRefused(
             f"'{tool}' is part of 'eza's installation (bundled in the same "
-            f"release, ADR-0042) -- run 'maniac uninstall eza' to remove "
+            f"release, ADR-0042) -- run 'maniac remove eza' to remove "
             f"the whole group."
         )
 
     monkeypatch.setattr("maniac.installer.uninstall_manpage", _raise)
 
-    res = runner.invoke(app, ["uninstall", "eza_colors"])
+    res = runner.invoke(app, ["remove", "eza_colors"])
     assert res.exit_code == 1
     assert "eza_colors" in res.output
-    assert "maniac uninstall eza" in res.output
-    assert "Error uninstalling" not in res.output
+    assert "maniac remove eza" in res.output
+    assert "could not be removed" not in res.output
 
 
-def test_cli_uninstall_foreign_kept(
+def test_cli_remove_foreign_kept(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """M2: a foreign page left in `man_dir` must not be reported as fully uninstalled.
@@ -723,50 +723,50 @@ def test_cli_uninstall_foreign_kept(
     foreign path is an arbitrary-length pytest tmp_path, and Rich would wrap
     it unpredictably depending on the ambient terminal width.
     """
-    from maniac.cli.uninstall import compute_uninstall
+    from maniac.cli.remove import compute_remove
 
     foreign_path = tmp_path / "man1" / "mytool.1"
     monkeypatch.setattr(
         "maniac.installer.uninstall_manpage",
-        lambda tool, purge, config: UninstallResult(
+        lambda tool, config: UninstallResult(
             removed=[tmp_path / f"{tool}.1"], foreign_kept=foreign_path
         ),
     )
-    outcome = compute_uninstall("mytool")
+    outcome = compute_remove("mytool")
     assert outcome.result.removed == [tmp_path / "mytool.1"]
     assert outcome.result.foreign_kept == foreign_path
 
-    res = runner.invoke(app, ["uninstall", "mytool"])
+    res = runner.invoke(app, ["remove", "mytool"])
     assert res.exit_code == 0
-    assert "Uninstalled manpage for mytool!" in res.output
-    assert "Left non-MANIAC manpage in place" in res.output
+    assert "mytool   removed" in res.output
+    assert "maniac did not install it" in " ".join(res.output.split())
 
 
-def test_cli_uninstall_modified_kept(
+def test_cli_remove_modified_kept(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """A retargeted or dangling link renders a message distinct from
     `foreign_kept`'s, and must not claim the bytes changed -- nothing here
     was edited, the link itself no longer points where install left it."""
-    from maniac.cli.uninstall import compute_uninstall
+    from maniac.cli.remove import compute_remove
 
     modified_path = tmp_path / "man1" / "mytool.1"
     monkeypatch.setattr(
         "maniac.installer.uninstall_manpage",
-        lambda tool, purge, config: UninstallResult(modified_kept=[modified_path]),
+        lambda tool, config: UninstallResult(modified_kept=[modified_path]),
     )
-    outcome = compute_uninstall("mytool")
+    outcome = compute_remove("mytool")
     assert outcome.result.foreign_kept is None
     assert outcome.result.modified_kept == [modified_path]
 
-    res = runner.invoke(app, ["uninstall", "mytool"])
+    res = runner.invoke(app, ["remove", "mytool"])
     assert res.exit_code == 0
     assert "no longer points where" in res.output
-    assert "bytes have changed" not in res.output
-    assert "non-MANIAC" not in res.output
+    assert "edited since" not in res.output
+    assert "did not install" not in res.output
 
 
-def test_cli_uninstall_changed(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_cli_remove_changed(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """A page removed despite a bytes mismatch renders a warning, not a refusal.
 
     `changed=[changed_path]` with an empty `removed` is the production shape
@@ -778,49 +778,47 @@ def test_cli_uninstall_changed(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) 
     a stub carrying `changed` without `restored` (or `removed`) is not the
     production shape and would wrongly hit the guard.
     """
-    from maniac.cli.uninstall import compute_uninstall
+    from maniac.cli.remove import compute_remove
 
     changed_path = tmp_path / "man1" / "mytool.1"
     monkeypatch.setattr(
         "maniac.installer.uninstall_manpage",
-        lambda tool, purge, config: UninstallResult(
+        lambda tool, config: UninstallResult(
             changed=[changed_path], restored=[changed_path]
         ),
     )
-    outcome = compute_uninstall("mytool")
+    outcome = compute_remove("mytool")
     assert outcome.result.changed == [changed_path]
     assert outcome.result.removed == []
 
-    res = runner.invoke(app, ["uninstall", "mytool"])
+    res = runner.invoke(app, ["remove", "mytool"])
     assert res.exit_code == 0
-    assert "No installed manpage found" not in res.output
-    assert "bytes had changed since install" in res.output
+    assert "no page for it" not in res.output
+    assert "edited since it was installed" in " ".join(res.output.split())
 
 
-def test_cli_uninstall_restored(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_cli_remove_restored(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """F1: a bytes-matching entry with a vendor backup must not read as
     'nothing happened' -- `removed`, `changed` and `modified_kept` are all
     empty for this shape, so `restored` is the only field the guard can
     check, and the render path needs a line for it too.
     """
-    from maniac.cli.uninstall import compute_uninstall
+    from maniac.cli.remove import compute_remove
 
     restored_path = tmp_path / "man1" / "mytool.1"
     monkeypatch.setattr(
         "maniac.installer.uninstall_manpage",
-        lambda tool, purge, config: UninstallResult(restored=[restored_path]),
+        lambda tool, config: UninstallResult(restored=[restored_path]),
     )
-    outcome = compute_uninstall("mytool")
+    outcome = compute_remove("mytool")
     assert outcome.result.restored == [restored_path]
     assert outcome.result.removed == []
     assert outcome.result.changed == []
 
-    res = runner.invoke(app, ["uninstall", "mytool"])
+    res = runner.invoke(app, ["remove", "mytool"])
     assert res.exit_code == 0
-    assert "No installed manpage found" not in res.output
-    assert "Uninstalled manpage for mytool!" in res.output
+    assert "no page for it" not in res.output
+    assert "mytool   removed" in res.output
 
 
 def test_cli_install_multiple_all_fail_exits_nonzero(
@@ -932,11 +930,11 @@ def test_render_install_does_not_swallow_bracketed_detail() -> None:
     assert "[no synthesis]" in buf.getvalue()
 
 
-def test_cli_uninstall_rejects_removed_force_option() -> None:
+def test_cli_remove_rejects_removed_force_option() -> None:
     """`uninstall --force` is gone: the flag never bypassed anything real,
     and `--force` bypassing `changed` would let a stale install shadow a
     page whose bytes moved on for an unrelated reason."""
-    res = runner.invoke(app, ["uninstall", "mytool", "--force"])
+    res = runner.invoke(app, ["remove", "mytool", "--force"])
     assert res.exit_code != 0
 
 
@@ -984,3 +982,28 @@ def test_forced_lines_show_home_as_a_tilde() -> None:
     assert _resolution_lines(outcome)[-1] == (
         "forced: not installed globally; documenting ~/p/.venv/bin/ruff"
     )
+
+
+def test_cli_remove_takes_many_tools_and_fails_if_any_had_no_page(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Rule 1: each named tool's page goes; a tool maniac has no page for is
+    said once and makes the run exit 1, as `list` and `update` do."""
+    removed: list[str] = []
+
+    def uninstall(tool: str, config: object) -> UninstallResult:
+        removed.append(tool)
+        if tool == "rg":
+            return UninstallResult()
+        return UninstallResult(removed=[tmp_path / f"{tool}.1"])
+
+    monkeypatch.setattr("maniac.installer.uninstall_manpage", uninstall)
+
+    res = runner.invoke(app, ["remove", "bat", "rg", "fd", "bat"])
+
+    output = " ".join(res.output.split())
+    assert res.exit_code == 1
+    assert removed == ["bat", "rg", "fd"]
+    assert "bat removed" in output
+    assert "fd removed" in output
+    assert "rg maniac installed no page for it." in output
