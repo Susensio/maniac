@@ -8,7 +8,14 @@ import typer
 from ..exceptions import ManiacError
 from ..listing.models import ActionState
 from . import app, console, get_config, require_login_path
-from .options import DryRunOption, ModelOption, NoGenerateOption
+from .options import (
+    DryRunOption,
+    ModelOption,
+    NamesOption,
+    NoGenerateOption,
+    OutdatedOption,
+    UnknownOption,
+)
 
 LIST_TITLE = "Pages maniac installed"
 
@@ -23,22 +30,9 @@ def list_pages(
             show_default=False,
         ),
     ] = None,
-    outdated: Annotated[
-        bool,
-        typer.Option("--outdated", help="Only pages documenting another version."),
-    ] = False,
-    unknown: Annotated[
-        bool,
-        typer.Option(
-            "--unknown", help="Only pages whose version cannot be proven either way."
-        ),
-    ] = False,
-    names: Annotated[
-        bool,
-        typer.Option(
-            "--names", help="Bare tool names, one per line, even on a terminal."
-        ),
-    ] = False,
+    names: NamesOption = False,
+    outdated: OutdatedOption = False,
+    unknown: UnknownOption = False,
 ) -> None:
     """The pages maniac installed: the version each documents, the version installed.
 

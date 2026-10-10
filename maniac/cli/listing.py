@@ -31,6 +31,7 @@ from ..listing.inventory import MANAGED
 from ..models import RepoSource
 from ..sources.resolution import Skip
 from . import app, console, get_config, require_login_path
+from .options import NamesOption, OutdatedOption, UnknownOption
 from .render import _repo_cell
 from .table import (
     STATE_COLUMN_WIDTH,
@@ -589,47 +590,34 @@ def scan_tools(
     tools: Annotated[
         list[str] | None,
         typer.Argument(
-            help="Tools to report on. With none, every binary a provider detects."
+            help="Tools to report on. With none, every tool on your login $PATH "
+            "maniac has no page for.",
+            show_default=False,
         ),
     ] = None,
-    names: Annotated[
-        bool,
-        typer.Option(
-            "--names",
-            help="Force bare tool names, one per line, even on a terminal.",
-        ),
-    ] = False,
-    outdated: Annotated[
-        bool,
-        typer.Option(
-            "--outdated",
-            help="Only rows positively proven to document another version.",
-        ),
-    ] = False,
-    unknown: Annotated[
-        bool,
-        typer.Option(
-            "--unknown",
-            help="Only rows whose external page cannot be proven current.",
-        ),
-    ] = False,
+    names: NamesOption = False,
+    outdated: OutdatedOption = False,
+    unknown: UnknownOption = False,
     available: Annotated[
         bool,
         typer.Option(
-            "--available", help="Only rows with a free page not yet installed."
+            "--available",
+            help="Only tools with a shipped or upstream page not yet installed.",
         ),
     ] = False,
     missing: Annotated[
         bool,
-        typer.Option("--missing", help="Only rows with no known free page."),
+        typer.Option(
+            "--missing",
+            help="Only tools with no page to install; only a generated one is left.",
+        ),
     ] = False,
 ) -> None:
-    """Your other tools and their pages, discovered across your login $PATH.
+    """Your other tools and their pages, found across your login $PATH.
 
-    Best effort (CONTRACT.md rule 3): with no names, every binary an
-    installer claims and maniac has no page for -- `list` shows those it
-    has -- ending with a count of every binary passed over, and why. With
-    names, exactly those.
+    Best effort. With no tools: every tool an installer put on your login
+    $PATH that maniac has no page for (`list` shows those it has), then a
+    count of everything passed over, and why. With tools: exactly those.
     """
     require_login_path()
     states = _selected_states(

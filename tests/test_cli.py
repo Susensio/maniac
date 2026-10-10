@@ -43,11 +43,12 @@ def _plain_console(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _listed_commands(output: str) -> list[str]:
-    """The command names a Typer help panel lists, in order."""
+    """The command names Typer's Commands panel lists, in order."""
+    panel = output[output.index("─ Commands ─") :]
     return [
-        line.split()[1]
-        for line in output.splitlines()
-        if line.startswith("│ ") and len(line.split()) > 2 and line.split()[1].isalpha()
+        line[2:].split()[0]
+        for line in panel.splitlines()[1:]
+        if line.startswith("│ ") and not line.startswith("│  ")
     ]
 
 
@@ -56,10 +57,8 @@ def test_cli_help_lists_the_user_commands_and_hides_dev() -> None:
 
     assert result.exit_code == 0
     commands = _listed_commands(result.output)
-    for command in ("install", "update", "remove", "list", "scan", "why"):
-        assert command in commands
-    assert "eval" not in commands
-    assert "dev" not in commands
+    # The order a user meets them; `eval` and `bench` live under hidden `dev`.
+    assert commands == ["install", "update", "remove", "list", "scan", "why"]
 
     dev = runner.invoke(app, ["dev", "--help"])
     assert dev.exit_code == 0
@@ -647,7 +646,7 @@ def test_fish_completion_includes_only_dry_run() -> None:
 def test_cli_verbose_flag(monkeypatch: pytest.MonkeyPatch) -> None:
     result = runner.invoke(app, ["-v", "--help"])
     assert result.exit_code == 0
-    assert "Maniac:" in result.output
+    assert "Manpages for the tools you install" in result.output
 
     monkeypatch.setenv("MANIAC_VERBOSE", "1")
     result_env = runner.invoke(app, ["--help"])

@@ -21,9 +21,10 @@ ForceOption = Annotated[
         "--force",
         "-f",
         help=(
-            "Install where maniac would refuse: replace a page it did not "
-            "install (kept as a backup), or document a tool installed only "
-            "for this project or a system package's tool."
+            "Install where maniac would refuse: over a page it did not "
+            "install (kept as a backup), for a tool installed only in this "
+            "project, or for a system package's tool. Also reinstalls a page "
+            "already current."
         ),
     ),
 ]
@@ -31,5 +32,19 @@ DryRunOption = Annotated[
     bool,
     typer.Option(
         "--dry-run", help="Preview without installing or generating anything."
+    ),
+]
+NamesOption = Annotated[
+    bool,
+    typer.Option("--names", help="Bare tool names, one per line, even on a terminal."),
+]
+OutdatedOption = Annotated[
+    bool,
+    typer.Option("--outdated", help="Only pages that document another version."),
+]
+UnknownOption = Annotated[
+    bool,
+    typer.Option(
+        "--unknown", help="Only pages whose version nothing proves either way."
     ),
 ]

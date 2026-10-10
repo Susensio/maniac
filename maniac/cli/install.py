@@ -89,17 +89,22 @@ def install(
     ctx: typer.Context,
     tools: Annotated[
         list[str] | None,
-        typer.Argument(help="List of tool names to install manpages for."),
+        typer.Argument(help="Tools to install pages for.", show_default=False),
     ] = None,
     model: ModelOption = None,
     no_generate: NoGenerateOption = False,
     force: ForceOption = False,
     dry_run: DryRunOption = False,
 ) -> None:
-    """Install a manpage: install root, then repository, then LLM synthesis.
+    """Install a page for each tool: shipped, else upstream, else generated.
 
-    Zero tool names exits quietly rather than raising Typer's missing-argument
-    error, since `$(maniac status)` can legitimately expand to nothing.
+    Shipped is the page the tool installed itself; upstream, its project's
+    page for the installed version; generated, one an LLM writes from its
+    --help and its project's docs.
+
+    A page already current is left alone. With no tools it does nothing, so
+    `maniac scan --available | xargs maniac install` is safe when the list
+    is empty.
     """
     if not tools:
         return

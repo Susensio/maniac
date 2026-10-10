@@ -7,8 +7,16 @@ import typer
 from ..config import Config
 
 app = typer.Typer(
-    help="Maniac: Scrape CLI help, extract repository docs, and synthesize elite Unix manpages.",
+    help=(
+        "Manpages for the tools you install, kept matching their versions: "
+        "the page a tool ships, else its project's, else one an LLM writes "
+        "from its --help."
+    ),
 )
+
+# The order a user meets them: get pages, keep them current, take them out;
+# then look at them, at the rest, and at why.
+_COMMAND_ORDER = ("install", "update", "remove", "list", "scan", "why")
 
 
 class _LazyConsole:
@@ -55,7 +63,7 @@ def main(
             "--verbose",
             "-v",
             envvar="MANIAC_VERBOSE",
-            help="Enable verbose debug logging.",
+            help="Also print diagnostic detail as maniac works.",
         ),
     ] = False,
 ) -> None:
@@ -68,6 +76,19 @@ def main(
 
 # Imported for side effects: each module registers its commands on `app`.
 from . import dev, evaluate, install, listing, pages, remove, why  # noqa: F401
+
+
+def _command_name(command: Any) -> str:
+    return command.name or command.callback.__name__.replace("_", "-")
+
+
+app.registered_commands.sort(
+    key=lambda command: (
+        _COMMAND_ORDER.index(_command_name(command))
+        if _command_name(command) in _COMMAND_ORDER
+        else len(_COMMAND_ORDER)
+    )
+)
 
 # Re-exported for backward-compatible imports (tests, `python -m maniac.cli`).
 from .render import _render_eval_table, _repo_cell  # noqa: F401
