@@ -194,7 +194,8 @@ def _report_material(
         )
 
     source = tool.documentation_source
-    logger.warning(
+    # `install` prints these counts on its own line; here only behind -v.
+    logger.info(
         "Synthesis source material found",
         tool=tool.tool_name,
         commands=len(tree),
@@ -204,7 +205,7 @@ def _report_material(
         repository_docs_version_matched=matched,
     )
     if len(tree) == 1 and not doc_files:
-        logger.warning(
+        logger.info(
             "Limited source material: synthesizing from root --help only",
             tool=tool.tool_name,
         )

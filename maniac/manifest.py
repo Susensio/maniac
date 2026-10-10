@@ -626,8 +626,20 @@ def _damage_reason(current: Read) -> str:
 
 
 def _report_recovery(recovery: Recovery, config: Config) -> None:
-    """Log what recovery adopted, and per tool what it could not recover."""
-    logger.warning(
+    """Log what recovery adopted, and per tool what it could not recover.
+
+    No manifest and nothing to recover is a first run, not damage: it is
+    logged only behind -v, or every new user's first `install` would open
+    with a warning.
+    """
+    nothing_recovered = not (
+        recovery.salvaged
+        or recovery.from_checkpoint
+        or recovery.reconstructed
+        or recovery.dropped
+    )
+    log = logger.debug if nothing_recovered else logger.warning
+    log(
         "Rebuilt an untrustworthy manifest",
         reason=recovery.reason,
         manifest=str(_manifest_path(config)),
@@ -641,7 +653,7 @@ def _report_recovery(recovery: Recovery, config: Config) -> None:
             "Reconstructed a manifest entry from its link alone",
             tool=tool,
             unrecoverable=["backup", "source_uri", "version"],
-            consequence="uninstall cannot restore a vendor page this page displaced",
+            consequence="remove cannot restore a page this page replaced",
         )
 
 

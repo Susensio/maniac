@@ -349,7 +349,7 @@ def test_cli_install_dry_run(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) ->
 
     result = runner.invoke(app, ["install", "mytool", "--dry-run"])
     assert result.exit_code == 0
-    assert "generated from --help" in result.output
+    assert "would install: generated page, from --help" in result.output
 
 
 def test_cli_install_exits_nonzero_when_synthesis_produces_no_page(
@@ -388,7 +388,8 @@ def test_cli_install_exits_nonzero_when_synthesis_produces_no_page(
 
     result = runner.invoke(app, ["install", "mytool"])
     assert result.exit_code != 0
-    assert "1/1 tool(s) did not install" in result.output
+    assert "not installed: generated page" in result.output
+    assert "could not be compiled into a page" in result.output
 
 
 def test_cli_install_reuses_config_for_existing_destination(
@@ -524,7 +525,7 @@ def test_cli_install_exits_nonzero_when_no_generate_finds_nothing(
     )
 
     assert result.exit_code != 0
-    assert "no install-root or repository page found" in result.output
+    assert "not installed: no shipped or upstream page" in result.output
 
 
 def test_cli_install_dry_run_exits_nonzero_when_no_tier_would_answer(
@@ -548,7 +549,7 @@ def test_cli_install_dry_run_exits_nonzero_when_no_tier_would_answer(
     )
 
     assert result.exit_code != 0
-    assert "no install-root or repository page found" in result.output
+    assert "not installed: no shipped or upstream page" in result.output
 
 
 def test_cli_install_always_installs(
@@ -851,9 +852,9 @@ def test_cli_install_multiple_all_fail_exits_nonzero(
     monkeypatch.setattr("maniac.orchestration.pipeline.synthesize", _raise)
     res = runner.invoke(app, ["install", "toolone", "tooltwo"])
     assert res.exit_code == 1
-    assert "Install failed for toolone: boom" in res.output
-    assert "Install failed for tooltwo: boom" in res.output
-    assert "2/2 tool(s) did not install" in res.output
+    assert "toolone   could not be installed: boom" in res.output
+    assert "tooltwo   could not be installed: boom" in res.output
+    assert "2 of 2 not installed." in res.output
 
 
 def test_cli_install_reports_malformed_tool_metadata_and_exits_nonzero(
@@ -876,7 +877,7 @@ def test_cli_install_reports_malformed_tool_metadata_and_exits_nonzero(
     )
     res = runner.invoke(app, ["install", "toolone"])
     assert res.exit_code == 1
-    assert "Install failed for toolone" in res.output
+    assert "toolone   could not be installed" in res.output
     assert "/x/package.json" in res.output
     assert "invalid JSON" in res.output
 
@@ -913,7 +914,7 @@ def test_cli_install_multiple_partial_success_exits_nonzero(
     monkeypatch.setattr("maniac.orchestration.pipeline.synthesize", _synthesize)
     res = runner.invoke(app, ["install", "goodtool", "badtool"])
     assert res.exit_code == 1
-    assert "1/2 tool(s) did not install" in res.output
+    assert "1 of 2 not installed." in res.output
 
 
 def test_render_install_does_not_swallow_bracketed_detail() -> None:
@@ -1021,3 +1022,28 @@ def test_cli_remove_takes_many_tools_and_fails_if_any_had_no_page(
     assert "bat removed" in output
     assert "fd removed" in output
     assert "rg maniac installed no page for it." in output
+
+
+def test_cli_remove_counts_pages_and_keeps_the_files_for_verbose(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A release can be dozens of pages: `remove` says how many left the
+    manpath, not every file -- those are for -v."""
+    from maniac.config import Config
+
+    out = Config().output_dir
+    man = tmp_path / "man" / "man1"
+    monkeypatch.setattr(
+        "maniac.installer.uninstall_manpage",
+        lambda tool, config: UninstallResult(
+            removed=[man / "npm.1", man / "npm-ls.1", out / "npm-ls.1"],
+            restored=[man / "npm-ci.1"],
+        ),
+    )
+
+    res = runner.invoke(app, ["remove", "npm"])
+
+    assert res.exit_code == 0
+    assert "npm   removed (3 pages)" in res.output
+    assert "npm-ls.1" not in res.output
+    assert "restored the page it had replaced" in res.output

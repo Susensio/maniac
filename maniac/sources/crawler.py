@@ -194,7 +194,7 @@ def get_help(
         stdout = (res.stdout or "").strip()
         stderr = (res.stderr or "").strip()
         if res.returncode != 0:
-            logger.warning(
+            logger.info(
                 "Command exited with non-zero code while requesting help",
                 command=cmd_str,
                 returncode=res.returncode,
@@ -214,16 +214,16 @@ def get_help(
         if stdout:
             return stdout
         if stderr:
-            logger.warning("Using help emitted on stderr", command=cmd_str)
+            logger.info("Using help emitted on stderr", command=cmd_str)
             return stderr
         raise CrawlerError(
             f"Command produced no help output: '{cmd_str}' exited with {res.returncode}."
         )
     except subprocess.TimeoutExpired as e:
-        logger.warning("Command timed out", command=cmd_str)
+        logger.info("Command timed out", command=cmd_str)
         raise CrawlerError(f"Command timed out: '{cmd_str}'") from e
     except (FileNotFoundError, OSError) as e:
-        logger.warning("Failed to run command", command=cmd_str, error=str(e))
+        logger.info("Failed to run command", command=cmd_str, error=str(e))
         raise CrawlerError(
             f"Executable '{cmd[0]}' not found on $PATH. "
             f"Verify the command is installed and executable."

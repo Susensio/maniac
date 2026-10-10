@@ -296,7 +296,8 @@ def test_synthesize_reports_its_source_material(
 
     assert {
         "event": "Synthesis source material found",
-        "log_level": "warning",
+        # `install` prints these counts itself; the log is for -v.
+        "log_level": "info",
         "tool": "testtool",
         "commands": 2,
         "subcommands": 1,
@@ -306,7 +307,7 @@ def test_synthesize_reports_its_source_material(
     } in logged
 
 
-def test_synthesize_warns_when_only_root_help_is_available(
+def test_synthesize_logs_when_only_root_help_is_available(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     _help_tree(monkeypatch, {"> testtool --help": "Usage: testtool"})
@@ -320,7 +321,7 @@ def test_synthesize_warns_when_only_root_help_is_available(
 
     assert (
         "Limited source material: synthesizing from root --help only",
-        "warning",
+        "info",
     ) in [(entry["event"], entry["log_level"]) for entry in logged]
 
 

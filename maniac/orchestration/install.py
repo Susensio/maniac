@@ -86,6 +86,8 @@ class InstallOutcome:
     resolution: Resolution | None = None
     overrides: tuple[str, ...] = ()
     """Each refusal `--force` overrode, said the way the user reads it."""
+    unchanged: bool = False
+    """The page was already current and left alone: installed, not redone."""
 
 
 def run_install(
@@ -205,6 +207,7 @@ def _already_current(tool_name: str, cfg: Config) -> InstallOutcome | None:
         tier=entry.tier,
         detail=f"already up to date ({row.documented}); --force reinstalls it",
         installed_path=entry.path,
+        unchanged=True,
     )
 
 
@@ -323,12 +326,11 @@ def _select_page(
             tool=tool_name,
             tier=None,
             detail=(
-                "no install-root or repository page found "
-                "(tried tiers 1-2 only; rerun without --no-generate to synthesize)"
+                "no shipped or upstream page, and --no-generate forbids generating one"
                 if repository_definitive
-                else f"not installed: the check for an upstream page in {upstream} "
-                "did not complete (network or git?), so whether one exists is "
-                "unknown; rerun once it can"
+                else f"the check for an upstream page in {upstream} did not "
+                "complete (network or git?), so whether one exists is unknown; "
+                "rerun once it can"
             ),
         )
     if not repository_definitive:
@@ -349,12 +351,7 @@ def _select_page(
         force=force,
         dry_run=dry_run,
     )
-    if pipeline_result.command_count and pipeline_result.doc_file_count:
-        detail = "generated from --help + repo docs"
-    elif pipeline_result.doc_file_count:
-        detail = "generated from repo docs only"
-    else:
-        detail = "generated from --help only"
+    detail = _generated_detail(pipeline_result)
     if dry_run:
         # A real run's page depends on pandoc compiling the synthesized
         # Markdown (`compile_to_man`); `synthesize` skips that step under
@@ -367,7 +364,7 @@ def _select_page(
             return InstallOutcome(
                 tool=tool_name,
                 tier=None,
-                detail=f"{detail}   [dry run, {e.found} too old, no page would be produced]",
+                detail=f"{detail}, but {e.found} is too old to compile it",
                 source_path=pipeline_result.roff_path,
                 installed_path=None,
                 pipeline=pipeline_result,
@@ -376,12 +373,13 @@ def _select_page(
             return InstallOutcome(
                 tool=tool_name,
                 tier=None,
-                detail=f"{detail}   [dry run, pandoc missing, no page would be produced]",
+                detail=f"{detail}, but pandoc is missing to compile it",
                 source_path=pipeline_result.roff_path,
                 installed_path=None,
                 pipeline=pipeline_result,
             )
-        detail += "   [dry run]"
+    elif pipeline_result.installed_path is None:
+        detail += ", but it could not be compiled into a page"
     return InstallOutcome(
         tool=tool_name,
         tier=Tier.SYNTHESIS,
@@ -390,6 +388,20 @@ def _select_page(
         installed_path=pipeline_result.installed_path,
         pipeline=pipeline_result,
     )
+
+
+def _generated_detail(result: PipelineResult) -> str:
+    """What a generated page was written from, as `install` reports it."""
+    sources = []
+    if result.command_count:
+        commands = result.command_count
+        sources.append(f"--help ({commands} command{'s' if commands != 1 else ''})")
+    if result.doc_file_count:
+        docs = f"{result.doc_file_count} doc{'s' if result.doc_file_count != 1 else ''}"
+        if result.repo_source is not None:
+            docs += f" in {result.repo_source.identity}"
+        sources.append(docs)
+    return "generated page, from " + " and ".join(sources)
 
 
 def _refuse_unmanaged_destination(dest_file: Path, cfg: Config, *, force: bool) -> None:
@@ -523,7 +535,6 @@ def _try_install_root(
     if inst.version:
         detail += f" ({inst.version})"
     if dry_run:
-        detail += "   [dry run, no synthesis]"
         return InstallOutcome(
             tool=inst.binary,
             tier=Tier.INSTALL_ROOT,
@@ -574,7 +585,7 @@ def _try_install_root(
         for result, page in zip(installed, candidate.pages, strict=True)
         if page == candidate.primary
     )
-    detail += "   [no synthesis]"
+
     return InstallOutcome(
         tool=inst.binary,
         tier=Tier.INSTALL_ROOT,
@@ -632,7 +643,7 @@ def _try_repository(
             InstallOutcome(
                 tool=inst.binary,
                 tier=Tier.REPOSITORY,
-                detail=f"upstream page ({inst.version})   [dry run, no synthesis]",
+                detail=f"upstream page ({inst.version})",
                 source_path=candidate.primary.path,
                 installed_path=None,
             ),
@@ -677,7 +688,7 @@ def _try_repository(
         for result, page in zip(installed, candidate.pages, strict=True)
         if page == candidate.primary
     )
-    detail = f"upstream page ({inst.version})   [no synthesis]"
+    detail = f"upstream page ({inst.version})"
     return (
         InstallOutcome(
             tool=inst.binary,

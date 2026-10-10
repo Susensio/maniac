@@ -53,7 +53,7 @@ When a phase lands, it updates the README for what became live and marks the ADR
 - [x] Sources read `shipped` / `upstream` / `generated` in `list`, `scan`, `why` and `install`'s own output (2026-10-10); `unverified` became `unknown` in P3.
 - [x] `--no-synthesize` becomes `--no-generate`, one shared option for `install` and `update`.
 - [x] Help text without internal terms (tiers, providers, "positively proven"), and without the stale `$(maniac status)`; a tagline that says what you get; commands in the order a user meets them. Completion options stay: hiding them switches completion off.
-- [ ] `install`'s output carries only what the user needs: diagnostic log lines ("Synthesis source material found") move behind `-v`, or into `why`.
+- [x] `install`'s output carries only what the user needs: one line per tool, verdict first (`installed:`, `would install:`, `not installed:`, `already up to date`), the page in the Source column's words, and a generated page's material counted on that line; banners, `[no synthesis]`, tier words and per-command crawl warnings are gone or behind `-v`. A first run no longer warns about rebuilding a manifest that never existed. `remove` says how many pages went; the files are behind `-v`.
 - [x] `maniac dev` (hidden) holds `eval` and the benchmark (`maniac dev bench`, was `python -m maniac.bench`; `just bench` calls it).
 - [ ] README rewritten around the contract.
 

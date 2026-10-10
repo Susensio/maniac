@@ -35,16 +35,24 @@ def _no_page_installed(outcome: InstallOutcome, *, dry_run: bool) -> bool:
 def render_install(
     target_console: Any, outcome: InstallOutcome, *, dry_run: bool
 ) -> bool:
-    """Print one tool's outcome; return whether a page landed (or would, on a dry run)."""
+    """Print one tool's outcome; return whether a page landed (or would, on a dry run).
+
+    One line per tool, verdict first, then the page in the words the Source
+    column uses; what it documents goes on the indented lines below.
+    """
     from rich.markup import escape
 
-    # `outcome.detail` carries literal "[no synthesis]" -- escaped so Rich's
-    # markup parser doesn't read it as an (invalid, silently dropped) style tag.
-    detail = escape(outcome.detail)
+    # Tool names and details are text, never markup.
+    tool, detail = escape(outcome.tool), escape(outcome.detail)
     if _no_page_installed(outcome, dry_run=dry_run):
-        target_console.print(f"[yellow]{outcome.tool}   {detail}[/yellow]")
+        target_console.print(
+            f"[yellow]{tool}   not installed: {detail}[/yellow]", soft_wrap=True
+        )
+    elif outcome.unchanged:
+        target_console.print(f"[bold green]{tool}[/bold green]   {detail}")
     else:
-        target_console.print(f"[bold green]{outcome.tool}[/bold green]   {detail}")
+        verdict = "would install" if dry_run else "installed"
+        target_console.print(f"[bold green]{tool}[/bold green]   {verdict}: {detail}")
     for line in _resolution_lines(outcome):
         target_console.print(f"  [dim]{escape(line)}[/dim]")
     return not _no_page_installed(outcome, dry_run=dry_run)
@@ -112,14 +120,16 @@ def install(
     cfg = get_config(ctx)
     require_login_path()
 
+    from rich.markup import escape
+
     from ..orchestration.install import run_install
 
     failures = 0
-    for tool in tools:
-        if len(tools) > 1:
-            console.print(f"\n[bold blue]=== Processing {tool} ===[/bold blue]")
+    for index, tool in enumerate(tools):
+        if index:
+            console.print()
         try:
-            with console.status(f"[bold green]Installing manpage for {tool}..."):
+            with console.status(f"Installing {escape(tool)}…"):
                 outcome = run_install(
                     tool,
                     model=model,
@@ -140,14 +150,22 @@ def install(
             # toward the exit status like any other outcome without one
             # (ADR-0048) -- only the exit status changes, not the yellow,
             # reason-naming presentation ADR-0020 gave refusals.
-            console.print(f"[yellow]{tool}   {e}[/yellow]")
+            console.print(
+                f"[yellow]{escape(tool)}   not installed: {escape(str(e))}[/yellow]",
+                soft_wrap=True,
+            )
             failures += 1
         except (OSError, RuntimeError, ManiacError) as e:
-            console.print(f"[bold red]Install failed for {tool}: {e}[/bold red]")
+            console.print(
+                f"[bold red]{escape(tool)}   could not be installed: "
+                f"{escape(str(e))}[/bold red]",
+                soft_wrap=True,
+            )
             failures += 1
 
     if failures:
-        console.print(
-            f"\n[bold red]{failures}/{len(tools)} tool(s) did not install.[/bold red]"
-        )
+        if len(tools) > 1:
+            console.print(
+                f"\n[bold red]{failures} of {len(tools)} not installed.[/bold red]"
+            )
         raise typer.Exit(1)

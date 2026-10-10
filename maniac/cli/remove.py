@@ -32,7 +32,15 @@ def compute_remove(tool: str, config: Config | None = None) -> RemoveOutcome:
     )
 
 
-def _render_remove(target_console: Any, outcome: RemoveOutcome) -> bool:
+def _page_count(result: UninstallResult, config: Config) -> str:
+    """How many pages left the manpath, when more than one did."""
+    pages = [
+        p for p in result.removed if not p.is_relative_to(config.output_dir)
+    ] + list(result.restored)
+    return f" ({len(pages)} pages)" if len(pages) > 1 else ""
+
+
+def _render_remove(target_console: Any, outcome: RemoveOutcome, config: Config) -> bool:
     """Print one tool's outcome; return whether maniac had a page for it."""
     from rich.markup import escape
 
@@ -51,9 +59,12 @@ def _render_remove(target_console: Any, outcome: RemoveOutcome) -> bool:
         return False
 
     if result.removed or result.restored:
-        target_console.print(f"[bold green]{tool}[/bold green]   removed")
-    lines = [f"removed {p}" for p in result.removed]
-    lines += [f"restored the page it had replaced: {p}" for p in result.restored]
+        target_console.print(
+            f"[bold green]{tool}[/bold green]   removed{_page_count(result, config)}"
+        )
+    # Each file is for -v, where the installer logs it: a release can be
+    # dozens of pages (npm ships 68).
+    lines = [f"restored the page it had replaced: {p}" for p in result.restored]
     lines += [
         f"removed {p}, though it had been edited since it was installed"
         for p in result.changed
@@ -98,6 +109,6 @@ def remove_cmd(
             console.print(f"[bold red]{tool}   could not be removed: {e}[/bold red]")
             failed = True
             continue
-        failed |= not _render_remove(console, outcome)
+        failed |= not _render_remove(console, outcome, config)
     if failed:
         raise typer.Exit(1)

@@ -1218,3 +1218,16 @@ def test_an_entry_records_the_copy_it_documents_and_old_rows_read_none() -> None
     assert _row_to_entry(row) == entry
     del row["binary"]
     assert _row_to_entry(row).binary is None
+
+
+def test_a_first_transaction_with_no_manifest_warns_nothing(tmp_path: Path) -> None:
+    """No manifest and nothing to recover is a first run, not damage: its
+    note is for -v only, so a new user's first `install` opens with no warning.
+    A real recovery still warns (the test above)."""
+    cfg = _linked_config(tmp_path)
+
+    with capture_logs() as logs, manifest.transaction(config=cfg):
+        pass
+
+    rebuilt = [e for e in logs if e["event"] == "Rebuilt an untrustworthy manifest"]
+    assert [e["log_level"] for e in rebuilt] == ["debug"]

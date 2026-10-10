@@ -103,7 +103,7 @@ def test_run_install_uses_the_install_root_page_first(
     assert outcome.tier is Tier.INSTALL_ROOT
     assert outcome.detail.startswith("shipped page")
     assert "1.2.3" in outcome.detail
-    assert "[no synthesis]" in outcome.detail
+    assert outcome.detail == "shipped page (1.2.3)"
     assert outcome.installed_path == Path("/installed/tool.1")
 
 
@@ -384,7 +384,7 @@ def test_try_install_root_dry_run_reports_the_page_without_installing(
     assert outcome.tier is Tier.INSTALL_ROOT
     assert outcome.installed_path is None
     assert outcome.source_path == page
-    assert "[dry run, no synthesis]" in outcome.detail
+    assert outcome.detail.endswith("page (1.2.3)")
 
 
 def test_try_install_root_installs_the_page(
@@ -406,7 +406,7 @@ def test_try_install_root_installs_the_page(
     assert outcome is not None
     assert outcome.tier is Tier.INSTALL_ROOT
     assert outcome.installed_path == Path("/installed/tool.1")
-    assert "[no synthesis]" in outcome.detail
+    assert outcome.detail == "shipped page (1.2.3)"
 
 
 # -- _try_repository: tier 2 in isolation ------------------------------------
@@ -461,7 +461,7 @@ def test_try_repository_dry_run_reports_the_page_without_installing(
     assert outcome.tier is Tier.REPOSITORY
     assert outcome.installed_path is None
     assert outcome.source_path == page
-    assert "[dry run, no synthesis]" in outcome.detail
+    assert outcome.detail.endswith("page (1.2.3)")
 
 
 def test_try_repository_installs_the_page(
@@ -597,7 +597,7 @@ def test_run_install_reports_repository_docs_only_synthesis(
 
     outcome = run_install("tool")
 
-    assert outcome.detail == "generated from repo docs only"
+    assert outcome.detail.startswith("generated page, from 1 doc in owner/tool")
 
 
 def test_resolved_tool_runs_the_login_path_binary_not_the_bare_name(
