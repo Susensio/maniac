@@ -113,6 +113,8 @@ hx       generated from --help + repo docs
 
 `--no-synthesize` restricts this to the first two tiers and never calls an LLM.
 
+A page maniac already installed that `list` reads `ok` is left alone (`npm   already up to date (10.9.4); --force reinstalls it`), so naming it again costs nothing; an `outdated` or `unknown` page is reinstalled. If the upstream check cannot complete (network or git), `install` says so rather than reporting that no page exists.
+
 Under each tool, `install` prints the binary the page documents and where its version came from: the global copy your login shell runs from `$HOME`, since a manpage is global. When the shell you ran it from would run a different copy (an activated venv, a Mise project pin), it says so:
 
 ```bash

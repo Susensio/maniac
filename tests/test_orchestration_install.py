@@ -2,6 +2,7 @@
 
 import os
 from collections import Counter
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -913,10 +914,14 @@ def _eza_release(tmp_path: Path) -> list[Path]:
     return pages
 
 
-def _resolve_eza_release(monkeypatch: pytest.MonkeyPatch, pages: list[Path]) -> None:
+def _resolve_eza_release(
+    monkeypatch: pytest.MonkeyPatch, pages: list[Path], *, version: str = "0.23.5"
+) -> None:
+    """`eza` at `version`; a later release is a later version, or `install`
+    rightly leaves the page it already has alone."""
     source = RepoSource(name="eza", target="eza-community/eza", is_local=False)
     provider = _FakeProvider(local_docs=[], source=source)
-    inst = _installation(version="0.23.5", binary="eza")
+    inst = _installation(version=version, binary="eza")
     monkeypatch.setattr(
         "maniac.orchestration.context.resolution.find_installation",
         lambda name, bin_dir=None, **_: (provider, inst),
@@ -1133,6 +1138,7 @@ def test_try_repository_undo_restores_a_version_bumped_pages_prior_bytes(
     first_entries = manifest.load(config=cfg)
 
     pages[0].write_text(".TH EZA 1 v2\n", encoding="utf-8")
+    _resolve_eza_release(monkeypatch, pages, version="0.24.0")
 
     real_link = lifecycle.link_manpath_entry
     linked = Counter()
@@ -1802,9 +1808,11 @@ def test_run_install_tier2_does_not_refuse_an_owned_companion_destination(
     first = run_install("eza", no_synthesize=True, config=cfg)
     assert first.tier is Tier.REPOSITORY
 
+    _resolve_eza_release(monkeypatch, pages, version="0.24.0")
     second = run_install("eza", no_synthesize=True, config=cfg)
 
     assert second.tier is Tier.REPOSITORY
+    assert second.detail.startswith("upstream page (0.24.0)")
 
 
 def test_run_install_reinstall_prunes_a_page_the_new_release_no_longer_ships(
@@ -1829,6 +1837,7 @@ def test_run_install_reinstall_prunes_a_page_the_new_release_no_longer_ships(
     assert manifest.lookup("eza_colors-explanation", config=cfg) is not None
 
     pages.pop()  # upstream's next release drops eza_colors-explanation.5
+    _resolve_eza_release(monkeypatch, pages, version="0.24.0")
     outcome = run_install("eza", no_synthesize=True, config=cfg)
 
     assert outcome.tier is Tier.REPOSITORY
@@ -1857,6 +1866,7 @@ def test_run_install_reinstall_prunes_a_dropped_page_restoring_its_vendor_backup
     assert manifest.lookup("eza_colors-explanation", config=cfg) is not None
 
     pages.pop()
+    _resolve_eza_release(monkeypatch, pages, version="0.24.0")
     run_install("eza", no_synthesize=True, config=cfg)
 
     assert manifest.lookup("eza_colors-explanation", config=cfg) is None
@@ -1874,8 +1884,10 @@ def test_run_install_reinstall_with_the_same_pages_prunes_nothing(
     run_install("eza", no_synthesize=True, config=cfg)
     before = manifest.load(config=cfg)
 
-    run_install("eza", no_synthesize=True, config=cfg)
+    _resolve_eza_release(monkeypatch, pages, version="0.24.0")
+    outcome = run_install("eza", no_synthesize=True, config=cfg)
 
+    assert outcome.detail.startswith("upstream page (0.24.0)")
     after = manifest.load(config=cfg)
     assert set(after) == set(before) == {"eza", "eza_colors", "eza_colors-explanation"}
 
@@ -2042,3 +2054,57 @@ def test_install_reaching_tier_3_resolves_the_tool_once_not_twice(
 
     assert outcome.tier is Tier.SYNTHESIS
     assert calls == Counter({"find_installation": 1, "resolve_source": 1})
+
+
+def test_install_leaves_a_page_already_current_alone(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A page `list` reads `ok` is not fetched or generated again: the same
+    page would land, at the cost of the work (a model call, for a generated
+    page). It still counts as installed."""
+    cfg = _release_config(tmp_path)
+    pages = _eza_release(tmp_path)
+    _resolve_eza_release(monkeypatch, pages)
+    run_install("eza", no_synthesize=True, config=cfg)
+    monkeypatch.setattr(
+        "maniac.orchestration.install.discover_repo_manpages",
+        lambda *args, **kwargs: pytest.fail("a current page is not looked up again"),
+    )
+
+    outcome = run_install("eza", no_synthesize=True, config=cfg)
+
+    assert outcome.detail == "already up to date (0.23.5); --force reinstalls it"
+    assert outcome.tier is Tier.REPOSITORY
+    assert outcome.installed_path == cfg.man_dir / "eza.1"
+    assert outcome.resolution is not None
+
+
+def test_install_force_reinstalls_a_current_page(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    cfg = _release_config(tmp_path)
+    pages = _eza_release(tmp_path)
+    _resolve_eza_release(monkeypatch, pages)
+    run_install("eza", no_synthesize=True, config=cfg)
+
+    outcome = run_install("eza", no_synthesize=True, force=True, config=cfg)
+
+    assert outcome.detail.startswith("upstream page (0.23.5)")
+
+
+def test_install_reinstalls_a_page_whose_version_is_unknown(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Rule 4: a page with no recorded version reads `unknown`, never `ok`,
+    so naming it reinstalls it -- the way `update` says to."""
+    cfg = _release_config(tmp_path)
+    pages = _eza_release(tmp_path)
+    _resolve_eza_release(monkeypatch, pages)
+    run_install("eza", no_synthesize=True, config=cfg)
+    entries = manifest.load(config=cfg)
+    entries["eza"] = replace(entries["eza"], version=None)
+    manifest.save(entries, cfg)
+
+    outcome = run_install("eza", no_synthesize=True, config=cfg)
+
+    assert outcome.detail.startswith("upstream page (0.23.5)")

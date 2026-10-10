@@ -34,6 +34,7 @@ from ..installer import (
     _remove_recorded_manpage,
     install_manpage,
 )
+from ..listing.models import ActionState
 from ..logging import logger
 from ..manifest import Tier, manpage_owner
 from ..models import PipelineResult
@@ -157,6 +158,11 @@ def run_install(
             overrides.append(system_page)
             tool = replace(tool, pinned=True)
 
+    if not force and bin_dir is None:
+        current = _already_current(tool_name, cfg)
+        if current is not None:
+            return replace(current, resolution=_resolution(tool, bin_dir=None))
+
     outcome = _select_page(
         tool,
         model=model,
@@ -168,6 +174,37 @@ def run_install(
         outcome,
         resolution=_resolution(tool, bin_dir=None if tool.pinned else bin_dir),
         overrides=tuple(overrides),
+    )
+
+
+def _already_current(tool_name: str, cfg: Config) -> InstallOutcome | None:
+    """maniac's page for `tool_name`, when `list` reads it `ok` for this copy.
+
+    Installing it again would redo the work -- for a generated page, another
+    model call -- to land the same page. Only a page `list` reads `ok`, with
+    its link sound and documenting the copy the login shell runs, is left
+    alone: an `outdated` or `unknown` page, a replaced link, or one pinned to
+    another copy is reinstalled, and `--force` reinstalls any page.
+    """
+    from ..listing.pages import managed_pages
+
+    rows, _ = managed_pages(cfg, [tool_name])
+    if not rows:
+        return None
+    [row] = rows
+    entry = manifest.lookup(tool_name, config=cfg)
+    if (
+        entry is None
+        or row.state is not ActionState.OK
+        or row.drift
+        or row.copy is not None
+    ):
+        return None
+    return InstallOutcome(
+        tool=tool_name,
+        tier=entry.tier,
+        detail=f"already up to date ({row.documented}); --force reinstalls it",
+        installed_path=entry.path,
     )
 
 
