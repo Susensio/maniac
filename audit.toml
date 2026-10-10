@@ -1,0 +1,102 @@
+# Architecture audit (`just audit`, tools/audit.py).
+#
+# Each metric counts one kind of structural debt. `ceiling` is the most the
+# code may have: the audit fails above it. `target` is where the work in
+# docs/STATE.md takes it. `just audit --update` lowers a ceiling once work
+# brings a metric down; raising one is a decision, made here in a commit that
+# says why. Paths are relative to the repository root; module names dotted.
+
+[metric.resolution_implementations]
+kind = "modules_calling"
+why = "Which binary, who installed it and what version must be answered in one place; call the resolution seam instead of its parts."
+names = [
+  "find_installation",
+  "binary_path",
+  "binary_here",
+  "resolve_bin_path",
+  "shim_target",
+  "installation_at",
+  "enumerate_installations",
+]
+allowed = ["maniac/sources/resolution.py", "maniac/sources/pathcache.py", "maniac/sources/providers/*"]
+ceiling = 5
+target = 0
+
+[metric.resolution_exceptions_handled]
+kind = "handlers_of"
+why = "Resolution outcomes are values, not exceptions to catch: match on the result instead."
+names = [
+  "NotGloballySelected",
+  "ShimRunsNothing",
+  "MalformedToolMetadata",
+  "_DiscoveryError",
+]
+allowed = ["maniac/sources/resolution.py", "maniac/sources/discovery.py", "maniac/sources/providers/*"]
+ceiling = 10
+target = 0
+
+[metric.source_order_implementations]
+kind = "modules_calling"
+why = "The order shipped, upstream, generated must be written once; walk the shared source list instead."
+names = ["select_install_root", "select_repository"]
+allowed = ["maniac/sources/candidates.py"]
+ceiling = 4
+target = 1
+
+[metric.page_state_implementations]
+kind = "modules_calling"
+why = "A managed page's state must be computed in one place; call it instead of combining its ingredients."
+names = ["managed_page_state", "provider_target_freshness", "link_state"]
+allowed = ["maniac/manifest.py"]
+ceiling = 2
+target = 1
+
+[metric.package_cycles]
+kind = "package_cycles"
+why = "Packages that import each other cannot be understood, tested or moved apart."
+depth = 2
+ignore = []
+ceiling = 1
+target = 0
+
+[metric.module_cycles]
+kind = "module_cycles"
+why = "Modules that import each other; the CLI's command registration is the one accepted cycle."
+ignore = ["maniac.cli*"]
+ceiling = 0
+target = 0
+
+[metric.layering]
+kind = "forbidden_imports"
+why = "A lower layer imports a higher one: move the shared code down instead."
+rules = [
+  ["maniac.sources", "maniac.orchestration"],
+  ["maniac.sources", "maniac.listing"],
+  ["maniac.sources", "maniac.cli"],
+  ["maniac.listing", "maniac.cli"],
+  ["maniac.orchestration", "maniac.cli"],
+  ["maniac.orchestration", "maniac.listing"],
+]
+ceiling = 5
+target = 0
+
+[metric.over_complex]
+kind = "over_complex"
+why = "A function past the cognitive-complexity limit: split it by the decisions it makes."
+limit = 25
+ceiling = 1
+target = 0
+
+[metric.dead_code]
+kind = "dead_code"
+why = "Code nothing in maniac runs (tests do not count): delete it, or use it."
+min_confidence = 60
+ignore_decorators = ["@app.command", "@app.callback", "@dev.command"]
+ignore_names = [
+  "_clear_*",
+  "*_reset",
+  "clear_login_path",
+  "transient",
+]
+ceiling = 9
+target = 0

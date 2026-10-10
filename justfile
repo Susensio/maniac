@@ -36,13 +36,17 @@ fix:
     uv run ruff check --fix .
     uv run ruff format .
 
-# Run all verification checks (linter, formatting, typing, unit and integration tests)
-check: lint format-check typecheck test integration
+# Run all verification checks (linter, formatting, typing, architecture audit, unit and integration tests)
+check: lint format-check typecheck audit test integration
 
-# Report maintainability findings; existing findings are advisory.
-audit:
-    uv run ruff check . --select C901,PLR0911,PLR0912,PLR0913,PLR0915 --exit-zero
-    uv run complexipy . --failed --suggest-refactors --ignore-complexity
+# Architecture audit: fails when structural debt grows past audit.toml's ceilings.
+# `-v` lists what each metric counts; `--update` lowers ceilings after an improvement.
+audit *args:
+    uv run python tools/audit.py {{ args }}
+
+# Where to start reducing complexity: complexipy's refactor suggestions (advisory).
+audit-suggest:
+    uv run complexipy maniac --failed --suggest-refactors --ignore-complexity
 
 # Run the model x tool benchmark harness. Calls a real LLM -- costs money per run, not part of `check`.
 bench *args:
