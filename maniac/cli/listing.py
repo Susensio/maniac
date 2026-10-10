@@ -619,8 +619,8 @@ class _TerminalObserver(InventoryObserver):
             self._renderer.idle()
 
 
-@app.command(name="list")
-def list_tools(
+@app.command(name="scan")
+def scan_tools(
     ctx: typer.Context,
     tools: Annotated[
         list[str] | None,
@@ -666,7 +666,11 @@ def list_tools(
         ),
     ] = False,
 ) -> None:
-    """Report each binary's manpage reachability states."""
+    """Your tools and the state of their pages, discovered across your login $PATH.
+
+    Best effort (CONTRACT.md rule 3): with no names, every binary an
+    installer claims; with names, exactly those.
+    """
     require_login_path()
     states = _selected_states(
         outdated=outdated,

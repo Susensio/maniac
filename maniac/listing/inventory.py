@@ -97,6 +97,27 @@ class InventoryObserver:
         """Workers are quiet while futures remain pending."""
 
 
+def named_candidate(tool: str) -> Candidate:
+    """Resolve one tool by name; a tool nothing claims still gets a candidate.
+
+    No `resolution.discover_repo(tool)` fallback when nothing is found: it
+    shares `find_installation`'s own bin-path resolution. A tool whose
+    metadata is unreadable, or refused as not globally selected, carries
+    why in `Candidate.error`.
+    """
+    try:
+        found = resolution.find_installation(tool)
+    except _DiscoveryError as e:
+        return Candidate(
+            tool=tool,
+            provider=None,
+            installation=None,
+            error=ToolError(e.path, e.reason),
+        )
+    provider, inst = found if found else (None, None)
+    return Candidate(tool=tool, provider=provider, installation=inst)
+
+
 def _build_inventory(
     tools: list[str] | None, observer: InventoryObserver
 ) -> tuple[list[Candidate], bool]:
@@ -109,27 +130,7 @@ def _build_inventory(
     drops the rest of the inventory.
     """
     if tools:
-        # No `resolution.discover_repo(tool)` fallback when `found` is None:
-        # it shares `find_installation`'s own bin-path resolution.
-        candidates = []
-        for tool in dict.fromkeys(tools):
-            try:
-                found = resolution.find_installation(tool)
-            except _DiscoveryError as e:
-                candidates.append(
-                    Candidate(
-                        tool=tool,
-                        provider=None,
-                        installation=None,
-                        error=ToolError(e.path, e.reason),
-                    )
-                )
-                continue
-            provider, inst = found if found else (None, None)
-            candidates.append(
-                Candidate(tool=tool, provider=provider, installation=inst)
-            )
-        return candidates, False
+        return [named_candidate(tool) for tool in dict.fromkeys(tools)], False
 
     errors: dict[str, ToolError] = {}
     discovered = sorted(

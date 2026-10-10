@@ -36,9 +36,10 @@ def _no_page_installed(outcome: InstallOutcome, *, dry_run: bool) -> bool:
     return outcome.installed_path is None
 
 
-def _render_install(
+def render_install(
     target_console: Any, outcome: InstallOutcome, *, dry_run: bool
-) -> None:
+) -> bool:
+    """Print one tool's outcome; return whether a page landed (or would, on a dry run)."""
     from rich.markup import escape
 
     # `outcome.detail` carries literal "[no synthesis]" -- escaped so Rich's
@@ -50,6 +51,7 @@ def _render_install(
         target_console.print(f"[bold green]{outcome.tool}[/bold green]   {detail}")
     for line in _resolution_lines(outcome):
         target_console.print(f"  [dim]{escape(line)}[/dim]")
+    return not _no_page_installed(outcome, dry_run=dry_run)
 
 
 def _resolution_lines(outcome: InstallOutcome) -> list[str]:
@@ -133,8 +135,7 @@ def install(
                     dry_run=dry_run,
                     config=cfg,
                 )
-            _render_install(console, outcome, dry_run=dry_run)
-            if _no_page_installed(outcome, dry_run=dry_run):
+            if not render_install(console, outcome, dry_run=dry_run):
                 # No page landed on disk for this tool -- whether tiers 1-2
                 # found nothing under --no-synthesize, or tier 3 reached
                 # synthesis but pandoc was missing or rejected the markdown

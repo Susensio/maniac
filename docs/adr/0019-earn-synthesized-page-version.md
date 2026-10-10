@@ -1,6 +1,6 @@
 # ADR-0019: Earn a synthesized page's recorded version from version-matched inputs instead of stamping the installed binary's
 
-Status: Accepted
+Status: Accepted; superseded in part by [ADR-0065](0065-a-user-contract-and-a-smaller-command-surface.md) (a page with no recorded version reads `unknown`, not `ok` forever)
 Date: 2026-09-09
 
 ## Context

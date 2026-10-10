@@ -1,6 +1,6 @@
 # ADR-0026: Treat unresolved external pages as unverified and prove staleness beyond MANIAC-owned pages
 
-Status: Accepted
+Status: Accepted; superseded in part by [ADR-0065](0065-a-user-contract-and-a-smaller-command-surface.md) (the `unverified` state is `unknown`, and covers a managed page without version evidence)
 Date: 2026-09-12
 Supersedes: [ADR-0018](0018-list-reports-manpage-reachability.md)
 

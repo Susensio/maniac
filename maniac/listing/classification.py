@@ -72,7 +72,7 @@ def _under_root(path: Path, root: Path) -> bool:
         return False
 
 
-def _managed_source(entry: manifest.Entry) -> PageSource:
+def managed_source(entry: manifest.Entry) -> PageSource:
     """Return the content provenance recorded for a reachable managed page."""
     return {
         manifest.Tier.INSTALL_ROOT: PageSource.VENDOR,
@@ -87,7 +87,7 @@ def _installed_source(
     """Return the provenance of a page that `man` resolves."""
     if evidence.owned:
         assert evidence.entry is not None
-        return _managed_source(evidence.entry)
+        return managed_source(evidence.entry)
     inst = candidate.installation
     if inst is not None and _under_root(installed, inst.root):
         return PageSource.VENDOR

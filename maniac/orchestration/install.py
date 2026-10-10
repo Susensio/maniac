@@ -96,8 +96,13 @@ def run_install(
     dry_run: bool = False,
     config: Config | None = None,
     bin_dir: str | Path | None = None,
+    copy: Path | None = None,
 ) -> InstallOutcome:
     """Resolve `tool_name` through ADR-0016's tiers and report which one answered.
+
+    `copy` reinstalls a page for exactly the binary it recorded (`update`,
+    for a page `--force` pinned): the earlier choice stands, so no refusal
+    that `--force` overrode is asked again.
 
     Tiers 1-2 (install root, repository) always run first. `no_synthesize`
     (`--no-synthesize`) restricts selection to them -- `synthesize`, the
@@ -122,6 +127,18 @@ def run_install(
             f"replaces a page maniac did not install at {dest_file}, kept as a backup"
         )
 
+    if copy is not None:
+        if not copy.is_file():
+            raise InstallRefused(
+                f"'{tool_name}' documents {copy}, which is gone; `maniac install "
+                f"{tool_name}` documents the copy your login shell runs now."
+            )
+        tool = resolve_tool(tool_name, config=cfg, bin_dir=copy.parent, here=True)
+        outcome = _select_page(
+            tool, model=model, no_synthesize=no_synthesize, force=force, dry_run=dry_run
+        )
+        return replace(outcome, resolution=_resolution(tool, bin_dir=copy.parent))
+
     try:
         tool = _resolve_global(tool_name, cfg, bin_dir)
     except InstallRefused as refusal:
@@ -138,6 +155,7 @@ def run_install(
         system_page = _system_binary_page(tool_name, tool.bin_path, force=force)
         if system_page is not None:
             overrides.append(system_page)
+            tool = replace(tool, pinned=True)
 
     outcome = _select_page(
         tool,
@@ -148,7 +166,7 @@ def run_install(
     )
     return replace(
         outcome,
-        resolution=_resolution(tool, bin_dir=None if tool.here else bin_dir),
+        resolution=_resolution(tool, bin_dir=None if tool.pinned else bin_dir),
         overrides=tuple(overrides),
     )
 
@@ -202,7 +220,7 @@ def _resolution(tool: ResolvedTool, *, bin_dir: str | Path | None) -> Resolution
         installer = None
         reported = get_version([str(tool.bin_path)], config=tool.config)
         version = reported.splitlines()[0].strip() if reported else None
-    here = binary_here(tool.tool_name) if bin_dir is None and not tool.here else None
+    here = binary_here(tool.tool_name) if bin_dir is None and not tool.pinned else None
     if here is not None and _same_file(here, tool.bin_path):
         here = None
     return Resolution(tool.bin_path, installer, version, here)

@@ -469,7 +469,7 @@ def test_cli_tall_streaming_prints_one_complete_table_after_alt_screen(
     monkeypatch.setattr("maniac.cli.listing._ProgressReporter", FakeReporter)
     monkeypatch.setattr("maniac.cli.listing.compute_rows", finished_rows)
 
-    result = runner.invoke(app, ["list"])
+    result = runner.invoke(app, ["scan"])
 
     assert result.exit_code == 0
     assert len(live_options) == 1
@@ -534,7 +534,7 @@ def test_cli_tall_streaming_error_leaves_no_incomplete_normal_screen_table(
     monkeypatch.setattr("maniac.cli.listing._ProgressReporter", FakeReporter)
     monkeypatch.setattr("maniac.cli.listing.compute_rows", failed_rows)
 
-    result = runner.invoke(app, ["list"])
+    result = runner.invoke(app, ["scan"])
 
     assert result.exit_code == 1
     assert isinstance(result.exception, RuntimeError)
@@ -1033,7 +1033,7 @@ def test_cli_streaming_discards_the_live_frames_for_one_final_render(
 
     monkeypatch.setattr("maniac.cli.listing._render_list", record_render)
 
-    result = runner.invoke(app, ["list"])
+    result = runner.invoke(app, ["scan"])
 
     assert result.exit_code == 0
     # The short table is on the normal screen, so Rich must be told to erase it.
@@ -1062,7 +1062,7 @@ def test_cli_streaming_keeps_siblings_apart_absent_proven_shared_target(
         ],
     )
 
-    result = runner.invoke(app, ["list"])
+    result = runner.invoke(app, ["scan"])
 
     assert result.exit_code == 0
     final = output.getvalue()
@@ -1096,7 +1096,7 @@ def test_cli_verbose_list_disables_streaming(
         ],
     )
 
-    result = runner.invoke(app, ["--verbose", "list"])
+    result = runner.invoke(app, ["--verbose", "scan"])
 
     assert result.exit_code == 0
     assert "Manpage Reachability" in output.getvalue()
@@ -1133,7 +1133,7 @@ def test_cli_streaming_stops_row_progress_after_the_skeleton(
     monkeypatch.setattr("maniac.cli.listing._ProgressReporter", FakeReporter)
     monkeypatch.setattr("maniac.cli.listing.compute_rows", rows)
 
-    result = runner.invoke(app, ["list"])
+    result = runner.invoke(app, ["scan"])
 
     observer = captured["observer"]
     assert isinstance(observer, _TerminalObserver)
@@ -1181,7 +1181,7 @@ def test_cli_blocking_terminal_list_keeps_combined_row_progress(
     monkeypatch.setattr("maniac.cli.listing._ProgressReporter", FakeReporter)
     monkeypatch.setattr("maniac.cli.listing.compute_rows", rows)
 
-    result = runner.invoke(app, ["list", "gum"])
+    result = runner.invoke(app, ["scan", "gum"])
 
     observer = captured["observer"]
     assert isinstance(observer, _TerminalObserver)
@@ -1239,7 +1239,7 @@ def test_cli_streaming_error_keeps_provisional_rows_and_propagates(
         enumerate_installations,
     )
 
-    result = runner.invoke(app, ["list"])
+    result = runner.invoke(app, ["scan"])
 
     assert result.exit_code == 1
     assert isinstance(result.exception, RuntimeError)
@@ -1263,7 +1263,7 @@ def test_cli_list_explicit_tools_on_a_terminal_render_a_final_table(
         lambda name, bin_dir=None, **_: (_FakeProvider(), _installation(binary=name)),
     )
 
-    result = runner.invoke(app, ["list", "gum"])
+    result = runner.invoke(app, ["scan", "gum"])
 
     assert result.exit_code == 0
     assert "Manpage Reachability" in result.output
@@ -1385,7 +1385,7 @@ def test_cli_list_pipe_emits_exactly_the_filtered_set(
         ],
     )
 
-    res = runner.invoke(app, ["list", "--available"])
+    res = runner.invoke(app, ["scan", "--available"])
     assert res.exit_code == 0
     assert res.output == "gum\n"
 
@@ -1415,7 +1415,7 @@ def test_cli_list_pipe_unknown_emits_exactly_the_filtered_set(
         ],
     )
 
-    res = runner.invoke(app, ["list", "--unknown"])
+    res = runner.invoke(app, ["scan", "--unknown"])
 
     assert res.exit_code == 0
     assert res.output == "tool\n"
@@ -1444,7 +1444,7 @@ def test_cli_list_pipe_available_waits_for_upstream_classification(
         lambda *args, **kwargs: (Path("/fzf.1"), True),
     )
 
-    res = runner.invoke(app, ["list", "--available"])
+    res = runner.invoke(app, ["scan", "--available"])
 
     assert res.exit_code == 0
     assert res.output == "fzf\n"
@@ -1942,7 +1942,7 @@ def test_cli_list_pipe_emits_bare_names(
         ],
     )
 
-    res = runner.invoke(app, ["list"])
+    res = runner.invoke(app, ["scan"])
     assert res.exit_code == 0
     assert res.output == "gum\n"
 
@@ -1962,6 +1962,6 @@ def test_cli_list_tty_shows_table(
         )[-1],
     )
 
-    res = runner.invoke(app, ["list"])
+    res = runner.invoke(app, ["scan"])
     assert res.exit_code == 0
     assert "Manpage Reachability" in res.output

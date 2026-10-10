@@ -114,6 +114,21 @@ def test_install_list_upgrade_uninstall(
     [row] = compute_rows(["faketool"], config=config)
     assert row.state is ActionState.OUTDATED
 
+    # `list` shows it; `update` reinstalls it, through the real CLI.
+    assert runner.invoke(app, ["list", "--outdated"]).stdout.split() == ["faketool"]
+    updated = runner.invoke(app, ["update", "--model", "openai/gpt-4o-mini"])
+    assert updated.exit_code == 0, updated.output
+    assert len(prompts) == 2
+    entry = manifest.lookup("faketool", config=config)
+    assert entry is not None
+    assert entry.version == "faketool 2.4.0"
+    assert '"faketool 2.4.0" "User Commands"' in page.read_text(encoding="utf-8")
+    assert runner.invoke(app, ["list", "--outdated"]).stdout.split() == []
+    again = runner.invoke(app, ["update"])
+    assert again.exit_code == 0, again.output
+    assert _says(again.output, "Every page maniac installed is up to date.")
+    assert len(prompts) == 2
+
     result = uninstall_manpage("faketool", config=config)
 
     assert result is not None
@@ -204,7 +219,8 @@ def test_venv_copies_are_noticed_and_a_venv_only_tool_needs_force(
     page = config.man_dir / "faketool.1"
     assert '"faketool 3.0.0" "User Commands"' in page.read_text(encoding="utf-8")
 
-    # `list` checks the recorded copy, even from a shell without the venv.
+    # `list` checks the recorded copy, even from a shell without the venv;
+    # `update` reinstalls that copy, not whatever $PATH reaches there.
     monkeypatch.setenv("PATH", login_path)
     [row] = compute_rows(["faketool"], config=config)
     assert row.state is ActionState.OK
@@ -212,5 +228,18 @@ def test_venv_copies_are_noticed_and_a_venv_only_tool_needs_force(
         venv_tool.read_text(encoding="utf-8").replace("3.0.0", "3.1.0"),
         encoding="utf-8",
     )
-    [row] = compute_rows(["faketool"], config=config)
-    assert row.state is ActionState.OUTDATED
+    assert runner.invoke(app, ["list", "--outdated"]).stdout.split() == ["faketool"]
+    updated = runner.invoke(app, ["update", "--model", "openai/gpt-4o-mini"])
+    assert updated.exit_code == 0, updated.output
+    assert _says(
+        updated.output,
+        f"documents {venv_tool} (no installer; it reports faketool 3.1.0)",
+    )
+    entry = manifest.lookup("faketool", config=config)
+    assert entry is not None
+    assert (entry.binary, entry.version) == (venv_tool, "faketool 3.1.0")
+
+    # The project is deleted: the page can no longer be checked.
+    venv_tool.unlink()
+    listed = runner.invoke(app, ["list", "--names", "--unknown"])
+    assert listed.stdout.split() == ["faketool"]

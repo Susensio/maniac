@@ -129,14 +129,14 @@ Root `--help` alone is enough to generate a page when no better source exists, b
 Repository documentation alone can also be used when the help crawl fails; synthesis stops only when neither source provides usable material.
 A failed `--help` invocation is accepted as documentation only when its combined output contains a recognizable `usage:` line, covering tools such as tmux that write usage to stderr and exit nonzero without treating a bare option error as help.
 
-For `list`, upstream repository checks inspect the exact version-matched tree without cloning or checking out a worktree, using cached Git tree objects and materializing only a selected page.
+For `scan`, upstream repository checks inspect the exact version-matched tree without cloning or checking out a worktree, using cached Git tree objects and materializing only a selected page.
 For GitHub sources, MANIAC also inspects bounded, likely release artifacts independently, validates their archive contents rather than trusting artifact names, and can therefore discover release-only pages such as eza's.
 It never reads handcrafted Mise `extra_assets` entries.
 A validated bundle retains and installs every valid companion manpage across sections.
 Every managed manpath entry is a manifest-tracked symbolic link. A verified vendor page links directly to its provider target, using Mise's `latest` alias only when it resolves to the executable's exact install root. Repository and synthesized pages link to a MANIAC-owned durable copy rather than the disposable cache. The manifest records their tier, source, version, checksum, destination, and any displaced-page backup. Uninstall removes a manifest-owned page and restores that backup even when its bytes changed since install, warning about the change rather than refusing; a retargeted or dangling link is no longer provably MANIAC's page and is left in place instead. Uninstall operates on the whole upstream release, so removing the primary name removes every companion page installed with it too; naming a companion instead while its primary is still installed refuses and redirects to the primary's name (ADR-0053), removing the companion outright only once the primary entry is already gone.
 The default cache is `$XDG_CACHE_HOME/maniac/repos` (normally `~/.cache/maniac/repos`), with bare filtered Git objects under `git/`, selected pages under `manpages/`, release responses and assets under `releases/`, and tag/probe decisions under `upstream/`.
 Positive versioned results persist; definitive misses expire after five minutes, and transient network failures are not cached as misses.
-`list` uses no sparse checkout; sparse checkouts are reserved for synthesis and limited to documentation paths.
+`scan` uses no sparse checkout; sparse checkouts are reserved for synthesis and limited to documentation paths.
 
 ```bash
 # Install for a single tool
@@ -154,35 +154,45 @@ man uv
 man howdoi
 ```
 
-### 2. Find Tools MANIAC Can Act On
+### 2. Your Pages: `list` and `update`
 
-`list` reports five states by checking manpage reachability: *ok* (a page resolves and local evidence says it is current), *unknown* (a page resolves but nothing proves which version it documents), *outdated* (positive evidence says a page documents another version), *available* (nothing resolves, but a page can be had without LLM synthesis), *missing* (nothing resolves and no free page is known). Use `--unknown`, `--outdated`, `--available`, or `--missing` to select a state.
+`list` shows the pages maniac installed: the version each documents, the version installed now, and its state. Pages maniac did not install are never listed here (`scan` shows those).
+
+```bash
+$ maniac list
+Tool    State     Documents  Installed  Source
+cowsay  unknown   -          1.5.0      maniac
+ruff    outdated  0.6.8      0.6.9      maniac
+  cowsay: no version was recorded for this page
+```
+
+A page is *ok* only when both versions are known and equal, *outdated* when they differ, and *unknown* when either is missing: no recorded version, a binary that cannot report one, or a pinned copy that is gone. `--outdated` and `--unknown` narrow to one state; piped, `list` prints bare names.
+
+`update` reinstalls every *outdated* page maniac installed, and nothing else:
+
+```bash
+maniac update            # every outdated page
+maniac update ruff       # just this one, saying why if it is left alone
+```
+
+An *unknown* page is left alone until you name it to `maniac install`. A page `--force` pinned to a non-global copy is reinstalled for that copy. Each tool commits on its own, so an interrupted update resumes by running it again. `update` takes `--model`, `--no-synthesize` and `--dry-run` as `install` does.
+
+### 3. Your Other Tools: `scan`
+
+`scan` discovers your tools across your login `$PATH`, best effort, and reports the state of each one's page: *ok*, *unknown*, *outdated*, *available* (a page can be had without LLM synthesis), *missing* (no free page is known). Use `--unknown`, `--outdated`, `--available`, or `--missing` to select a state.
 The table carries four columns: Tool, State, Source, and Upstream.
 Source reports who produced the page: `vendor` for a page shipped with the installed tool, `upstream` for one fetched from its repository, `maniac` for an LLM-generated page, and `system` for another page already on the manpath.
 The Source keyword links to the exact local page for `vendor`, `system`, and `maniac`; for GitHub sources, `upstream` links to the version-pinned repository file or release asset that supplied it, never MANIAC's cache. Upstream links to the repository itself. Other Git hosts remain plain Source text until MANIAC has an exact-file URL adapter for that host.
-`--managed` is independent of Source and selects every page MANIAC installed, including vendor and upstream pages copied onto the manpath.
-With no arguments, it reports every tool in your `$PATH`:
 
 ```bash
-maniac list
+maniac scan              # every tool an installer claims
+maniac scan hx uv bat    # exactly these
 ```
 
-Name tools explicitly to report on exactly those:
+Piped, `scan` prints bare tool names, so installing every page that is missing is one line:
 
 ```bash
-maniac list hx uv bat
-```
-
-### 3. Bulk-Install via Piping
-
-There is no bulk install command: piping `list`'s output into `install` is the bulk path.
-Redirected to anything other than a terminal, `list` prints bare tool names, one per line, with no table, colour, or header.
-Narrowing to actionable rows requires an explicit filter:
-
-```bash
-maniac list --available --missing | xargs maniac install
-# or, equivalently
-maniac install $(maniac list --available --missing)
+maniac scan --available --missing | xargs maniac install
 ```
 
 `install` with zero tool names exits quietly, so an empty expansion is harmless.
@@ -218,7 +228,7 @@ maniac eval howdoi --against-installed
 
 ### 5. Manage Installed Manpages
 
-`list` doubles as the inventory view: `--managed` selects pages MANIAC installed without replacing their content provenance. A managed vendor page still reads `vendor`, a managed repository page `upstream`, and only a generated page `maniac`.
+`list` (section 2) shows every page MANIAC installed, with the source its content came from: a page shipped with the tool reads `vendor`, one from its repository `upstream`, and only a generated page `maniac`.
 Uninstall safely restores any vendor backup:
 
 ```bash

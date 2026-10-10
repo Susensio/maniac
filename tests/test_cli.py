@@ -412,7 +412,9 @@ def test_cli_install_exits_nonzero_for_unreachable_binary(
     assert "$PATH" in result.output
 
 
-@pytest.mark.parametrize("command", [["install", "a", "b"], ["list"], ["list", "a"]])
+@pytest.mark.parametrize(
+    "command", [["install", "a", "b"], ["scan"], ["scan", "a"], ["list"], ["update"]]
+)
 def test_cli_stops_once_when_the_login_shell_cannot_report_path(
     monkeypatch: pytest.MonkeyPatch, command: list[str]
 ) -> None:
@@ -859,7 +861,7 @@ def test_render_install_does_not_swallow_bracketed_detail() -> None:
 
     from rich.console import Console
 
-    from maniac.cli.install import _render_install
+    from maniac.cli.install import render_install
     from maniac.orchestration.install import InstallOutcome, Tier
 
     buf = io.StringIO()
@@ -871,7 +873,7 @@ def test_render_install_does_not_swallow_bracketed_detail() -> None:
         installed_path=Path("/usr/share/man/man1/pandoc.1"),
     )
 
-    _render_install(test_console, outcome, dry_run=False)
+    render_install(test_console, outcome, dry_run=False)
 
     assert "[no synthesis]" in buf.getvalue()
 

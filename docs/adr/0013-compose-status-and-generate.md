@@ -1,6 +1,6 @@
 # ADR-0013: Compose status and generate through pipes instead of bulk subcommands
 
-Status: Accepted
+Status: Accepted; superseded in part by [ADR-0065](0065-a-user-contract-and-a-smaller-command-surface.md) (`update` is a command, and `list` reports only maniac's own pages; discovery is `scan`)
 Date: 2026-09-04
 
 ## Context

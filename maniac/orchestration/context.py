@@ -39,13 +39,15 @@ class ResolvedTool:
     """The binary that runs: the claimed installation's file, else
     `resolution.binary_path` (ADR-0062's login `$PATH` or `bin_dir`, a
     Mise shim replaced by its target, ADR-0063)."""
-    here: bool = False
-    """The invoking shell's copy, documented by `install --force` (CONTRACT.md rule 2)."""
+    pinned: bool = False
+    """The page records which binary it documents: a copy maniac would not
+    have chosen by itself -- `install --force` past a refusal (CONTRACT.md
+    rules 1 and 2) -- so `list` and `update` keep to that copy."""
 
     @property
     def documented_binary(self) -> Path | None:
-        """The copy a page records documenting: only a forced non-global copy is recorded."""
-        return self.bin_path if self.here else None
+        """The copy a page records documenting; only a pinned one is recorded."""
+        return self.bin_path if self.pinned else None
 
     @property
     def command(self) -> str:
@@ -117,5 +119,5 @@ def resolve_tool(
         bin_dir=Path(bin_dir) if bin_dir is not None else None,
         provider=provider,
         installation=installation,
-        here=here,
+        pinned=here,
     )
