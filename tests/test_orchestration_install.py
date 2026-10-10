@@ -1341,14 +1341,16 @@ def test_run_install_refuses_synthesis_after_a_non_definitive_repository_probe(
     message = str(excinfo.value)
     assert "owner/tool" in message
     assert "tier-2" in message
+    assert "--no-synthesize" not in message
+    assert "`maniac why tool`" in message
 
 
-def test_run_install_no_synthesize_still_works_on_a_non_definitive_probe(
+def test_run_install_no_synthesize_says_an_incomplete_probe_is_not_an_absence(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """`--no-synthesize` never reaches synthesis anyway, so a non-definitive
-    tier-2 probe does not change its (already refusal-free) behavior --
-    only the path that would otherwise reach `synthesize` gains a refusal.
+    """`--no-synthesize` installs nothing on a non-definitive tier-2 probe,
+    and says the check did not complete -- never "no page found", which
+    would report an absence on missing evidence (CONTRACT.md rule 4).
     """
     source = RepoSource(name="tool", target="owner/tool", is_local=False)
     provider = _FakeProvider(local_docs=[], source=source)
@@ -1365,7 +1367,9 @@ def test_run_install_no_synthesize_still_works_on_a_non_definitive_probe(
     outcome = run_install("tool", no_synthesize=True)
 
     assert outcome.tier is None
-    assert "tiers 1-2 only" in outcome.detail
+    assert outcome.installed_path is None
+    assert "owner/tool did not complete" in outcome.detail
+    assert "not found" not in outcome.detail
 
 
 def test_run_install_explicit_bin_dir_bypasses_the_refusal(

@@ -277,24 +277,30 @@ def _select_page(
     outcome, repository_definitive = _try_repository(tool, force=force, dry_run=dry_run)
     if outcome is not None:
         return outcome
+    source = tool.documentation_source
+    upstream = source.identity if source is not None else "the upstream repository"
     if no_synthesize:
+        # An incomplete check is not an absence (CONTRACT.md rule 4): say
+        # which, so "no page" is never reported on missing evidence.
         return InstallOutcome(
             tool=tool_name,
             tier=None,
             detail=(
                 "no install-root or repository page found "
                 "(tried tiers 1-2 only; rerun without --no-synthesize to synthesize)"
+                if repository_definitive
+                else f"not installed: the check for an upstream page in {upstream} "
+                "did not complete (network or git?), so whether one exists is "
+                "unknown; rerun once it can"
             ),
         )
     if not repository_definitive:
-        source = tool.documentation_source
-        detail = source.identity if source is not None else "the upstream repository"
         raise InstallRefused(
-            f"Could not confirm whether {detail} has a manpage for '{tool_name}' -- "
+            f"Could not confirm whether {upstream} has a manpage for '{tool_name}' -- "
             "the tier-2 repository check failed rather than returning a "
             "definitive answer, so synthesizing over it could silently paper "
-            "over a network or git failure. Rerun once the check can complete, "
-            "or pass --no-synthesize to accept tiers 1-2 only."
+            "over a network or git failure. Rerun once the check can complete; "
+            f"`maniac why {tool_name}` shows what was tried."
         )
 
     from .pipeline import synthesize  # deferred: tier 3 only, never on --no-synthesize
