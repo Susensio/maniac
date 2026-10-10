@@ -9,6 +9,7 @@ module- or class-global state.
 import os
 from collections.abc import Callable
 from dataclasses import replace
+from enum import Enum
 from pathlib import Path
 
 from ..config import Config
@@ -107,11 +108,23 @@ def discover_repo(
     return registry.resolve_source(inst, config=config, provider=provider)
 
 
+class Skip(Enum):
+    """Why discovery passed over a binary on the login `$PATH` (CONTRACT.md rule 3)."""
+
+    SYSTEM = "system"
+    """A system package's binary: its package ships and upgrades its page (ADR-0059)."""
+    UNCLAIMED = "unclaimed"
+    """No installer claims it: a wrapper script, a hand-copied binary."""
+    SHIM_RUNS_NOTHING = "shim"
+    """A mise shim that runs nothing from `$HOME`: a project-only tool's."""
+
+
 def enumerate_installations(
     on_start: Callable[[int], None] | None = None,
     on_scan: Callable[[], None] | None = None,
     on_error: Callable[[str, MalformedToolMetadata | NotGloballySelected], None]
     | None = None,
+    on_skip: Callable[[str, Skip], None] | None = None,
 ) -> list[tuple[Provider, Installation]]:
     """Claim each first-PATH binary once, preserving PATH precedence.
 
@@ -176,6 +189,8 @@ def enumerate_installations(
         except ShimRunsNothing:
             # From $HOME this name reaches no binary at all (ADR-0063
             # Corrections) -- not a tool of this machine, so no row.
+            if on_skip is not None:
+                on_skip(name, Skip.SHIM_RUNS_NOTHING)
             if on_scan is not None:
                 on_scan()
             continue
@@ -201,6 +216,8 @@ def enumerate_installations(
             if losers:
                 inst = replace(inst, losers=tuple(losers))
             found.append((provider, inst))
+        elif on_skip is not None:
+            on_skip(name, Skip.SYSTEM if is_system_binary(bin_path) else Skip.UNCLAIMED)
         if on_scan is not None:
             on_scan()
     return sorted(found, key=lambda item: item[1].binary)

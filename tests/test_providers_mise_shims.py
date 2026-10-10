@@ -163,12 +163,13 @@ def test_a_shim_no_global_tool_provides_falls_through_like_mise_does(
     assert mise.shim_target(shim) == later
 
 
-def test_list_leaves_out_a_shim_that_runs_nothing_but_a_named_lookup_says_why(
+def test_scan_counts_a_shim_that_runs_nothing_and_a_named_lookup_says_why(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """`list` with no names shows the machine's tools: a project-only
-    tool's shim reaches nothing from `$HOME`, so it gets no row. Asked for
-    by name, it is still refused with the reason."""
+    """`scan` with no names shows the machine's tools: a project-only
+    tool's shim reaches nothing from `$HOME`, so it gets no row but is
+    counted as skipped (CONTRACT.md rule 3). Asked for by name, it is
+    still refused with the reason."""
     mise_bin = _mise_binary(tmp_path)
     _shim(tmp_path, "project-only", mise_bin)
     shim_dir = _shim(tmp_path, "cowsay", mise_bin).parent
@@ -182,13 +183,16 @@ def test_list_leaves_out_a_shim_that_runs_nothing_but_a_named_lookup_says_why(
     )
     monkeypatch.setenv("PATH", str(shim_dir))
     errors: list[str] = []
+    skipped: list[tuple[str, resolution.Skip]] = []
 
     claims = resolution.enumerate_installations(
-        on_error=lambda name, error: errors.append(name)
+        on_error=lambda name, error: errors.append(name),
+        on_skip=lambda name, reason: skipped.append((name, reason)),
     )
 
     assert [inst.binary for _, inst in claims] == ["cowsay"]
     assert errors == []
+    assert skipped == [("project-only", resolution.Skip.SHIM_RUNS_NOTHING)]
     with pytest.raises(NotGloballySelected):
         resolution.find_installation("project-only")
 

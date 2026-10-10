@@ -179,15 +179,27 @@ An *unknown* page is left alone until you name it to `maniac install`. A page `-
 
 ### 3. Your Other Tools: `scan`
 
-`scan` discovers your tools across your login `$PATH`, best effort, and reports the state of each one's page: *ok*, *unknown*, *outdated*, *available* (a page can be had without LLM synthesis), *missing* (no free page is known). Use `--unknown`, `--outdated`, `--available`, or `--missing` to select a state.
+`scan` discovers the tools maniac has no page for across your login `$PATH`, best effort, and reports the state of each one's page: *ok*, *unknown*, *outdated*, *available* (a page can be had without LLM synthesis), *missing* (no free page is known). Use `--unknown`, `--outdated`, `--available`, or `--missing` to select a state.
 The table carries four columns: Tool, State, Source, and Upstream.
 Source reports who produced the page: `vendor` for a page shipped with the installed tool, `upstream` for one fetched from its repository, `maniac` for an LLM-generated page, and `system` for another page already on the manpath.
 The Source keyword links to the exact local page for `vendor`, `system`, and `maniac`; for GitHub sources, `upstream` links to the version-pinned repository file or release asset that supplied it, never MANIAC's cache. Upstream links to the repository itself. Other Git hosts remain plain Source text until MANIAC has an exact-file URL adapter for that host.
 
 ```bash
-maniac scan              # every tool an installer claims
-maniac scan hx uv bat    # exactly these
+maniac scan              # every tool an installer claims and maniac has no page for
+maniac scan hx uv bat    # exactly these, maniac's own included
 ```
+
+Nothing is left out silently: unnamed, `scan` ends by counting every binary it passed over, and why.
+
+```text
+Not shown: 312 more on your $PATH
+     14 have a page from maniac: `maniac list`
+     23 no installer claims: `maniac why <tool>`
+    274 system tools, whose packages ship their pages
+      1 mise shims that run nothing from $HOME
+```
+
+The count goes to stderr, so piped output stays bare names.
 
 Piped, `scan` prints bare tool names, so installing every page that is missing is one line:
 

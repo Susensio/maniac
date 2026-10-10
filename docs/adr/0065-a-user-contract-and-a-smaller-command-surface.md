@@ -100,3 +100,10 @@ maniac documents the global copy and notes the venv's, as rule 2 says a global p
 
 The user chose that `--force` also covers system binaries: one override without an exception to remember.
 ADR-0059's refusal now holds only without `--force`.
+
+2026-10-10: `scan` shows every state, not only tools with no usable page.
+
+The contract's command table called `scan` "your tools with no usable page", and its pipe example installed from an unfiltered `scan`.
+The plan, and P4 as built, keep discovery a report of every tool maniac does not manage, in all five states, with the state filters `list` had.
+Showing only `available` and `missing` by default would hide `ok`, `unknown` and `outdated` pages behind a filter without an `--ok` to reach them (ADR-0018), which is the kind of hidden default this redesign removes.
+The table now reads "your other tools and the state of their pages", and the pipe example names `--available --missing`.

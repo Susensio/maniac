@@ -78,10 +78,10 @@ Only `generated` costs a model call, and `--no-generate` forbids it.
 | `update` | maniac's pages | Reinstalls each page whose tool changed version. |
 | `remove <tool>...` | maniac's pages | Removes the page and restores any page it replaced. |
 | `list` | maniac's pages | Each page: the version it documents, the version installed, its state. |
-| `scan` | your `$PATH` | Your tools with no usable page, best effort, with every skip counted. |
+| `scan` | your `$PATH` | Your other tools and the state of their pages, best effort, with every skip counted. |
 | `why <tool>` | one tool | The full decision trace (rule 3). |
 
-Piped, `list` and `scan` print bare tool names, so `maniac scan | xargs maniac install` installs every page that is missing.
+Piped, `list` and `scan` print bare tool names, so `maniac scan --available --missing | xargs maniac install` installs every page that is missing.
 
 Developer commands (quality evaluation, benchmarks) live under `maniac dev` and are left out of the main help.
 

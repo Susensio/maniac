@@ -41,13 +41,13 @@ When a phase lands, it updates the README for what became live and marks the ADR
 - [x] The old discovery `list` is `scan`, unchanged until P4 (it still has `--managed`).
 - [x] A page forced onto a system binary is pinned too, so `update` reinstalls it without asking `--force` again.
 
-### P4 `scan` (rule 3): next
+### P4 `scan` (rule 3): done (2026-10-10)
 
-- [ ] Discovery across the login `$PATH` moves from unnamed `list` to `scan`, for tools maniac does not manage.
-- [ ] States `ok`, `outdated`, `unknown`, `available` and `missing`, with filters as `list` has today.
-- [ ] Every skip is counted by reason at the end, so nothing disappears silently: system tools, unclaimed binaries, shims that run nothing, unreadable installer metadata.
+- [x] Unnamed `scan` discovers across the login `$PATH` the tools maniac does not manage; `list` shows the rest. Named, it shows exactly those, maniac's own included. `--managed` is gone.
+- [x] States `ok`, `outdated`, `unknown`, `available` and `missing`, with the state filters. The contract's table said "tools with no usable page"; corrected to match (ADR-0065 Corrections).
+- [x] Every skip is counted by reason at the end, on stderr so a pipe stays bare names: maniac's own pages, unclaimed binaries, system tools, shims that run nothing. Unreadable installer metadata is not a skip: it stays a row with its error, as before.
 
-### P5 Surface and words
+### P5 Surface and words: next
 
 - [ ] `uninstall` becomes `remove`, taking many tools.
 - [ ] `--no-synthesize` becomes `--no-generate`; sources read `shipped` / `upstream` / `generated`; `unverified` becomes `unknown`.
@@ -76,3 +76,4 @@ When a phase lands, it updates the README for what became live and marks the ADR
 - 2026-10-09: `--here` replaced by `--force` as the single override, covering system binaries too (user's decision); ADR-0065 Corrections, contract, README and tests updated. Integration test: global copy noted, venv-only tool refused, `--force` documents and records it, `list` follows it.
 - 2026-10-10: P3 done: `list` and `update` over maniac's own pages, discovery renamed `scan`, rule 4 (`unknown`) for managed pages. Integration: install, upgrade, `list --outdated`, `update`, `ok`; a pinned venv copy updated for that copy, and `unknown` once the project is deleted. Checked live with a real uv tool.
 - 2026-10-10: P2 done: `why <tool>` with PATH / Binary / Page / Sources and the `install` verdict; `source` group removed. Integration: a wrapper with a venv copy before and after its page is installed, npm's `marked` and its shipped page, a tool nowhere on `$PATH`. Checked live: ruff in a venv, a mise shim pinned by a project, `ls`.
+- 2026-10-10: P4 done: `scan` covers the tools maniac does not manage and ends with a count of what it passed over, by reason; `--managed` removed; the contract's `scan` row corrected to every state.

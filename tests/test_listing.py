@@ -61,7 +61,9 @@ def test_streaming_list_renders_checking_before_a_blocked_probe_finishes(
     inst = _installation()
     monkeypatch.setattr(
         "maniac.listing.inventory.resolution.enumerate_installations",
-        lambda on_start=None, on_scan=None, on_error=None: [(provider, inst)],
+        lambda on_start=None, on_scan=None, on_error=None, on_skip=None: [
+            (provider, inst)
+        ],
     )
     probe_started = threading.Event()
     release_probe = threading.Event()
@@ -1021,7 +1023,7 @@ def test_cli_streaming_discards_the_live_frames_for_one_final_render(
     monkeypatch.setattr("maniac.cli.listing.Live", FakeLive)
     monkeypatch.setattr(
         "maniac.listing.inventory.resolution.enumerate_installations",
-        lambda on_start=None, on_scan=None, on_error=None: (
+        lambda on_start=None, on_scan=None, on_error=None, on_skip=None: (
             on_start and on_start(1),
             [(_FakeProvider(), _installation(binary="gum"))],
         )[-1],
@@ -1056,7 +1058,7 @@ def test_cli_streaming_keeps_siblings_apart_absent_proven_shared_target(
     provider = _FakeProvider()
     monkeypatch.setattr(
         "maniac.listing.inventory.resolution.enumerate_installations",
-        lambda on_start=None, on_scan=None, on_error=None: [
+        lambda on_start=None, on_scan=None, on_error=None, on_skip=None: [
             (provider, _installation(binary=binary, package="pandoc"))
             for binary in ("pandoc", "pandoc-lua", "pandoc-server")
         ],
@@ -1091,7 +1093,7 @@ def test_cli_verbose_list_disables_streaming(
     provider = _FakeProvider()
     monkeypatch.setattr(
         "maniac.listing.inventory.resolution.enumerate_installations",
-        lambda on_start=None, on_scan=None, on_error=None: [
+        lambda on_start=None, on_scan=None, on_error=None, on_skip=None: [
             (provider, _installation(binary="gum"))
         ],
     )
@@ -1217,7 +1219,9 @@ def test_cli_streaming_error_keeps_provisional_rows_and_propagates(
         def stop(self) -> None:
             return None
 
-    def enumerate_installations(on_start=None, on_scan=None, on_error=None):
+    def enumerate_installations(
+        on_start=None, on_scan=None, on_error=None, on_skip=None
+    ):
         assert on_start is not None
         on_start(2)
         return [
@@ -1294,7 +1298,7 @@ def _row(
 def test_filter_rows_no_flags_is_unfiltered() -> None:
     rows = [_row("a", ActionState.OK), _row("b", ActionState.MISSING)]
 
-    assert _filter_rows(rows, states=frozenset(), managed=False) == rows
+    assert _filter_rows(rows, states=frozenset()) == rows
 
 
 def test_filter_rows_unions_within_the_state_axis() -> None:
@@ -1313,7 +1317,6 @@ def test_filter_rows_unions_within_the_state_axis() -> None:
             available=True,
             missing=True,
         ),
-        managed=False,
     )
 
     assert [row.tool for row in filtered] == ["avail", "miss"]
@@ -1333,34 +1336,9 @@ def test_filter_rows_selects_unknown_rows() -> None:
             available=False,
             missing=False,
         ),
-        managed=False,
     )
 
     assert [row.tool for row in filtered] == ["unproven"]
-
-
-def test_filter_rows_intersects_across_axes() -> None:
-    rows = [
-        _row("stale-managed", ActionState.OUTDATED, PageSource.UPSTREAM, managed=True),
-        _row("stale-unmanaged", ActionState.OUTDATED, PageSource.SYSTEM),
-        _row("ok-managed", ActionState.OK, PageSource.VENDOR, managed=True),
-    ]
-
-    filtered = _filter_rows(
-        rows,
-        states=_selected_states(
-            outdated=True,
-            unknown=False,
-            available=False,
-            missing=False,
-        ),
-        managed=True,
-    )
-
-    assert [row.tool for row in filtered] == ["stale-managed"]
-
-
-# -- CLI: filtering happens before the render branch -------------------------
 
 
 def test_cli_list_pipe_emits_exactly_the_filtered_set(
@@ -1379,7 +1357,7 @@ def test_cli_list_pipe_emits_exactly_the_filtered_set(
 
     monkeypatch.setattr(
         "maniac.listing.inventory.resolution.enumerate_installations",
-        lambda on_start=None, on_scan=None, on_error=None: [
+        lambda on_start=None, on_scan=None, on_error=None, on_skip=None: [
             (available_provider, _installation(binary="gum")),
             (missing_provider, _installation(binary="ghost")),
         ],
@@ -1410,7 +1388,7 @@ def test_cli_list_pipe_unknown_emits_exactly_the_filtered_set(
     )
     monkeypatch.setattr(
         "maniac.listing.inventory.resolution.enumerate_installations",
-        lambda on_start=None, on_scan=None, on_error=None: [
+        lambda on_start=None, on_scan=None, on_error=None, on_skip=None: [
             (_FakeProvider(), _installation())
         ],
     )
@@ -1431,7 +1409,7 @@ def test_cli_list_pipe_available_waits_for_upstream_classification(
     source = RepoSource(name="fzf", target="junegunn/fzf", is_local=False)
     monkeypatch.setattr(
         "maniac.listing.inventory.resolution.enumerate_installations",
-        lambda on_start=None, on_scan=None, on_error=None: [
+        lambda on_start=None, on_scan=None, on_error=None, on_skip=None: [
             (
                 _FakeProvider(source=source),
                 _installation(binary="fzf", version="0.74.3"),
@@ -1937,7 +1915,7 @@ def test_cli_list_pipe_emits_bare_names(
     monkeypatch.setattr(cli_module, "Config", lambda: _config(tmp_path))
     monkeypatch.setattr(
         "maniac.listing.inventory.resolution.enumerate_installations",
-        lambda on_start=None, on_scan=None, on_error=None: [
+        lambda on_start=None, on_scan=None, on_error=None, on_skip=None: [
             (_FakeProvider(), _installation(binary="gum"))
         ],
     )
@@ -1956,7 +1934,7 @@ def test_cli_list_tty_shows_table(
     monkeypatch.setattr(cli_module, "Config", lambda: _config(tmp_path))
     monkeypatch.setattr(
         "maniac.listing.inventory.resolution.enumerate_installations",
-        lambda on_start=None, on_scan=None, on_error=None: (
+        lambda on_start=None, on_scan=None, on_error=None, on_skip=None: (
             on_start and on_start(1),
             [(_FakeProvider(), _installation(binary="gum"))],
         )[-1],
@@ -1965,3 +1943,92 @@ def test_cli_list_tty_shows_table(
     res = runner.invoke(app, ["scan"])
     assert res.exit_code == 0
     assert "Manpage Reachability" in res.output
+
+
+def test_scan_leaves_out_maniacs_pages_and_counts_every_skip_on_stderr(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Rule 3: `scan` shows the tools maniac has no page for, and every binary
+    it passed over is counted by reason -- on stderr, so piped stdout is
+    still exactly the names."""
+    from maniac.manifest import Entry, Tier
+    from maniac.sources.resolution import Skip
+
+    from .manifest_support import record_entry
+
+    monkeypatch.setattr(
+        cli_module.console, "_instance", Console(force_terminal=False, no_color=True)
+    )
+    cfg = _config(tmp_path)
+    monkeypatch.setattr(cli_module, "Config", lambda: cfg)
+    record_entry(
+        "mine",
+        Entry(
+            path=cfg.man_dir / "mine.1", tier=Tier.SYNTHESIS, source="m", checksum="c"
+        ),
+        config=cfg,
+    )
+    provider = _FakeProvider()
+
+    def enumerate_installations(
+        on_start=None, on_scan=None, on_error=None, on_skip=None
+    ):
+        assert on_skip is not None
+        on_skip("ls", Skip.SYSTEM)
+        on_skip("cat", Skip.SYSTEM)
+        on_skip("wrapper", Skip.UNCLAIMED)
+        on_skip("project-only", Skip.SHIM_RUNS_NOTHING)
+        return [
+            (provider, _installation(binary="gum")),
+            (provider, _installation(binary="mine")),
+        ]
+
+    monkeypatch.setattr(
+        "maniac.listing.inventory.resolution.enumerate_installations",
+        enumerate_installations,
+    )
+
+    res = runner.invoke(app, ["scan"])
+
+    assert res.exit_code == 0, res.output
+    assert res.stdout == "gum\n"
+    tally = [" ".join(line.split()) for line in res.stderr.splitlines()]
+    assert tally == [
+        "Not shown: 5 more on your $PATH",
+        "1 have a page from maniac: `maniac list`",
+        "1 no installer claims: `maniac why <tool>`",
+        "2 system tools, whose packages ship their pages",
+        "1 mise shims that run nothing from $HOME",
+    ]
+
+
+def test_scan_named_shows_a_managed_tool_and_prints_no_tally(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Named, `scan` shows exactly those tools, maniac's own included."""
+    from maniac.manifest import Entry, Tier
+
+    from .manifest_support import record_entry
+
+    monkeypatch.setattr(
+        cli_module.console, "_instance", Console(force_terminal=False, no_color=True)
+    )
+    cfg = _config(tmp_path)
+    monkeypatch.setattr(cli_module, "Config", lambda: cfg)
+    record_entry(
+        "mine",
+        Entry(
+            path=cfg.man_dir / "mine.1", tier=Tier.SYNTHESIS, source="m", checksum="c"
+        ),
+        config=cfg,
+    )
+    monkeypatch.setattr(
+        "maniac.listing.inventory.resolution.find_installation",
+        lambda name, bin_dir=None, **_: (_FakeProvider(), _installation(binary=name)),
+    )
+
+    res = runner.invoke(app, ["scan", "mine"])
+
+    assert res.exit_code == 0, res.output
+    assert res.stdout == "mine\n"
+    assert res.stderr == ""

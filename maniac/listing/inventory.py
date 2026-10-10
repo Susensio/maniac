@@ -28,6 +28,7 @@ from ..exceptions import MalformedToolMetadata, NotGloballySelected
 from ..logging import logger
 from ..models import Installation, RepoSource
 from ..sources import resolution
+from ..sources.resolution import Skip
 from .classification import classify
 from .models import (
     ActionState,
@@ -59,6 +60,10 @@ _LocalResult = tuple[LocalClassification, RepoSource | None]
 _Launch = tuple[ProbeKey, RepoSource, Installation]
 
 
+MANAGED = "managed"
+"""A discovered tool maniac already manages: shown by `list`, not `scan`."""
+
+
 class InventoryObserver:
     """No-op sink for one run's progress and row snapshots; renderers subclass it.
 
@@ -72,6 +77,9 @@ class InventoryObserver:
 
     def discovery_scanned(self) -> None:
         """One discovery candidate was scanned."""
+
+    def discovery_skipped(self, tool: str, reason: Skip | str) -> None:
+        """Discovery passed over `tool`, for `reason` (CONTRACT.md rule 3)."""
 
     def rows_started(self, total: int) -> None:
         """Classification began for `total` rows."""
@@ -119,7 +127,9 @@ def named_candidate(tool: str) -> Candidate:
 
 
 def _build_inventory(
-    tools: list[str] | None, observer: InventoryObserver
+    tools: list[str] | None,
+    observer: InventoryObserver,
+    entries: Mapping[str, manifest.Entry] | None = None,
 ) -> tuple[list[Candidate], bool]:
     """Return requested or discovered candidates and whether discovery ran.
 
@@ -131,6 +141,7 @@ def _build_inventory(
     """
     if tools:
         return [named_candidate(tool) for tool in dict.fromkeys(tools)], False
+    entries = entries or {}
 
     errors: dict[str, ToolError] = {}
     discovered = sorted(
@@ -140,6 +151,7 @@ def _build_inventory(
             on_error=lambda name, e: errors.__setitem__(
                 name, ToolError(e.path, e.reason)
             ),
+            on_skip=observer.discovery_skipped,
         ),
         key=lambda item: item[1].binary,
     )
@@ -150,6 +162,11 @@ def _build_inventory(
         Candidate(tool=name, provider=None, installation=None, error=error)
         for name, error in errors.items()
     ]
+    # `list` shows maniac's own pages (CONTRACT.md); `scan` is for the rest.
+    managed = [c for c in candidates if c.tool in entries]
+    for candidate in managed:
+        observer.discovery_skipped(candidate.tool, MANAGED)
+    candidates = [c for c in candidates if c.tool not in entries]
     candidates.sort(key=lambda candidate: candidate.tool)
     return candidates, True
 
@@ -522,7 +539,7 @@ def compute_rows(
     manifest_finished_at = monotonic()
 
     inventory_started_at = monotonic()
-    candidates, discovered = _build_inventory(tools, watcher)
+    candidates, discovered = _build_inventory(tools, watcher, entries)
     inventory_finished_at = monotonic()
     rows = [_skeleton_row(candidate) for candidate in candidates]
     if discovered:

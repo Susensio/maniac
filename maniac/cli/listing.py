@@ -1,14 +1,14 @@
-"""`list`: the terminal face of `maniac.listing`, and nothing else.
+"""`scan`: the terminal face of `maniac.listing`, and nothing else.
 
 Every reachability fact comes from the inventory service; this module only
-selects, groups and draws. `--unknown`/`--outdated`/
-`--available`/`--missing` filters the State axis and `--managed` filters
-manifest ownership independently of page provenance. Filters union within
-an axis and intersect across axes; no flags means no filtering. There is
-no `--ok`, deliberately (ADR-0018): it would select exactly the rows
-needing no action.
+selects, groups and draws. `--unknown`/`--outdated`/`--available`/`--missing`
+select States and union; no flags means no filtering. There is no `--ok`,
+deliberately (ADR-0018): it would select exactly the rows needing no action.
+Unnamed, `scan` leaves out the tools maniac has a page for (`list` shows
+those) and ends with a count of every binary it passed over, by reason.
 """
 
+from collections import Counter
 from dataclasses import replace
 from time import monotonic
 from typing import Annotated, Any
@@ -27,7 +27,9 @@ from ..listing import (
     compute_rows,
     group_rows,
 )
+from ..listing.inventory import MANAGED
 from ..models import RepoSource
+from ..sources.resolution import Skip
 from . import app, console, get_config, require_login_path
 from .render import _repo_cell
 
@@ -276,21 +278,16 @@ def _selected_states(
 
 
 def _filter_rows(
-    rows: list[ToolRow], *, states: frozenset[ActionState], managed: bool
+    rows: list[ToolRow], *, states: frozenset[ActionState]
 ) -> list[ToolRow]:
-    """Narrow `rows` by State and the independent MANIAC ownership filter.
+    """Narrow `rows` to the States the flags select; none selected means all.
 
-    No flag set at all means no filtering. `--available --missing` unions
-    within the State axis to every row worth acting on; `--managed
-    --outdated` intersects across axes to MANIAC's own stale pages.
+    `--available --missing` unions within the State axis to every row worth
+    acting on.
     """
-    if not states and not managed:
+    if not states:
         return rows
-    return [
-        row
-        for row in rows
-        if (not states or row.state in states) and (not managed or row.managed)
-    ]
+    return [row for row in rows if row.state in states]
 
 
 def _list_table(rows: list[ToolRow], *, terminal_width: int) -> Table:
@@ -580,6 +577,7 @@ class _TerminalObserver(InventoryObserver):
     ) -> None:
         self._reporter = reporter
         self._renderer = renderer
+        self.skipped: Counter[Skip | str] = Counter()
         # The skeleton hands feedback to the live table. Do not keep counting
         # a hidden progress task behind it.
         self._row_progress = reporter if renderer is None else None
@@ -591,6 +589,9 @@ class _TerminalObserver(InventoryObserver):
     def discovery_scanned(self) -> None:
         if self._reporter is not None:
             self._reporter.on_scan()
+
+    def discovery_skipped(self, tool: str, reason: Skip | str) -> None:
+        self.skipped[reason] += 1
 
     def rows_started(self, total: int) -> None:
         if self._row_progress is not None:
@@ -659,17 +660,13 @@ def scan_tools(
         bool,
         typer.Option("--missing", help="Only rows with no known free page."),
     ] = False,
-    managed: Annotated[
-        bool,
-        typer.Option(
-            "--managed", help="Only rows whose reachable page MANIAC installed."
-        ),
-    ] = False,
 ) -> None:
-    """Your tools and the state of their pages, discovered across your login $PATH.
+    """Your other tools and their pages, discovered across your login $PATH.
 
     Best effort (CONTRACT.md rule 3): with no names, every binary an
-    installer claims; with names, exactly those.
+    installer claims and maniac has no page for -- `list` shows those it
+    has -- ending with a count of every binary passed over, and why. With
+    names, exactly those.
     """
     require_login_path()
     states = _selected_states(
@@ -683,18 +680,15 @@ def scan_tools(
     # A filter selects final-state membership, so a provisional row could lie
     # by appearing or disappearing. Keep those calls blocking; the unfiltered
     # terminal inventory is the path that streams in place.
-    streaming = interactive and not verbose and not tools and not states and not managed
+    streaming = interactive and not verbose and not tools and not states
     reporter = _ProgressReporter(console) if interactive else None
     renderer = _StreamingList(console, reporter) if streaming and reporter else None
 
     completed = False
     final_table = not streaming
+    observer = _TerminalObserver(reporter, renderer)
     try:
-        rows = compute_rows(
-            tools,
-            config=get_config(ctx),
-            observer=_TerminalObserver(reporter, renderer),
-        )
+        rows = compute_rows(tools, config=get_config(ctx), observer=observer)
         completed = True
     finally:
         if renderer is not None:
@@ -702,8 +696,48 @@ def scan_tools(
         if reporter is not None:
             reporter.stop()
 
-    rows = _filter_rows(rows, states=states, managed=managed)
+    rows = _filter_rows(rows, states=states)
     if final_table:
         # One render for every mode, so a streamed run ends in the same
         # collapsed shape a filtered or piped one has always had.
         _render_list(console, rows, names=names)
+    if not tools:
+        _print_skips(observer.skipped)
+
+
+# How `scan`'s closing tally names each reason (CONTRACT.md rule 3).
+_SKIP_WORDS: dict[Skip | str, str] = {
+    MANAGED: "have a page from maniac: `maniac list`",
+    Skip.UNCLAIMED: "no installer claims: `maniac why <tool>`",
+    Skip.SYSTEM: "system tools, whose packages ship their pages",
+    Skip.SHIM_RUNS_NOTHING: "mise shims that run nothing from $HOME",
+}
+
+
+def _print_skips(skipped: Counter[Skip | str]) -> None:
+    """Every binary `scan` passed over, counted by reason -- on stderr, so a
+    piped `scan` still prints only names."""
+    if not skipped:
+        return
+    stderr = _stderr_console()
+    stderr.print(
+        f"Not shown: {sum(skipped.values())} more on your $PATH",
+        style="dim",
+        soft_wrap=True,
+        highlight=False,
+    )
+    for reason, words in _SKIP_WORDS.items():
+        if skipped[reason]:
+            stderr.print(
+                f"  {skipped[reason]:>5} {words}",
+                style="dim",
+                markup=False,
+                soft_wrap=True,
+                highlight=False,
+            )
+
+
+def _stderr_console() -> Any:
+    from rich.console import Console
+
+    return Console(stderr=True)
