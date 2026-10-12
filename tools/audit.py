@@ -5,11 +5,13 @@ on 2026-10-10 and the work after it removed: a question answered in several
 places, imports against the intended layering, import cycles, functions too
 complex to read, code nothing runs. With every metric at its target, the
 audit now holds that shape: a change that brings any of it back fails.
-`audit.toml` holds, per metric, a ceiling and a target. The audit fails when
-a metric rises above its ceiling, so debt can only shrink; `--update` lowers
-each ceiling to what is measured once work has brought it down. Ceilings
-never rise through `--update`: raising one is a decision, made by editing
-`audit.toml` in a commit that says why.
+`audit.toml` holds, per metric, a target and whether it is a rule
+(`gate`, the default). A rule has a ceiling: the audit fails when it rises
+above it, so that debt can only shrink; `--update` lowers each ceiling to
+what is measured once work has brought it down, and never raises one --
+raising it is a decision, made by editing `audit.toml` in a commit that says
+why. Advice (`gate = false`) is for heuristics whose findings need judgement
+(dead code, complexity): it is shown, with what it found, and never fails.
 
 Usage: `python tools/audit.py [--update]` (`just audit`).
 """
@@ -272,10 +274,15 @@ def main(argv: list[str]) -> int:
     update = "--update" in argv
     verbose = "-v" in argv or "--verbose" in argv
     config = tomllib.loads(CONFIG.read_text(encoding="utf-8"))
+    metrics = config["metric"]
+    rules = {name: m for name, m in metrics.items() if m.get("gate", True)}
+    advice = {name: m for name, m in metrics.items() if not m.get("gate", True)}
+    width = max(len(name) for name in metrics)
     failed, lowered = [], []
-    width = max(len(name) for name in config["metric"])
-    print(f"{'metric':<{width}}  {'now':>4}  {'ceiling':>7}  {'target':>6}")
-    for name, metric in config["metric"].items():
+
+    print("Rules: a change that breaks one fails `just check`")
+    print(f"  {'metric':<{width}}  {'now':>4}  {'ceiling':>7}  {'target':>6}")
+    for name, metric in rules.items():
         measure = METRICS[metric["kind"]](metric)
         ceiling, target = metric["ceiling"], metric["target"]
         status = ""
@@ -289,21 +296,39 @@ def main(argv: list[str]) -> int:
                 metric["ceiling"] = measure.value
         elif measure.value <= target:
             status = "  at target"
-        print(f"{name:<{width}}  {measure.value:>4}  {ceiling:>7}  {target:>6}{status}")
+        print(
+            f"  {name:<{width}}  {measure.value:>4}  {ceiling:>7}  {target:>6}{status}"
+        )
         if measure.where and (verbose or name in failed):
             for item in measure.where:
-                print(f"{'':<{width}}    {item}")
+                print(f"  {'':<{width}}    {item}")
             if name in failed:
-                print(f"{'':<{width}}    ({metric['why']})")
+                print(f"  {'':<{width}}    ({metric['why']})")
+
+    if advice:
+        print("\nAdvice: worth a look, never fails the check")
+        print(f"  {'metric':<{width}}  {'now':>4}  {'target':>15}")
+        for name, metric in advice.items():
+            measure = METRICS[metric["kind"]](metric)
+            target = metric["target"]
+            over = measure.value > target
+            status = "  to look at" if over else "  at target"
+            print(f"  {name:<{width}}  {measure.value:>4}  {target:>15}{status}")
+            # Advice is its contents: listed whenever there is any.
+            if measure.where and (verbose or over):
+                for item in measure.where:
+                    print(f"  {'':<{width}}    {item}")
+                print(f"  {'':<{width}}    ({metric['why']})")
+
     if update and lowered:
         config["_header"] = _header()
         _write(config)
         print(f"\nlowered: {', '.join(lowered)}")
     if failed:
         print(
-            f"\n{len(failed)} metric(s) worse than their ceiling: {', '.join(failed)}."
-            "\nEach line above says what grew; `just audit -v` lists every metric's"
-            " contents."
+            f"\n{len(failed)} rule(s) broken: {', '.join(failed)}."
+            "\nEach says what grew and why it matters. If the change is right"
+            " anyway, raise that ceiling in audit.toml and say why in the commit."
         )
         return 1
     return 0

@@ -4,7 +4,7 @@
 - `docs/adr/` — changes to the contract, and the decisions made before it existed.
 - `docs/BACKLOG.md` — open work nobody has committed to.
 - `docs/STATE.md` — work committed to and not yet finished; absent when nothing is.
-- `audit.toml` — the architecture's ceilings, checked by `just audit` in `just check`: one place resolves a tool, one writes the source order, one judges a page, layers import downward only, no cycles, no dead code. A change that needs a ceiling raised says why in its commit.
+- `audit.toml` — the architecture's rules, checked by `just audit` in `just check`: one place resolves a tool, one writes the source order, one judges a page, layers import downward only, no cycles. A change that needs a ceiling raised says why in its commit. Dead code and complexity are advice: shown, never failing; act on them by judgement.
 
 Decide an edge case by the contract's rules and explain it in the commit message.
 Write an ADR only when a change alters what `docs/CONTRACT.md` says; a question the rules cannot answer is a gap in the contract, and closing it is that ADR.

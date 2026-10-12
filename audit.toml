@@ -1,12 +1,18 @@
 # Architecture audit (`just audit`, tools/audit.py).
 #
-# Each metric counts one kind of structural debt. `ceiling` is the most the
-# code may have: the audit fails above it. `target` is where it should be;
-# the 2026-10-10 architecture work took every metric there, so ceilings and
-# targets now meet and the audit holds that shape. `just audit --update`
-# lowers a ceiling once work brings a metric down; raising one is a
-# decision, made here in a commit that says why. Paths are relative to the
-# repository root; module names dotted.
+# Each metric counts one kind of structural debt, and is one of two things:
+#
+# - a rule (the default): precise and cheap, a violation almost always a
+#   mistake. `ceiling` is the most the code may have; above it the audit,
+#   and so `just check` and CI, fails. `just audit --update` lowers a
+#   ceiling once work brings a metric down; raising one is a decision, made
+#   here in a commit that says why.
+# - advice (`gate = false`): a heuristic whose findings need judgement. It
+#   is shown with what it found, and never fails.
+#
+# `target` is where a metric should be; the 2026-10-10 architecture work
+# took every one there. Paths are relative to the repository root; module
+# names dotted.
 
 [metric.resolution_implementations]
 kind = "modules_calling"
@@ -94,14 +100,14 @@ target = 0
 
 [metric.over_complex]
 kind = "over_complex"
-why = "A function past the cognitive-complexity limit: split it by the decisions it makes."
+why = "Past the cognitive-complexity limit: split it if a reader would struggle, by the decisions it makes; some functions read best long."
 limit = 25
-ceiling = 0
+gate = false
 target = 0
 
 [metric.dead_code]
 kind = "dead_code"
-why = "Code nothing in maniac runs (tests do not count): delete it, or use it."
+why = "Possibly unused (vulture, a heuristic): delete it if nothing runs it; add a name to ignore_names if something does."
 min_confidence = 60
 ignore_decorators = ["@app.command", "@app.callback", "@dev.command"]
 ignore_names = [
@@ -110,5 +116,5 @@ ignore_names = [
   "clear_login_path",
   "transient",
 ]
-ceiling = 0
+gate = false
 target = 0
