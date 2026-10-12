@@ -234,7 +234,8 @@ Root `--help` alone is enough when nothing better exists, and repository documen
 Run tests, formatting and linting with [`just`](https://github.com/casey/just):
 
 ```bash
-just check         # lint, format, types, unit and integration tests
+just check         # lint, format, types, architecture audit, unit and integration tests
+just audit         # the architecture audit alone; -v lists what each metric counts
 just test          # the unit suite (no external tools needed)
 just integration   # needs pandoc 3.1.10+, groff, man-db, npm, uvx and network
 just fix           # fix lint issues and format code

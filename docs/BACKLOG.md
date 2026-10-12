@@ -12,15 +12,19 @@ Settled decisions live in `docs/adr/`; defects with a line to sit beside are mar
 ## Refactors and architecture
 
 - Retain competing providers claiming the same `bin_path` at one `$PATH` entry.
-  `_detect_via_registry` stops at the first matching provider, and it is also the single-name lookup path for `find_installation`/`discover_repo`, so collecting all claims changes that hot path's cost.
-- Cut `maniac list` below ~10s warm (measured 2026-09-24 at 0ae53ad).
+  `_detect_via_registry` stops at the first matching provider, and it is also the single-name lookup path behind `resolution.locate`, so collecting all claims changes that hot path's cost.
+- Cut `maniac scan` below ~10s warm (measured 2026-09-24 at 0ae53ad, when discovery was `list`).
   No single hotspot remains: inside the ~9s local-classify pool, `man -w` (80 calls) ~2.9s, provider `local_docs` ~2.5s and `resolve_source` ~2.3s wall-union; startup ~1s.
   Measure thread-aware (wall-clock union across the pool), never by summing per-call durations or plain cProfile -- both misled this session.
 - Link tier-1 companion pages from the install root instead of copying them.
-  `_try_install_root` copies every non-primary page into `output_dir` because only `final_target`'s containment is verified (`candidate.provider_owned`); a per-page containment check on `InstallRootCandidate` would let companions link like the primary.
+  `_shipped_pages` copies every non-primary page into `output_dir` because only `final_target`'s containment is verified (`candidate.provider_owned`); a per-page containment check on `InstallRootCandidate` would let companions link like the primary.
 - Tell transparent wrappers from genuinely different shadowing binaries by comparing `--version` for the first and later PATH occurrences.
   Never fall through positionally (ADR-0020).
   Blocked on a live wrapper fixture.
+- Replace the audit's hand-written `layering` and `package_cycles` checks with import-linter or tach contracts, which are more mature at that one job; keep the custom metrics nothing off the shelf measures ("one place answers this question").
+- Add change coupling from git history to the audit, as a reported metric: files that keep changing together are what found the resolution cluster in the 2026-10-10 review (code-maat computes it).
+- Merge `ResolvedTool` and `Candidate`.
+  Both are built from one `resolution.Located` now (`tool_from`, `candidate_from`) and differ in what they carry for install's tiers and scan's rows; one type would mean one fewer translation.
 - Add exact-file Source-link adapters for non-GitHub hosts.
   Blocked on a real installation to verify against; clone URLs do not imply a safe browser-file URL.
 
