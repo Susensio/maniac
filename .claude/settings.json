@@ -1,0 +1,27 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cd \"$CLAUDE_PROJECT_DIR\" && uvx code-review-graph==2.3.9 update -q >/dev/null 2>&1 || true",
+            "async": true
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cd \"$CLAUDE_PROJECT_DIR\" && uvx code-review-graph==2.3.9 update --skip-flows -q >/dev/null 2>&1 || true",
+            "async": true
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -180,7 +180,8 @@ missing_manpages.txt
 # Agent worktrees and local agent state
 .claude/*
 !.claude/rules/
-.mcp.json
+# Shared Claude Code setup (code-review-graph): committed so cloud sessions get it
+!.claude/settings.json
 # Added by code-review-graph
 .code-review-graph/
 

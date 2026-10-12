@@ -15,6 +15,7 @@ Write an ADR only when a change alters what `docs/CONTRACT.md` says; a question 
 
 `master` has taken commits from more than one session at a time, including a rewind that dropped a branch's work.
 Before moving it, gate the move on `git merge-base --is-ancestor`, not just print the result.
+Work that runs while another session is active goes on its own branch or worktree and reaches `master` by that gated move.
 
 # Moving fast before 1.0.0
 

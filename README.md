@@ -249,4 +249,6 @@ maniac dev eval howdoi --against-installed  # judge it against the page already 
 maniac dev bench                            # generate and judge across models and tools (`just bench`)
 ```
 
+For Claude Code, the repository carries a [code-review-graph](https://github.com/tirth8205/code-review-graph) MCP server (`.mcp.json`) and hooks (`.claude/settings.json`) that build its graph when a session starts and update it after each edit, through `uvx`, so it works the same locally and in cloud sessions. The graph lives in `.code-review-graph/`, which is never committed.
+
 How maniac decides is in [`docs/CONTRACT.md`](docs/CONTRACT.md); decisions before and around it are in [`docs/adr/`](docs/adr/), and open work in [`docs/BACKLOG.md`](docs/BACKLOG.md).
