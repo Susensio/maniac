@@ -276,39 +276,71 @@ def _filter_rows(
     return [row for row in rows if row.state in states]
 
 
+def _scan_table(
+    entries: list[tuple[str, ToolRow, bool, Any]],
+    *,
+    tool_width: int | None,
+    source_width: int | None,
+    upstream_width: int,
+    hidden_rows: int = 0,
+) -> Table:
+    """`scan`'s table, final or live: one row per `(label, row, pending, upstream)`.
+
+    A `None` width fits that column to its content, up to its cap -- right
+    once every row is final; a live table pins them so the columns do not
+    move as rows fill in. `hidden_rows` closes a live table's leading slice.
+    """
+    from rich.text import Text
+
+    table = frame(SCAN_TITLE, tool_width=tool_width)
+    table.add_column(
+        "Source",
+        width=source_width,
+        max_width=_SOURCE_COLUMN_MAX_WIDTH,
+        no_wrap=True,
+        overflow="ellipsis",
+    )
+    table.add_column(
+        "Upstream", width=upstream_width, no_wrap=True, overflow="ellipsis"
+    )
+    for label, row, pending, upstream in entries:
+        table.add_row(
+            _tool_cell(label, drift=row.drift),
+            "[dim]checking…[/dim]" if pending else state_cell(row.state),
+            _source_cell(row),
+            upstream,
+        )
+    if hidden_rows:
+        table.add_row(
+            Text(f"… {hidden_rows} more tools", style="dim"),
+            Text(""),
+            Text(""),
+            Text("full table after completion", style="dim"),
+        )
+    return table
+
+
 def _list_table(rows: list[ToolRow], *, terminal_width: int) -> Table:
-    """Build the ordinary, completed list table."""
+    """The completed table: sibling binaries grouped, columns fitted to content."""
     rendered = [
         (label, row, _upstream_cell(row.upstream))
         for label, row in _grouped_for_display(rows)
     ]
     source_width = _source_column_width([_source_label(row) for _, row, _ in rendered])
-    table = frame(SCAN_TITLE)
-    table.add_column(
-        "Source", max_width=_SOURCE_COLUMN_MAX_WIDTH, no_wrap=True, overflow="ellipsis"
-    )
-    table.add_column(
-        "Upstream",
-        width=_upstream_width(
-            [cell for _, _, cell in rendered],
-            _upstream_budget(
-                [_tool_display(label, drift=row.drift) for label, row, _ in rendered],
-                source_width,
-                terminal_width,
-            ),
+    upstream_width = _upstream_width(
+        [cell for _, _, cell in rendered],
+        _upstream_budget(
+            [_tool_display(label, drift=row.drift) for label, row, _ in rendered],
+            source_width,
+            terminal_width,
         ),
-        no_wrap=True,
-        overflow="ellipsis",
     )
-
-    for label, row, upstream in rendered:
-        table.add_row(
-            _tool_cell(label, drift=row.drift),
-            state_cell(row.state),
-            _source_cell(row),
-            upstream,
-        )
-    return table
+    return _scan_table(
+        [(label, row, False, upstream) for label, row, upstream in rendered],
+        tool_width=None,
+        source_width=None,
+        upstream_width=upstream_width,
+    )
 
 
 def _streaming_table(
@@ -343,36 +375,18 @@ def _streaming_table(
         upstream_width = _upstream_width(
             upstream_cells, _upstream_budget(tool_labels, source_width, terminal_width)
         )
-    tool_width = tool_column_width(tool_labels)
-    table = frame(SCAN_TITLE, tool_width=tool_width)
-    table.add_column(
-        "Source",
-        width=source_width,
-        no_wrap=True,
-        overflow="ellipsis",
+    return _scan_table(
+        [
+            (row.tool, row, index in pending, upstream)
+            for index, (row, upstream) in enumerate(
+                zip(visible_rows, upstream_cells, strict=True)
+            )
+        ],
+        tool_width=tool_column_width(tool_labels),
+        source_width=source_width,
+        upstream_width=upstream_width,
+        hidden_rows=len(rows) - len(visible_rows),
     )
-    table.add_column(
-        "Upstream",
-        width=upstream_width,
-        no_wrap=True,
-        overflow="ellipsis",
-    )
-    for index, (row, upstream) in enumerate(
-        zip(visible_rows, upstream_cells, strict=True)
-    ):
-        state = "[dim]checking…[/dim]" if index in pending else state_cell(row.state)
-        table.add_row(
-            _tool_cell(row.tool, drift=row.drift), state, _source_cell(row), upstream
-        )
-    hidden_rows = len(rows) - len(visible_rows)
-    if hidden_rows:
-        table.add_row(
-            Text(f"… {hidden_rows} more tools", style="dim"),
-            Text(""),
-            Text(""),
-            Text("full table after completion", style="dim"),
-        )
-    return table
 
 
 def _render_list(

@@ -74,12 +74,12 @@ A4 carries the one intended behaviour change (pruning), in its own commit, test 
 - [x] Behaviour change, own commit, test first: a shipped release that drops a companion page prunes it, as an upstream one does.
 - Done when `source_order_implementations` is 1.
 
-### A5 One table builder for `scan`: next
+### A5 One table builder for `scan`: done (2026-10-12)
 
-- [ ] The final and live tables come from one builder (rows, pending rows, widths).
+- [x] The final and live tables come from one builder (`_scan_table`: rows, pending rows, widths); each keeps its own sizing (content-fit when final, pinned while live).
 - The live view stays (decided by default; dropping it for a progress bar is the user's call, and would make this phase mostly deletion).
 
-### A6 Layering
+### A6 Layering: next
 
 - [ ] Shared types and page state move below `orchestration` and `listing`, so neither imports the other.
 - [ ] The `sources` / `sources.docs` / `sources.providers` cycle is broken by moving what both sides use to one place.
@@ -95,3 +95,4 @@ A4 carries the one intended behaviour change (pruning), in its own commit, test 
 - 2026-10-10: A3 done: `managed_page` judges a page maniac installed (state, installed version, note, drift); `list` and `scan` call it, `scan` without reading an unrecorded version. `page_state_implementations` 2 to 1.
 - 2026-10-12: A4 refactor landed: the source order and repository identity are written once in `sources/candidates.py`; `install`, `why` and `scan` walk or call it; one release installer. `source_order_implementations` 4 to 0 (target lowered from 1: the order lives in the allowed module), `resolution_exceptions_handled` 1 to 0 (`candidates.py` now converts the repository error to a value, like `resolution.py` does for binaries). ADR-0040 marked superseded in part. Next: pruning for shipped releases (behaviour change).
 - 2026-10-12: A4 done: every release prunes the companion pages its new version no longer ships, shipped ones included (the test reproduced a dropped page staying installed and recorded).
+- 2026-10-12: A5 done: one builder for `scan`'s final and live tables.
