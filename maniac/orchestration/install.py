@@ -32,7 +32,6 @@ from ..installer import (
     _remove_recorded_manpage,
     install_manpage,
 )
-from ..listing.models import ActionState
 from ..logging import logger
 from ..manifest import Tier, manpage_owner
 from ..models import PipelineResult
@@ -45,6 +44,7 @@ from ..sources.candidates import (
 from ..sources.crawler import get_version
 from ..sources.manpages import find_installed_manpage_path
 from ..sources.resolution import Outcome, is_system_binary, locate, this_shell_runs
+from ..state.models import ActionState
 from .context import ResolvedTool, resolve_tool, tool_from
 
 __all__ = ["InstallOutcome", "InstallRefused", "Tier", "run_install"]
@@ -187,7 +187,7 @@ def already_current(tool_name: str, cfg: Config) -> InstallOutcome | None:
     alone: an `outdated` or `unknown` page, a replaced link, or one pinned to
     another copy is reinstalled, and `--force` reinstalls any page.
     """
-    from ..listing.pages import managed_pages
+    from ..state.pages import managed_pages
 
     rows, _ = managed_pages(cfg, [tool_name])
     if not rows:

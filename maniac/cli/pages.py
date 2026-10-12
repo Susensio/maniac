@@ -6,7 +6,7 @@ from typing import Annotated, Any
 import typer
 
 from ..exceptions import ManiacError
-from ..listing.models import ActionState
+from ..state.models import ActionState
 from . import app, console, get_config, require_login_path
 from .options import (
     DryRunOption,
@@ -38,7 +38,7 @@ def list_pages(
 
     `scan` shows your other tools.
     """
-    from ..listing.pages import managed_pages
+    from ..state.pages import managed_pages
 
     require_login_path()
     rows, unmanaged = managed_pages(get_config(ctx), tools)
@@ -122,8 +122,8 @@ def update(
     you name it to `maniac install`. Each tool commits on its own, so an
     interrupted update resumes by running it again.
     """
-    from ..listing.pages import managed_pages
     from ..orchestration.install import InstallRefused, run_install
+    from ..state.pages import managed_pages
     from .install import render_install
 
     require_login_path()

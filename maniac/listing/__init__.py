@@ -1,15 +1,6 @@
-"""`list`'s inventory service: what each binary's manpage reachability is.
+"""`scan`'s inventory service: every tool on the login `$PATH`, and its page's state.
 
-| state      | means                                                                    |
-|------------|--------------------------------------------------------------------------|
-| ok         | a page resolves through `man` now and is current by local evidence       |
-| unknown    | a page resolves but nothing proves which version it documents           |
-| outdated   | a page resolves, and positive evidence says it documents another version |
-| available  | nothing resolves, but a page can be had without an LLM                   |
-| missing    | nothing resolves and no free page is known                               |
-| error      | this tool's own metadata file is present but malformed (ADR-0060)        |
-
-The unit is a binary a provider detected (`resolution.locate_all`),
+The states are `maniac.state`'s. The unit is a binary a provider detected (`resolution.locate_all`),
 not a manpath scan, since that is what bounds what a bulk install could act on.
 Each row's *state* is a reachability fact checked against `man` directly
 (ADR-0018, reversing ADR-0013/ADR-0016's "the manpath is never scanned").
@@ -21,28 +12,6 @@ run through `InventoryObserver`, which receives immutable ordered snapshots and
 cannot reach the state the coordinator is still mutating.
 """
 
-from .classification import classify
 from .inventory import InventoryObserver, compute_rows, group_rows
-from .models import (
-    ActionState,
-    Candidate,
-    LocalClassification,
-    PageSource,
-    RowSnapshot,
-    ToolError,
-    ToolRow,
-)
 
-__all__ = [
-    "ActionState",
-    "Candidate",
-    "InventoryObserver",
-    "LocalClassification",
-    "PageSource",
-    "RowSnapshot",
-    "ToolError",
-    "ToolRow",
-    "classify",
-    "compute_rows",
-    "group_rows",
-]
+__all__ = ["InventoryObserver", "compute_rows", "group_rows"]

@@ -20,9 +20,10 @@ from maniac.cli import app
 from maniac.config import Config
 from maniac.exceptions import UnsupportedPandoc
 from maniac.installer import uninstall_manpage
-from maniac.listing import ActionState, compute_rows
+from maniac.listing import compute_rows
 from maniac.manifest import Tier
 from maniac.orchestration.install import run_install
+from maniac.state.models import ActionState
 
 runner = CliRunner()
 

@@ -10,7 +10,7 @@ from typing import Any
 
 from rich.table import Table
 
-from ..listing.models import ActionState
+from ..state.models import ActionState
 
 # Traffic-light by what remains to be done: green needs nothing, yellow
 # needs a free reinstall or install, red needs an LLM.

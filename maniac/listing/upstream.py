@@ -16,7 +16,7 @@ from ..models import Installation, RepoSource
 from ..sources.candidates import upstream_attempt
 from ..sources.docs import discover_repo_manpage
 from ..sources.docs.pages import discovered_manpage_uri
-from .models import ActionState, PageSource, ToolRow
+from ..state.models import ActionState, PageSource, ToolRow
 
 ProbeKey = tuple[str, str, str]
 """Clone target, installed version and binary name: one probe's identity."""

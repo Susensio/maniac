@@ -35,10 +35,11 @@ from maniac.cli.listing import (
 )
 from maniac.cli.table import STATE_COLUMN_WIDTH, TOOL_COLUMN_MAX_WIDTH
 from maniac.exceptions import ShimRunsNothing
-from maniac.listing import ActionState, PageSource, ToolError, ToolRow, compute_rows
+from maniac.listing import compute_rows
 from maniac.models import RepoSource
 from maniac.sources.packages import ExternalPageFreshness, ExternalPageVerification
 from maniac.sources.resolution import Located, Outcome
+from maniac.state.models import ActionState, PageSource, ToolError, ToolRow
 
 from .listing_support import _config, _FakeProvider, _installation, _located_all
 
@@ -49,7 +50,7 @@ runner = CliRunner()
 def _no_real_man(monkeypatch: pytest.MonkeyPatch) -> None:
     """Keep the rendering and CLI paths off the machine's real `man` database."""
     monkeypatch.setattr(
-        "maniac.listing.classification.find_installed_manpage_path",
+        "maniac.state.classification.find_installed_manpage_path",
         lambda man_bin, tool_name: None,
     )
 
@@ -1383,11 +1384,11 @@ def test_cli_list_pipe_unknown_emits_exactly_the_filtered_set(
     monkeypatch.setattr(cli_module, "Config", lambda: _config(tmp_path))
     page = tmp_path / "usr" / "share" / "man" / "man1" / "tool.1"
     monkeypatch.setattr(
-        "maniac.listing.classification.find_installed_manpage_path",
+        "maniac.state.classification.find_installed_manpage_path",
         lambda man_bin, tool_name: page,
     )
     monkeypatch.setattr(
-        "maniac.listing.classification.verify_external_page",
+        "maniac.state.classification.verify_external_page",
         lambda page, **kwargs: ExternalPageVerification(
             ExternalPageFreshness.UNVERIFIED, None
         ),

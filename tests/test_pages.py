@@ -9,10 +9,10 @@ from typer.testing import CliRunner
 
 from maniac.cli import app
 from maniac.config import Config
-from maniac.listing.models import ActionState, PageSource
-from maniac.listing.pages import managed_pages
 from maniac.manifest import Entry, Tier
 from maniac.orchestration.install import InstallOutcome
+from maniac.state.models import ActionState, PageSource
+from maniac.state.pages import managed_pages
 
 from .listing_support import _FakeProvider, _installation
 from .manifest_support import record_entry

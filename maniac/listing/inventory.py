@@ -29,8 +29,9 @@ from ..logging import logger
 from ..models import Installation, RepoSource
 from ..sources import resolution
 from ..sources.candidates import repository_of
-from .classification import classify
-from .models import (
+from ..state.candidates import candidate_from, named_candidate
+from ..state.classification import classify
+from ..state.models import (
     ActionState,
     Candidate,
     LocalClassification,
@@ -112,33 +113,6 @@ class InventoryObserver:
 
     def idle(self) -> None:
         """Workers are quiet while futures remain pending."""
-
-
-def named_candidate(tool: str) -> Candidate:
-    """Resolve one tool by name; a tool nothing claims still gets a candidate.
-
-    No bare-name repository fallback when nothing is found (ADR-0015). A tool whose
-    metadata is unreadable, or refused as not globally selected, carries
-    why in `Candidate.error`.
-    """
-    return candidate_from(resolution.locate(tool))
-
-
-def candidate_from(located: resolution.Located) -> Candidate:
-    """The row a lookup stands for: its claim, or why it was refused."""
-    if located.error is not None:
-        return Candidate(
-            tool=located.tool,
-            provider=None,
-            installation=None,
-            error=ToolError(located.error.path, located.error.reason),
-        )
-    return Candidate(
-        tool=located.tool,
-        provider=located.provider,
-        installation=located.installation,
-        binary=located.binary,
-    )
 
 
 def _skip_reason(located: resolution.Located) -> Skip | None:

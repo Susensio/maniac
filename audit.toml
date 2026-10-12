@@ -75,14 +75,19 @@ target = 0
 kind = "forbidden_imports"
 why = "A lower layer imports a higher one: move the shared code down instead."
 rules = [
+  ["maniac.sources", "maniac.state"],
   ["maniac.sources", "maniac.orchestration"],
   ["maniac.sources", "maniac.listing"],
   ["maniac.sources", "maniac.cli"],
+  ["maniac.state", "maniac.listing"],
+  ["maniac.state", "maniac.orchestration"],
+  ["maniac.state", "maniac.cli"],
+  ["maniac.listing", "maniac.orchestration"],
   ["maniac.listing", "maniac.cli"],
-  ["maniac.orchestration", "maniac.cli"],
   ["maniac.orchestration", "maniac.listing"],
+  ["maniac.orchestration", "maniac.cli"],
 ]
-ceiling = 5
+ceiling = 0
 target = 0
 
 [metric.over_complex]

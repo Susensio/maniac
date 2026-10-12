@@ -12,9 +12,6 @@ from pathlib import Path
 
 from .. import manifest
 from ..config import Config
-from ..listing.classification import classify
-from ..listing.models import Candidate
-from ..listing.pages import managed_pages
 from ..models import Installation, RepoSource
 from ..sources.candidates import (
     Attempt,
@@ -28,6 +25,9 @@ from ..sources.manpages import find_installed_manpage_path
 from ..sources.pathcache import path_dirs
 from ..sources.providers.base import Provider
 from ..sources.resolution import Outcome, locate, this_shell_runs
+from ..state.classification import classify
+from ..state.models import Candidate
+from ..state.pages import managed_pages
 
 
 @dataclass

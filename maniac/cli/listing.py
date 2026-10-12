@@ -18,17 +18,10 @@ from rich.live import Live
 from rich.progress import Progress
 from rich.table import Table
 
-from ..listing import (
-    ActionState,
-    InventoryObserver,
-    PageSource,
-    RowSnapshot,
-    ToolRow,
-    compute_rows,
-    group_rows,
-)
+from ..listing import InventoryObserver, compute_rows, group_rows
 from ..listing.inventory import MANAGED, Skip
 from ..models import RepoSource
+from ..state.models import ActionState, PageSource, RowSnapshot, ToolRow
 from . import app, console, get_config, require_login_path
 from .options import NamesOption, OutdatedOption, UnknownOption
 from .render import _repo_cell

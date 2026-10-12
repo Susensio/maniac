@@ -11,8 +11,8 @@ from pathlib import Path
 
 from .. import manifest
 from ..config import Config
+from .candidates import named_candidate
 from .classification import managed_page, managed_source
-from .inventory import named_candidate
 from .models import ActionState, PageSource
 
 

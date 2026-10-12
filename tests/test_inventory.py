@@ -19,17 +19,7 @@ import structlog
 from maniac import manifest
 from maniac.config import Config
 from maniac.exceptions import MalformedToolMetadata, NotGloballySelected
-from maniac.listing import (
-    ActionState,
-    Candidate,
-    LocalClassification,
-    PageSource,
-    ToolError,
-    ToolRow,
-    classify,
-    compute_rows,
-)
-from maniac.listing.classification import provider_target_freshness
+from maniac.listing import compute_rows
 from maniac.listing.inventory import _build_inventory, _with_target_clusters, group_rows
 from maniac.manifest import Entry, Tier
 from maniac.models import Installation, RepoSource
@@ -39,6 +29,15 @@ from maniac.sources.packages import ExternalPageFreshness, ExternalPageVerificat
 from maniac.sources.providers import mise as mise_module
 from maniac.sources.providers.base import SourceResolver
 from maniac.sources.resolution import Located, Outcome
+from maniac.state.classification import classify, provider_target_freshness
+from maniac.state.models import (
+    ActionState,
+    Candidate,
+    LocalClassification,
+    PageSource,
+    ToolError,
+    ToolRow,
+)
 
 from .listing_support import (
     RecordingObserver,
@@ -67,7 +66,7 @@ def _no_real_man(monkeypatch: pytest.MonkeyPatch) -> None:
     a test that needs `man` to resolve something overrides this itself.
     """
     monkeypatch.setattr(
-        "maniac.listing.classification.find_installed_manpage_path",
+        "maniac.state.classification.find_installed_manpage_path",
         lambda man_bin, tool_name: None,
     )
 
@@ -203,7 +202,7 @@ def test_compute_rows_reflects_a_manifest_write_between_invocations(
     installed = cfg.man_dir / "tool.1"
     installed.write_text(".TH TOOL 1\n", encoding="utf-8")
     monkeypatch.setattr(
-        "maniac.listing.classification.find_installed_manpage_path",
+        "maniac.state.classification.find_installed_manpage_path",
         lambda man_bin, tool_name: installed,
     )
     provider = _FakeProvider()
@@ -333,7 +332,7 @@ def test_compute_rows_resolves_upstream_for_a_reachable_page(
         lambda on_start=None, on_scan=None: _located_all([(provider, inst)]),
     )
     monkeypatch.setattr(
-        "maniac.listing.classification.find_installed_manpage_path",
+        "maniac.state.classification.find_installed_manpage_path",
         lambda command, tool: installed,
     )
     monkeypatch.setattr(
@@ -400,7 +399,7 @@ def test_compute_rows_recovers_the_uri_for_an_older_repository_manifest(
         lambda name, bin_dir=None, **_: (provider, inst),
     )
     monkeypatch.setattr(
-        "maniac.listing.classification.find_installed_manpage_path",
+        "maniac.state.classification.find_installed_manpage_path",
         lambda command, tool: installed,
     )
     monkeypatch.setattr(
@@ -765,7 +764,7 @@ def test_compute_rows_loads_the_manifest_once_per_invocation(
 
     monkeypatch.setattr("maniac.listing.inventory.manifest.load", load_once)
     monkeypatch.setattr(
-        "maniac.listing.classification.manifest.lookup",
+        "maniac.state.classification.manifest.lookup",
         lambda *args, **kwargs: pytest.fail("bulk list must use its manifest snapshot"),
     )
 
@@ -1085,7 +1084,7 @@ def test_classify_ok_when_man_resolves_and_nothing_suggests_staleness(
     cfg = _config(tmp_path)
     installed = tmp_path / "usr" / "man1" / "tool.1"
     monkeypatch.setattr(
-        "maniac.listing.classification.find_installed_manpage_path",
+        "maniac.state.classification.find_installed_manpage_path",
         lambda man_bin, tool_name: installed,
     )
 
@@ -1116,7 +1115,7 @@ def test_classify_source_keeps_vendor_provenance_when_manifest_owns_the_page(
         config=cfg,
     )
     monkeypatch.setattr(
-        "maniac.listing.classification.find_installed_manpage_path",
+        "maniac.state.classification.find_installed_manpage_path",
         lambda man_bin, tool_name: installed,
     )
 
@@ -1155,7 +1154,7 @@ def test_managed_page_keeps_content_provenance_separate_from_ownership(
         config=cfg,
     )
     monkeypatch.setattr(
-        "maniac.listing.classification.find_installed_manpage_path",
+        "maniac.state.classification.find_installed_manpage_path",
         lambda man_bin, tool_name: installed,
     )
 
@@ -1175,7 +1174,7 @@ def test_classify_source_is_vendor_when_resolved_page_sits_under_it(
     installed.parent.mkdir(parents=True)
     installed.write_text(".TH TOOL 1\n", encoding="utf-8")
     monkeypatch.setattr(
-        "maniac.listing.classification.find_installed_manpage_path",
+        "maniac.state.classification.find_installed_manpage_path",
         lambda man_bin, tool_name: installed,
     )
     inst = _installation(root=root)
@@ -1192,11 +1191,11 @@ def test_classify_source_is_unverified_when_resolved_page_is_external(
     cfg = _config(tmp_path)
     installed = tmp_path / "usr" / "share" / "man" / "man1" / "tool.1.gz"
     monkeypatch.setattr(
-        "maniac.listing.classification.find_installed_manpage_path",
+        "maniac.state.classification.find_installed_manpage_path",
         lambda man_bin, tool_name: installed,
     )
     monkeypatch.setattr(
-        "maniac.listing.classification.verify_external_page",
+        "maniac.state.classification.verify_external_page",
         lambda page, **kwargs: ExternalPageVerification(
             ExternalPageFreshness.UNVERIFIED, None
         ),
@@ -1234,7 +1233,7 @@ def test_classify_managed_page_can_be_compressed(
     )
     installed = entry_dir / "tool.1.gz"  # same base page, compressed
     monkeypatch.setattr(
-        "maniac.listing.classification.find_installed_manpage_path",
+        "maniac.state.classification.find_installed_manpage_path",
         lambda man_bin, tool_name: installed,
     )
 
@@ -1269,7 +1268,7 @@ def test_classify_managed_page_matched_through_a_symlink(
     linked_page = link_dir / "tool.1"
     linked_page.symlink_to(real_page)
     monkeypatch.setattr(
-        "maniac.listing.classification.find_installed_manpage_path",
+        "maniac.state.classification.find_installed_manpage_path",
         lambda man_bin, tool_name: linked_page,
     )
 
@@ -1301,7 +1300,7 @@ def test_classify_outdated_when_recorded_version_differs_from_installed(
         config=cfg,
     )
     monkeypatch.setattr(
-        "maniac.listing.classification.find_installed_manpage_path",
+        "maniac.state.classification.find_installed_manpage_path",
         lambda man_bin, tool_name: installed,
     )
     inst = _installation(version="2.0.0")
@@ -1362,7 +1361,7 @@ def test_classify_outdated_when_mise_latest_alias_drifts(
     system_page.parent.mkdir(parents=True)
     system_page.write_text(".TH TOOL 1 system\n", encoding="utf-8")
     monkeypatch.setattr(
-        "maniac.listing.classification.find_installed_manpage_path",
+        "maniac.state.classification.find_installed_manpage_path",
         lambda man_bin, tool_name: (
             system_page if replacement_version is None else installed
         ),
@@ -1408,7 +1407,7 @@ def test_classify_outdated_for_an_unaliased_mise_provider_target(
         config=cfg,
     )
     monkeypatch.setattr(
-        "maniac.listing.classification.find_installed_manpage_path",
+        "maniac.state.classification.find_installed_manpage_path",
         lambda man_bin, tool_name: installed,
     )
 
@@ -1443,7 +1442,7 @@ def test_classify_ok_for_a_generic_direct_provider_target(
         config=cfg,
     )
     monkeypatch.setattr(
-        "maniac.listing.classification.find_installed_manpage_path",
+        "maniac.state.classification.find_installed_manpage_path",
         lambda man_bin, tool_name: installed,
     )
 
@@ -1501,7 +1500,7 @@ def test_classify_ok_when_mise_latest_and_binary_advance_together(
         inst, root=replacement_root, real_path=replacement_binary, version="2.0.0"
     )
     monkeypatch.setattr(
-        "maniac.listing.classification.find_installed_manpage_path",
+        "maniac.state.classification.find_installed_manpage_path",
         lambda man_bin, tool_name: installed,
     )
 
@@ -1532,7 +1531,7 @@ def test_classify_unknown_when_entry_records_no_version(
         config=cfg,
     )
     monkeypatch.setattr(
-        "maniac.listing.classification.find_installed_manpage_path",
+        "maniac.state.classification.find_installed_manpage_path",
         lambda man_bin, tool_name: installed,
     )
     inst = _installation(version="2.0.0")
@@ -1562,7 +1561,7 @@ def test_classify_unknown_when_installation_version_is_unknown(
         config=cfg,
     )
     monkeypatch.setattr(
-        "maniac.listing.classification.find_installed_manpage_path",
+        "maniac.state.classification.find_installed_manpage_path",
         lambda man_bin, tool_name: installed,
     )
     inst = _installation(version=None)
@@ -1595,13 +1594,13 @@ def test_classify_outdated_when_unclaimed_binarys_own_version_differs(
         config=cfg,
     )
     monkeypatch.setattr(
-        "maniac.listing.classification.find_installed_manpage_path",
+        "maniac.state.classification.find_installed_manpage_path",
         lambda man_bin, tool_name: installed,
     )
     resolved = tmp_path / "bin" / "tool"
     asked: list[list[str]] = []
     monkeypatch.setattr(
-        "maniac.listing.classification.get_version",
+        "maniac.state.classification.get_version",
         lambda cmd, **kwargs: asked.append(cmd) or "2.0.0",
     )
 
@@ -1631,13 +1630,13 @@ def test_classify_ok_when_unclaimed_binarys_own_version_matches(
         config=cfg,
     )
     monkeypatch.setattr(
-        "maniac.listing.classification.find_installed_manpage_path",
+        "maniac.state.classification.find_installed_manpage_path",
         lambda man_bin, tool_name: installed,
     )
     resolved = tmp_path / "bin" / "tool"
     asked: list[list[str]] = []
     monkeypatch.setattr(
-        "maniac.listing.classification.get_version",
+        "maniac.state.classification.get_version",
         lambda cmd, **kwargs: asked.append(cmd) or "1.0.0",
     )
 
@@ -1669,12 +1668,12 @@ def test_classify_unknown_when_unclaimed_binarys_version_is_unavailable(
         config=cfg,
     )
     monkeypatch.setattr(
-        "maniac.listing.classification.find_installed_manpage_path",
+        "maniac.state.classification.find_installed_manpage_path",
         lambda man_bin, tool_name: installed,
     )
     resolved = tmp_path / "bin" / "tool"
     monkeypatch.setattr(
-        "maniac.listing.classification.get_version", lambda cmd, **kwargs: None
+        "maniac.state.classification.get_version", lambda cmd, **kwargs: None
     )
 
     assert _classification_pair(None, None, "tool", cfg, binary=resolved) == (
@@ -1694,7 +1693,7 @@ def test_classify_no_subprocess_for_unowned_or_versionless_row(
     def _unexpected_call(cmd: list[str], **kwargs: object) -> str | None:
         raise AssertionError(f"get_version must not be called for this row: {cmd}")
 
-    monkeypatch.setattr("maniac.listing.classification.get_version", _unexpected_call)
+    monkeypatch.setattr("maniac.state.classification.get_version", _unexpected_call)
     cfg = _config(tmp_path)
     cfg.man_dir.mkdir(parents=True)
 
@@ -1702,7 +1701,7 @@ def test_classify_no_subprocess_for_unowned_or_versionless_row(
     unowned = cfg.man_dir / "unowned.1"
     unowned.write_text(".TH UNOWNED 1\n", encoding="utf-8")
     monkeypatch.setattr(
-        "maniac.listing.classification.find_installed_manpage_path",
+        "maniac.state.classification.find_installed_manpage_path",
         lambda man_bin, tool_name: unowned,
     )
     assert _classification_pair(None, None, "unowned", cfg) == (
@@ -1725,7 +1724,7 @@ def test_classify_no_subprocess_for_unowned_or_versionless_row(
         config=cfg,
     )
     monkeypatch.setattr(
-        "maniac.listing.classification.find_installed_manpage_path",
+        "maniac.state.classification.find_installed_manpage_path",
         lambda man_bin, tool_name: versionless,
     )
     assert _classification_pair(None, None, "versionless", cfg) == (
@@ -1741,11 +1740,11 @@ def test_classify_unverified_when_external_page_has_no_provenance(
     cfg = _config(tmp_path)
     installed = tmp_path / "usr" / "man1" / "tool.1"
     monkeypatch.setattr(
-        "maniac.listing.classification.find_installed_manpage_path",
+        "maniac.state.classification.find_installed_manpage_path",
         lambda man_bin, tool_name: installed,
     )
     monkeypatch.setattr(
-        "maniac.listing.classification.verify_external_page",
+        "maniac.state.classification.verify_external_page",
         lambda page, **kwargs: ExternalPageVerification(
             ExternalPageFreshness.UNVERIFIED, None
         ),
@@ -1774,11 +1773,11 @@ def test_classify_uses_proven_external_package_evidence(
     cfg = _config(tmp_path)
     installed = tmp_path / "usr" / "share" / "man" / "man1" / "tool.1"
     monkeypatch.setattr(
-        "maniac.listing.classification.find_installed_manpage_path",
+        "maniac.state.classification.find_installed_manpage_path",
         lambda man_bin, tool_name: installed,
     )
     monkeypatch.setattr(
-        "maniac.listing.classification.verify_external_page",
+        "maniac.state.classification.verify_external_page",
         lambda page, **kwargs: ExternalPageVerification(freshness, None),
     )
 
@@ -1797,11 +1796,11 @@ def test_classify_surfaces_the_provable_external_owner(
     cfg = _config(tmp_path)
     installed = tmp_path / "usr" / "share" / "man" / "man1" / "python.1"
     monkeypatch.setattr(
-        "maniac.listing.classification.find_installed_manpage_path",
+        "maniac.state.classification.find_installed_manpage_path",
         lambda man_bin, tool_name: installed,
     )
     monkeypatch.setattr(
-        "maniac.listing.classification.verify_external_page",
+        "maniac.state.classification.verify_external_page",
         lambda page, **kwargs: ExternalPageVerification(
             ExternalPageFreshness.UNVERIFIED, "python3.12-minimal"
         ),
@@ -1833,17 +1832,17 @@ def test_classify_falls_back_to_roff_header_when_dpkg_is_unverified(
     cfg = _config(tmp_path)
     installed = tmp_path / "usr" / "share" / "man" / "man1" / "tool.1"
     monkeypatch.setattr(
-        "maniac.listing.classification.find_installed_manpage_path",
+        "maniac.state.classification.find_installed_manpage_path",
         lambda man_bin, tool_name: installed,
     )
     monkeypatch.setattr(
-        "maniac.listing.classification.verify_external_page",
+        "maniac.state.classification.verify_external_page",
         lambda page, **kwargs: ExternalPageVerification(
             ExternalPageFreshness.UNVERIFIED, None
         ),
     )
     monkeypatch.setattr(
-        "maniac.listing.classification.verify_page_header",
+        "maniac.state.classification.verify_page_header",
         lambda page, **kwargs: freshness,
     )
 
@@ -1861,17 +1860,17 @@ def test_classify_roff_fallback_never_sets_owning_package(
     cfg = _config(tmp_path)
     installed = tmp_path / "usr" / "share" / "man" / "man1" / "tool.1"
     monkeypatch.setattr(
-        "maniac.listing.classification.find_installed_manpage_path",
+        "maniac.state.classification.find_installed_manpage_path",
         lambda man_bin, tool_name: installed,
     )
     monkeypatch.setattr(
-        "maniac.listing.classification.verify_external_page",
+        "maniac.state.classification.verify_external_page",
         lambda page, **kwargs: ExternalPageVerification(
             ExternalPageFreshness.UNVERIFIED, None
         ),
     )
     monkeypatch.setattr(
-        "maniac.listing.classification.verify_page_header",
+        "maniac.state.classification.verify_page_header",
         lambda page, **kwargs: ExternalPageFreshness.MATCH,
     )
 
@@ -1889,11 +1888,11 @@ def test_classify_dpkg_match_never_overridden_by_roff_fallback(
     cfg = _config(tmp_path)
     installed = tmp_path / "usr" / "share" / "man" / "man1" / "tool.1"
     monkeypatch.setattr(
-        "maniac.listing.classification.find_installed_manpage_path",
+        "maniac.state.classification.find_installed_manpage_path",
         lambda man_bin, tool_name: installed,
     )
     monkeypatch.setattr(
-        "maniac.listing.classification.verify_external_page",
+        "maniac.state.classification.verify_external_page",
         lambda page, **kwargs: ExternalPageVerification(
             ExternalPageFreshness.MATCH, "tool-package"
         ),
@@ -1903,7 +1902,7 @@ def test_classify_dpkg_match_never_overridden_by_roff_fallback(
         raise AssertionError("roff fallback must not run when dpkg already matched")
 
     monkeypatch.setattr(
-        "maniac.listing.classification.verify_page_header", _unexpected_roff_call
+        "maniac.state.classification.verify_page_header", _unexpected_roff_call
     )
 
     assert _classification_pair(_FakeProvider(), _installation(), "tool", cfg) == (
@@ -1925,7 +1924,7 @@ def test_classify_unmanaged_page_hand_placed_in_man_dir_reads_ok_system(
     installed = cfg.man_dir / "tool.1"
     installed.write_text(".TH TOOL 1\n", encoding="utf-8")
     monkeypatch.setattr(
-        "maniac.listing.classification.find_installed_manpage_path",
+        "maniac.state.classification.find_installed_manpage_path",
         lambda man_bin, tool_name: installed,
     )
 
@@ -2050,7 +2049,7 @@ def test_classify_drift_false_when_link_is_sound(
         config=cfg,
     )
     monkeypatch.setattr(
-        "maniac.listing.classification.find_installed_manpage_path",
+        "maniac.state.classification.find_installed_manpage_path",
         lambda man_bin, tool_name: entry_path,
     )
 
@@ -2879,7 +2878,7 @@ def test_a_tool_no_installer_claims_has_no_upstream(
         lambda *a, **k: pytest.fail("nothing to look up without an installer"),
     )
     monkeypatch.setattr(
-        "maniac.listing.classification.find_installed_manpage_path",
+        "maniac.state.classification.find_installed_manpage_path",
         lambda man_bin, tool_name: None,
     )
 
