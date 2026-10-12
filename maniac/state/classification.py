@@ -14,8 +14,9 @@ from pathlib import Path
 
 from .. import manifest
 from ..config import Config
-from ..sources.candidates import shipped_attempt
 from ..sources.crawler import get_version
+from ..sources.lookup.candidates import shipped_attempt
+from ..sources.lookup.resolution import locate_file
 from ..sources.manpages import (
     _opener_for,
     find_installed_manpage_path,
@@ -23,7 +24,6 @@ from ..sources.manpages import (
 from ..sources.packages import ExternalPageFreshness, verify_external_page
 from ..sources.pathcache import resolve_cached
 from ..sources.providers.base import DirectPageProvider
-from ..sources.resolution import locate_file
 from ..sources.roff import verify_page_header
 from .models import ActionState, Candidate, LocalClassification, PageSource
 

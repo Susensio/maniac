@@ -11,7 +11,7 @@ from maniac.exceptions import NotGloballySelected
 from maniac.models import RemoteRepoSource
 from maniac.orchestration.why import explain
 from maniac.sources import pathcache
-from maniac.sources.candidates import RepositoryCandidate
+from maniac.sources.lookup.candidates import RepositoryCandidate
 
 from .listing_support import _FakeProvider, _installation
 
@@ -46,7 +46,7 @@ def test_a_project_only_mise_install_is_refused_and_offers_force(
     def refused(name: str, bin_dir: object = None, **_: object) -> None:
         raise NotGloballySelected(name, hit.parent)
 
-    monkeypatch.setattr("maniac.sources.resolution.find_installation", refused)
+    monkeypatch.setattr("maniac.sources.lookup.resolution.find_installation", refused)
 
     explanation = explain("rg", Config())
     binary = next(s.lines for s in explanation.sections if s.title == "Binary")
@@ -60,7 +60,7 @@ def test_a_system_binary_is_named_as_one(
 ) -> None:
     monkeypatch.setattr(pathcache, "which", lambda name: Path("/usr/bin/true"))
     monkeypatch.setattr(
-        "maniac.sources.resolution.find_installation", lambda name, **_: None
+        "maniac.sources.lookup.resolution.find_installation", lambda name, **_: None
     )
 
     explanation = explain("true", Config())
@@ -104,14 +104,15 @@ def test_the_upstream_check_is_reported_as_install_would_act_on_it(
     monkeypatch.setattr(pathcache, "which", lambda name: tool)
     monkeypatch.setenv("PATH", os.pathsep.join([str(tool.parent)]))
     monkeypatch.setattr(
-        "maniac.sources.resolution.find_installation",
+        "maniac.sources.lookup.resolution.find_installation",
         lambda name, **_: (provider, inst),
     )
     monkeypatch.setattr(
-        "maniac.sources.candidates.select_install_root", lambda provider, inst: None
+        "maniac.sources.lookup.candidates.select_install_root",
+        lambda provider, inst: None,
     )
     monkeypatch.setattr(
-        "maniac.sources.candidates.registry.resolve_source",
+        "maniac.sources.lookup.candidates.registry.resolve_source",
         lambda inst, config, provider: source,
     )
     page = tmp_path / "tool.1"
@@ -119,7 +120,7 @@ def test_the_upstream_check_is_reported_as_install_would_act_on_it(
     def select_repository(*args: object, **kwargs: object):
         if not found:
             return None, definitive
-        from maniac.sources.candidates import CandidatePage
+        from maniac.sources.lookup.candidates import CandidatePage
 
         candidate_page = CandidatePage(page, page.as_uri())
         return (
@@ -133,7 +134,7 @@ def test_the_upstream_check_is_reported_as_install_would_act_on_it(
         )
 
     monkeypatch.setattr(
-        "maniac.sources.candidates.select_repository", select_repository
+        "maniac.sources.lookup.candidates.select_repository", select_repository
     )
 
     explanation = explain("tool", Config())
@@ -159,7 +160,7 @@ def test_path_names_only_left_out_directories_holding_the_tool(
     )
     monkeypatch.setenv("VIRTUAL_ENV", str(venv.parent))
     monkeypatch.setattr(
-        "maniac.sources.resolution.find_installation", lambda n, **_: None
+        "maniac.sources.lookup.resolution.find_installation", lambda n, **_: None
     )
     assert pathcache.which("tool") == tool
 

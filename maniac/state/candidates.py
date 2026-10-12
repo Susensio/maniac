@@ -1,6 +1,6 @@
 """The row a lookup stands for, shared by `list`, `scan` and `why`."""
 
-from ..sources import resolution
+from ..sources.lookup import resolution
 from .models import Candidate, ToolError
 
 

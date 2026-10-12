@@ -14,7 +14,7 @@ import zstandard
 from maniac.config import Config
 from maniac.exceptions import MalformedToolMetadata, NotGloballySelected
 from maniac.models import Installation
-from maniac.sources import discovery, pathcache, resolution
+from maniac.sources import discovery, pathcache
 from maniac.sources.discovery import (
     _check_mise_config,
     _clean_git_url,
@@ -26,7 +26,8 @@ from maniac.sources.discovery import (
     _resolve_from_mise,
     _run_mise,
 )
-from maniac.sources.resolution import Outcome, find_installation, locate_all
+from maniac.sources.lookup import resolution
+from maniac.sources.lookup.resolution import Outcome, find_installation, locate_all
 
 
 def _compressed_mise_registry(entries: dict[str, bytes]) -> bytes:

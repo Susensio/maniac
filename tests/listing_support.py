@@ -6,8 +6,8 @@ from typing import Any
 from maniac.config import Config
 from maniac.listing import InventoryObserver
 from maniac.models import Installation, RepoSource
+from maniac.sources.lookup.resolution import Located, Outcome
 from maniac.sources.providers.base import SourceResolver
-from maniac.sources.resolution import Located, Outcome
 from maniac.state.models import Candidate, RowSnapshot
 
 

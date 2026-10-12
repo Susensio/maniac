@@ -24,11 +24,11 @@ from maniac.listing.inventory import _build_inventory, _with_target_clusters, gr
 from maniac.manifest import Entry, Tier
 from maniac.models import Installation, RepoSource
 from maniac.sources import discovery
-from maniac.sources.candidates import Repository, repository_of
+from maniac.sources.lookup.candidates import Repository, repository_of
+from maniac.sources.lookup.resolution import Located, Outcome
 from maniac.sources.packages import ExternalPageFreshness, ExternalPageVerification
 from maniac.sources.providers import mise as mise_module
 from maniac.sources.providers.base import SourceResolver
-from maniac.sources.resolution import Located, Outcome
 from maniac.state.classification import classify, provider_target_freshness
 from maniac.state.models import (
     ActionState,
@@ -286,7 +286,9 @@ def _count_registry_resolutions(
         calls[0] += 1
         return source
 
-    monkeypatch.setattr("maniac.sources.candidates.registry.resolve_source", counted)
+    monkeypatch.setattr(
+        "maniac.sources.lookup.candidates.registry.resolve_source", counted
+    )
     return calls
 
 
@@ -2846,7 +2848,7 @@ def test_discovery_says_why_it_passes_over_an_unclaimed_or_system_binary(
     reports it, told apart from a system package's binary."""
     import stat
 
-    from maniac.sources import resolution
+    from maniac.sources.lookup import resolution
 
     for directory, name in (("local", "wrapper"), ("sys", "ls")):
         binary = tmp_path / directory / name
@@ -2874,7 +2876,7 @@ def test_a_tool_no_installer_claims_has_no_upstream(
     from maniac.listing.inventory import _classify_and_resolve
 
     monkeypatch.setattr(
-        "maniac.sources.candidates.registry.resolve_source",
+        "maniac.sources.lookup.candidates.registry.resolve_source",
         lambda *a, **k: pytest.fail("nothing to look up without an installer"),
     )
     monkeypatch.setattr(

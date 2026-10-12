@@ -21,7 +21,7 @@ from maniac.exceptions import (
 )
 from maniac.listing.inventory import Skip, _skip_reason
 from maniac.orchestration.context import resolve_tool
-from maniac.sources import resolution
+from maniac.sources.lookup import resolution
 from maniac.sources.providers import mise
 
 _DATA = Path(".local") / "share" / "mise"

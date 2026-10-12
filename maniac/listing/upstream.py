@@ -13,9 +13,9 @@ from pathlib import Path
 from ..config import Config
 from ..logging import logger
 from ..models import Installation, RepoSource
-from ..sources.candidates import upstream_attempt
 from ..sources.docs import discover_repo_manpage
 from ..sources.docs.pages import discovered_manpage_uri
+from ..sources.lookup.candidates import upstream_attempt
 from ..state.models import ActionState, PageSource, ToolRow
 
 ProbeKey = tuple[str, str, str]

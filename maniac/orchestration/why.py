@@ -13,18 +13,18 @@ from pathlib import Path
 from .. import manifest
 from ..config import Config
 from ..models import Installation, RepoSource
-from ..sources.candidates import (
+from ..sources.crawler import get_version
+from ..sources.lookup.candidates import (
     Attempt,
     InstallRootCandidate,
     Source,
     attempts,
     repository_of,
 )
-from ..sources.crawler import get_version
+from ..sources.lookup.resolution import Outcome, locate, this_shell_runs
 from ..sources.manpages import find_installed_manpage_path
 from ..sources.pathcache import path_dirs
 from ..sources.providers.base import Provider
-from ..sources.resolution import Outcome, locate, this_shell_runs
 from ..state.classification import classify
 from ..state.models import Candidate
 from ..state.pages import managed_pages

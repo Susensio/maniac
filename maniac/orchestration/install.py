@@ -35,15 +35,20 @@ from ..installer import (
 from ..logging import logger
 from ..manifest import Tier, manpage_owner
 from ..models import PipelineResult
-from ..sources.candidates import (
+from ..sources.crawler import get_version
+from ..sources.lookup.candidates import (
     Attempt,
     InstallRootCandidate,
     RepositoryCandidate,
     attempts,
 )
-from ..sources.crawler import get_version
+from ..sources.lookup.resolution import (
+    Outcome,
+    is_system_binary,
+    locate,
+    this_shell_runs,
+)
 from ..sources.manpages import find_installed_manpage_path
-from ..sources.resolution import Outcome, is_system_binary, locate, this_shell_runs
 from ..state.models import ActionState
 from .context import ResolvedTool, resolve_tool, tool_from
 

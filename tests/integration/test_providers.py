@@ -18,8 +18,8 @@ import pytest
 from maniac.config import Config
 from maniac.manifest import Tier
 from maniac.orchestration.install import run_install
+from maniac.sources.lookup.resolution import find_installation
 from maniac.sources.providers.registry import registry
-from maniac.sources.resolution import find_installation
 
 from .conftest import _require, _run
 

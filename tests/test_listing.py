@@ -37,8 +37,8 @@ from maniac.cli.table import STATE_COLUMN_WIDTH, TOOL_COLUMN_MAX_WIDTH
 from maniac.exceptions import ShimRunsNothing
 from maniac.listing import compute_rows
 from maniac.models import RepoSource
+from maniac.sources.lookup.resolution import Located, Outcome
 from maniac.sources.packages import ExternalPageFreshness, ExternalPageVerification
-from maniac.sources.resolution import Located, Outcome
 from maniac.state.models import ActionState, PageSource, ToolError, ToolRow
 
 from .listing_support import _config, _FakeProvider, _installation, _located_all

@@ -22,7 +22,7 @@ from maniac.orchestration.install import (
     run_install,
 )
 from maniac.sources import pathcache
-from maniac.sources.candidates import Source, attempts
+from maniac.sources.lookup.candidates import Source, attempts
 from maniac.sources.providers.base import Provider, SourceResolver
 from maniac.sources.providers.registry import registry
 
@@ -268,7 +268,7 @@ def test_run_install_falls_through_to_repository_when_no_install_root_page(
     page = tmp_path / "tool.1"
     page.write_text(".TH TOOL 1\n", encoding="utf-8")
     monkeypatch.setattr(
-        "maniac.sources.candidates.discover_repo_manpages",
+        "maniac.sources.lookup.candidates.discover_repo_manpages",
         lambda source, binary, cache_dir=None, config=None, version=None: (
             [page],
             True,
@@ -304,7 +304,7 @@ def test_run_install_dry_run_tier2_writes_nothing(
     page = tmp_path / "tool.1"
     page.write_text(".TH TOOL 1\n", encoding="utf-8")
     monkeypatch.setattr(
-        "maniac.sources.candidates.discover_repo_manpages",
+        "maniac.sources.lookup.candidates.discover_repo_manpages",
         lambda source, binary, cache_dir=None, config=None, version=None: (
             [page],
             True,
@@ -455,7 +455,7 @@ def test_upstream_with_no_candidate_is_none(
     provider = _FakeProvider(source=source)
     tool = _resolved_tool(tmp_path, provider=provider, inst=_installation())
     monkeypatch.setattr(
-        "maniac.sources.candidates.discover_repo_manpages",
+        "maniac.sources.lookup.candidates.discover_repo_manpages",
         lambda *args, **kwargs: ([], True),
     )
 
@@ -471,7 +471,7 @@ def test_upstream_dry_run_reports_the_page_without_installing(
     page.write_text(".TH TOOL 1\n", encoding="utf-8")
     tool = _resolved_tool(tmp_path, provider=provider, inst=_installation())
     monkeypatch.setattr(
-        "maniac.sources.candidates.discover_repo_manpages",
+        "maniac.sources.lookup.candidates.discover_repo_manpages",
         lambda *args, **kwargs: ([page], True),
     )
 
@@ -493,7 +493,7 @@ def test_upstream_installs_the_page(
     page.write_text(".TH TOOL 1\n", encoding="utf-8")
     tool = _resolved_tool(tmp_path, provider=provider, inst=_installation())
     monkeypatch.setattr(
-        "maniac.sources.candidates.discover_repo_manpages",
+        "maniac.sources.lookup.candidates.discover_repo_manpages",
         lambda *args, **kwargs: ([page], True),
     )
     monkeypatch.setattr(
@@ -532,7 +532,9 @@ def test_run_install_uses_the_exact_tmux_documentation_repository(
         observed.append(source)
         return [page], True
 
-    monkeypatch.setattr("maniac.sources.candidates.discover_repo_manpages", discover)
+    monkeypatch.setattr(
+        "maniac.sources.lookup.candidates.discover_repo_manpages", discover
+    )
     monkeypatch.setattr(
         "maniac.orchestration.install.install_manpage",
         lambda *args, **kwargs: InstallResult(
@@ -560,7 +562,7 @@ def test_run_install_tier2_rejects_a_page_naming_a_different_binary(
     page = tmp_path / "tool.1"
     page.write_text(".TH SOMETHINGELSE 1\n", encoding="utf-8")
     monkeypatch.setattr(
-        "maniac.sources.candidates.discover_repo_manpages",
+        "maniac.sources.lookup.candidates.discover_repo_manpages",
         lambda source, binary, cache_dir=None, config=None, version=None: (
             [page],
             True,
@@ -852,7 +854,8 @@ def test_run_install_tier2_skipped_without_an_installed_version(
         raise AssertionError("tier 2 must not run without an installed version")
 
     monkeypatch.setattr(
-        "maniac.sources.candidates.discover_repo_manpages", _discover_repo_manpages
+        "maniac.sources.lookup.candidates.discover_repo_manpages",
+        _discover_repo_manpages,
     )
 
     outcome = run_install("tool", no_generate=True)
@@ -887,7 +890,7 @@ def test_run_install_installs_all_anchored_release_manpages(
         lambda name, bin_dir=None, **_: (provider, inst),
     )
     monkeypatch.setattr(
-        "maniac.sources.candidates.discover_repo_manpages",
+        "maniac.sources.lookup.candidates.discover_repo_manpages",
         lambda *args, **kwargs: ([primary, companion], True),
     )
 
@@ -947,7 +950,7 @@ def _resolve_eza_release(
         lambda name, bin_dir=None, **_: (provider, inst),
     )
     monkeypatch.setattr(
-        "maniac.sources.candidates.discover_repo_manpages",
+        "maniac.sources.lookup.candidates.discover_repo_manpages",
         lambda *args, **kwargs: (list(pages), True),
     )
 
@@ -1389,7 +1392,7 @@ def test_run_install_refuses_synthesis_after_a_non_definitive_repository_probe(
         lambda name, bin_dir=None, **_: (provider, inst),
     )
     monkeypatch.setattr(
-        "maniac.sources.candidates.discover_repo_manpages",
+        "maniac.sources.lookup.candidates.discover_repo_manpages",
         lambda *args, **kwargs: ([], False),
     )
     monkeypatch.setattr(
@@ -1422,7 +1425,7 @@ def test_run_install_no_generate_says_an_incomplete_probe_is_not_an_absence(
         lambda name, bin_dir=None, **_: (provider, inst),
     )
     monkeypatch.setattr(
-        "maniac.sources.candidates.discover_repo_manpages",
+        "maniac.sources.lookup.candidates.discover_repo_manpages",
         lambda *args, **kwargs: ([], False),
     )
 
@@ -1799,7 +1802,7 @@ def test_run_install_tier2_refuses_a_foreign_companion_destination(
         lambda name, bin_dir=None, **_: (provider, inst),
     )
     monkeypatch.setattr(
-        "maniac.sources.candidates.discover_repo_manpages",
+        "maniac.sources.lookup.candidates.discover_repo_manpages",
         lambda *args, **kwargs: ([primary, companion], True),
     )
     monkeypatch.setattr(
@@ -1840,7 +1843,7 @@ def test_run_install_tier2_force_bypasses_the_widened_precheck(
         lambda name, bin_dir=None, **_: (provider, inst),
     )
     monkeypatch.setattr(
-        "maniac.sources.candidates.discover_repo_manpages",
+        "maniac.sources.lookup.candidates.discover_repo_manpages",
         lambda *args, **kwargs: ([primary, companion], True),
     )
 
@@ -1964,7 +1967,7 @@ def test_run_install_dry_run_tier3_writes_nothing(
         lambda name, bin_dir=None, **_: (provider, inst),
     )
     monkeypatch.setattr(
-        "maniac.sources.candidates.discover_repo_manpages",
+        "maniac.sources.lookup.candidates.discover_repo_manpages",
         lambda *args, **kwargs: ([], True),
     )
     monkeypatch.setattr(
@@ -2015,7 +2018,7 @@ def test_run_install_dry_run_tier3_without_pandoc_reports_no_page(
         lambda name, bin_dir=None, **_: (provider, inst),
     )
     monkeypatch.setattr(
-        "maniac.sources.candidates.discover_repo_manpages",
+        "maniac.sources.lookup.candidates.discover_repo_manpages",
         lambda *args, **kwargs: ([], True),
     )
     monkeypatch.setattr(
@@ -2076,7 +2079,7 @@ def test_install_reaching_tier_3_resolves_the_tool_once_not_twice(
     # Tier 1 finds no page and tier 2 no repository page, so the install
     # falls through to a real (dry-run) tier-3 synthesis.
     monkeypatch.setattr(
-        "maniac.sources.candidates.discover_repo_manpages",
+        "maniac.sources.lookup.candidates.discover_repo_manpages",
         lambda *args, **kwargs: ([], True),
     )
     monkeypatch.setattr(
@@ -2117,7 +2120,7 @@ def test_install_leaves_a_page_already_current_alone(
     _resolve_eza_release(monkeypatch, pages)
     run_install("eza", no_generate=True, config=cfg)
     monkeypatch.setattr(
-        "maniac.sources.candidates.discover_repo_manpages",
+        "maniac.sources.lookup.candidates.discover_repo_manpages",
         lambda *args, **kwargs: pytest.fail("a current page is not looked up again"),
     )
 

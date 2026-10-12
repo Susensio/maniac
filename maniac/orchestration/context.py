@@ -14,8 +14,8 @@ from pathlib import Path
 
 from ..config import Config
 from ..models import Installation, RepoSource
-from ..sources import resolution
-from ..sources.candidates import repository_of
+from ..sources.lookup import resolution
+from ..sources.lookup.candidates import repository_of
 from ..sources.providers.base import Provider
 
 __all__ = ["ResolvedTool", "resolve_tool"]

@@ -15,12 +15,12 @@ from dataclasses import dataclass, replace
 from enum import Enum
 from pathlib import Path
 
-from ..exceptions import MalformedToolMetadata, NotGloballySelected, ShimRunsNothing
-from ..models import Installation
-from .pathcache import path_dirs, resolve_bin_path, which_here
-from .providers.base import Provider
-from .providers.mise import is_shim, shim_target, shim_target_here
-from .providers.registry import registry
+from ...exceptions import MalformedToolMetadata, NotGloballySelected, ShimRunsNothing
+from ...models import Installation
+from ..pathcache import path_dirs, resolve_bin_path, which_here
+from ..providers.base import Provider
+from ..providers.mise import is_shim, shim_target, shim_target_here
+from ..providers.registry import registry
 
 
 def binary_path(binary_name: str, bin_dir: str | Path | None = None) -> Path | None:

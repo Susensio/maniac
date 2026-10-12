@@ -13,16 +13,16 @@ from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 
-from ..config import Config
-from ..exceptions import MalformedToolMetadata
-from ..models import Installation, LocalRepoSource, RepoSource
-from .docs import discover_repo_manpages
-from .docs.pages import discovered_manpage_uri
-from .documentation import documentation_source
-from .manpages import manpage_documents, read_manpage_source, select_primary_manpage
-from .pathcache import resolve_cached
-from .providers.base import DirectPageProvider, Provider
-from .providers.registry import registry
+from ...config import Config
+from ...exceptions import MalformedToolMetadata
+from ...models import Installation, LocalRepoSource, RepoSource
+from ..docs import discover_repo_manpages
+from ..docs.pages import discovered_manpage_uri
+from ..documentation import documentation_source
+from ..manpages import manpage_documents, read_manpage_source, select_primary_manpage
+from ..pathcache import resolve_cached
+from ..providers.base import DirectPageProvider, Provider
+from ..providers.registry import registry
 
 
 @dataclass(frozen=True, slots=True)

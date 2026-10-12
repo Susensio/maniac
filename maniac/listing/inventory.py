@@ -27,8 +27,8 @@ from .. import manifest
 from ..config import Config
 from ..logging import logger
 from ..models import Installation, RepoSource
-from ..sources import resolution
-from ..sources.candidates import repository_of
+from ..sources.lookup import resolution
+from ..sources.lookup.candidates import repository_of
 from ..state.candidates import candidate_from, named_candidate
 from ..state.classification import classify
 from ..state.models import (

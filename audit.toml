@@ -1,10 +1,12 @@
 # Architecture audit (`just audit`, tools/audit.py).
 #
 # Each metric counts one kind of structural debt. `ceiling` is the most the
-# code may have: the audit fails above it. `target` is where the work in
-# docs/STATE.md takes it. `just audit --update` lowers a ceiling once work
-# brings a metric down; raising one is a decision, made here in a commit that
-# says why. Paths are relative to the repository root; module names dotted.
+# code may have: the audit fails above it. `target` is where it should be;
+# the 2026-10-10 architecture work took every metric there, so ceilings and
+# targets now meet and the audit holds that shape. `just audit --update`
+# lowers a ceiling once work brings a metric down; raising one is a
+# decision, made here in a commit that says why. Paths are relative to the
+# repository root; module names dotted.
 
 [metric.resolution_implementations]
 kind = "modules_calling"
@@ -18,7 +20,7 @@ names = [
   "which_here",
   "_detect_via_registry",
 ]
-allowed = ["maniac/sources/resolution.py", "maniac/sources/pathcache.py", "maniac/sources/providers/*"]
+allowed = ["maniac/sources/lookup/resolution.py", "maniac/sources/pathcache.py", "maniac/sources/providers/*"]
 ceiling = 0
 target = 0
 
@@ -32,8 +34,8 @@ names = [
   "_DiscoveryError",
 ]
 allowed = [
-  "maniac/sources/resolution.py",
-  "maniac/sources/candidates.py",
+  "maniac/sources/lookup/resolution.py",
+  "maniac/sources/lookup/candidates.py",
   "maniac/sources/discovery.py",
   "maniac/sources/providers/*",
 ]
@@ -42,9 +44,9 @@ target = 0
 
 [metric.source_order_implementations]
 kind = "modules_calling"
-why = "The order shipped, upstream, generated is written once, in sources/candidates.py: walk `attempts`, or call `shipped_attempt` / `upstream_attempt`, instead of the selectors."
+why = "The order shipped, upstream, generated is written once, in sources/lookup/candidates.py: walk `attempts`, or call `shipped_attempt` / `upstream_attempt`, instead of the selectors."
 names = ["select_install_root", "select_repository"]
-allowed = ["maniac/sources/candidates.py"]
+allowed = ["maniac/sources/lookup/candidates.py"]
 ceiling = 0
 target = 0
 
@@ -61,7 +63,7 @@ kind = "package_cycles"
 why = "Packages that import each other cannot be understood, tested or moved apart."
 depth = 2
 ignore = []
-ceiling = 1
+ceiling = 0
 target = 0
 
 [metric.module_cycles]

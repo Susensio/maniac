@@ -368,7 +368,7 @@ def test_a_project_only_install_is_found_when_asked_for_here(
 ) -> None:
     """`install --force` names the project's copy on purpose (CONTRACT.md
     rule 2): the same install refused for the login `$PATH` is its answer."""
-    from maniac.sources import resolution
+    from maniac.sources.lookup import resolution
 
     bin_path = _make_mise_install(tmp_path, "ripgrep", "13.0.0", "rg")
     monkeypatch.setattr(mise.discovery.shutil, "which", lambda name: "/usr/bin/mise")

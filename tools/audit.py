@@ -1,8 +1,10 @@
 """Architecture audit: measure what makes maniac hard to change, and ratchet it.
 
-Each metric counts one kind of structural debt the 2026-10-10 review found
-(docs/STATE.md): a question answered in several places, imports against the
-intended layering, functions too complex to read, code nothing runs.
+Each metric counts one kind of structural debt an architecture review found
+on 2026-10-10 and the work after it removed: a question answered in several
+places, imports against the intended layering, import cycles, functions too
+complex to read, code nothing runs. With every metric at its target, the
+audit now holds that shape: a change that brings any of it back fails.
 `audit.toml` holds, per metric, a ceiling and a target. The audit fails when
 a metric rises above its ceiling, so debt can only shrink; `--update` lowers
 each ceiling to what is measured once work has brought it down. Ceilings
@@ -122,7 +124,7 @@ def _package(module: str, depth: int) -> str:
     """The package a module belongs to, at most `depth` levels below `maniac`.
 
     A module directly under `maniac` (`maniac.config`) is a package of its
-    own; any other belongs to its enclosing package, so `sources/resolution.py`
+    own; any other belongs to its enclosing package, so `sources/pathcache.py`
     and `sources/providers/mise.py` fall in `maniac.sources` and
     `maniac.sources.providers`.
     """

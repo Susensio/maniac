@@ -3,7 +3,7 @@
 from pathlib import Path
 
 from maniac.models import Installation, LocalRepoSource, RemoteRepoSource
-from maniac.sources import candidates
+from maniac.sources.lookup import candidates
 
 
 def _installation(root: Path) -> Installation:

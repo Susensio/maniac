@@ -7,7 +7,7 @@ from pathlib import Path
 
 from maniac.config import Config
 from maniac.models import Installation, RepoSource
-from maniac.sources import resolution
+from maniac.sources.lookup import resolution
 from maniac.sources.providers.base import SourceResolver
 from maniac.sources.providers.registry import ProviderRegistry, registry
 
@@ -286,7 +286,7 @@ def test_importing_resolution_mutates_no_provider_class() -> None:
             }
 
         before = snapshot()
-        import maniac.sources.resolution
+        import maniac.sources.lookup.resolution
         assert snapshot() == before, "importing resolution changed a provider class"
         """
     )
