@@ -24,24 +24,29 @@ target = 0
 
 [metric.resolution_exceptions_handled]
 kind = "handlers_of"
-why = "Resolution outcomes are values, not exceptions to catch: match on the result instead."
+why = "Resolution outcomes are values, not exceptions to catch: match on the result instead. Only the seams that turn them into values catch them (resolution for binaries, candidates for repositories)."
 names = [
   "NotGloballySelected",
   "ShimRunsNothing",
   "MalformedToolMetadata",
   "_DiscoveryError",
 ]
-allowed = ["maniac/sources/resolution.py", "maniac/sources/discovery.py", "maniac/sources/providers/*"]
-ceiling = 1
+allowed = [
+  "maniac/sources/resolution.py",
+  "maniac/sources/candidates.py",
+  "maniac/sources/discovery.py",
+  "maniac/sources/providers/*",
+]
+ceiling = 0
 target = 0
 
 [metric.source_order_implementations]
 kind = "modules_calling"
-why = "The order shipped, upstream, generated must be written once; walk the shared source list instead."
+why = "The order shipped, upstream, generated is written once, in sources/candidates.py: walk `attempts`, or call `shipped_attempt` / `upstream_attempt`, instead of the selectors."
 names = ["select_install_root", "select_repository"]
 allowed = ["maniac/sources/candidates.py"]
-ceiling = 4
-target = 1
+ceiling = 0
+target = 0
 
 [metric.page_state_implementations]
 kind = "modules_calling"

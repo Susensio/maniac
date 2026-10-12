@@ -18,11 +18,11 @@ from maniac.orchestration.install import (
     InstallRefused,
     Resolution,
     Tier,
-    _try_install_root,
-    _try_repository,
+    _install_attempt,
     run_install,
 )
 from maniac.sources import pathcache
+from maniac.sources.candidates import Source, attempts
 from maniac.sources.providers.base import Provider, SourceResolver
 from maniac.sources.providers.registry import registry
 
@@ -268,7 +268,7 @@ def test_run_install_falls_through_to_repository_when_no_install_root_page(
     page = tmp_path / "tool.1"
     page.write_text(".TH TOOL 1\n", encoding="utf-8")
     monkeypatch.setattr(
-        "maniac.orchestration.install.discover_repo_manpages",
+        "maniac.sources.candidates.discover_repo_manpages",
         lambda source, binary, cache_dir=None, config=None, version=None: (
             [page],
             True,
@@ -304,7 +304,7 @@ def test_run_install_dry_run_tier2_writes_nothing(
     page = tmp_path / "tool.1"
     page.write_text(".TH TOOL 1\n", encoding="utf-8")
     monkeypatch.setattr(
-        "maniac.orchestration.install.discover_repo_manpages",
+        "maniac.sources.candidates.discover_repo_manpages",
         lambda source, binary, cache_dir=None, config=None, version=None: (
             [page],
             True,
@@ -332,7 +332,32 @@ def test_run_install_dry_run_tier2_writes_nothing(
     assert manifest.load(cfg) == {}
 
 
-# -- _try_install_root: tier 1 in isolation ----------------------------------
+# -- each source in isolation: what it finds, and installing it -------------
+
+
+def _try(
+    tool: ResolvedTool, source: Source, *, dry_run: bool
+) -> tuple[InstallOutcome | None, bool]:
+    """Walk `install`'s source order to `source`; install what it found, if any.
+
+    Returns the outcome (None when that source offered nothing) and whether
+    its check was definitive -- what `install` acts on.
+    """
+    for attempt in attempts(
+        tool.provider,
+        tool.installation,
+        lambda: tool.documentation_source,
+        config=tool.config,
+        cache_dir=tool.cache_dir,
+    ):
+        if attempt.source is source:
+            if attempt.found is None:
+                return None, attempt.definitive
+            return (
+                _install_attempt(tool, attempt, force=False, dry_run=dry_run),
+                attempt.definitive,
+            )
+    return None, True
 
 
 def _resolved_tool(
@@ -357,20 +382,20 @@ def _resolved_tool(
     )
 
 
-def test_try_install_root_with_no_provider_is_none(tmp_path: Path) -> None:
+def test_shipped_with_no_provider_is_none(tmp_path: Path) -> None:
     tool = _resolved_tool(tmp_path, provider=None, inst=None)
 
-    assert _try_install_root(tool, force=False, dry_run=False) is None
+    assert _try(tool, Source.SHIPPED, dry_run=False)[0] is None
 
 
-def test_try_install_root_with_no_candidate_is_none(tmp_path: Path) -> None:
+def test_shipped_with_no_candidate_is_none(tmp_path: Path) -> None:
     provider = _FakeProvider(local_docs=[])
     tool = _resolved_tool(tmp_path, provider=provider, inst=_installation())
 
-    assert _try_install_root(tool, force=False, dry_run=False) is None
+    assert _try(tool, Source.SHIPPED, dry_run=False)[0] is None
 
 
-def test_try_install_root_dry_run_reports_the_page_without_installing(
+def test_shipped_dry_run_reports_the_page_without_installing(
     tmp_path: Path,
 ) -> None:
     page = tmp_path / "tool.1"
@@ -378,7 +403,7 @@ def test_try_install_root_dry_run_reports_the_page_without_installing(
     provider = _FakeProvider(local_docs=[page])
     tool = _resolved_tool(tmp_path, provider=provider, inst=_installation())
 
-    outcome = _try_install_root(tool, force=False, dry_run=True)
+    outcome = _try(tool, Source.SHIPPED, dry_run=True)[0]
 
     assert outcome is not None
     assert outcome.tier is Tier.INSTALL_ROOT
@@ -386,7 +411,7 @@ def test_try_install_root_dry_run_reports_the_page_without_installing(
     assert outcome.detail.endswith("page (1.2.3)")
 
 
-def test_try_install_root_installs_the_page(
+def test_shipped_installs_the_page(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     page = tmp_path / "tool.1"
@@ -400,7 +425,7 @@ def test_try_install_root_installs_the_page(
         ),
     )
 
-    outcome = _try_install_root(tool, force=False, dry_run=False)
+    outcome = _try(tool, Source.SHIPPED, dry_run=False)[0]
 
     assert outcome is not None
     assert outcome.tier is Tier.INSTALL_ROOT
@@ -408,39 +433,36 @@ def test_try_install_root_installs_the_page(
     assert outcome.detail == "shipped page (1.2.3)"
 
 
-# -- _try_repository: tier 2 in isolation ------------------------------------
-
-
-def test_try_repository_without_an_installed_version_is_none(tmp_path: Path) -> None:
+def test_upstream_without_an_installed_version_is_none(tmp_path: Path) -> None:
     source = RepoSource(name="tool", target="owner/tool", is_local=False)
     provider = _FakeProvider(source=source)
     tool = _resolved_tool(tmp_path, provider=provider, inst=_installation(version=None))
 
-    assert _try_repository(tool, force=False, dry_run=False) == (None, True)
+    assert _try(tool, Source.UPSTREAM, dry_run=False) == (None, True)
 
 
-def test_try_repository_without_a_documentation_source_is_none(tmp_path: Path) -> None:
+def test_upstream_without_a_documentation_source_is_none(tmp_path: Path) -> None:
     provider = _FakeProvider(source=None)
     tool = _resolved_tool(tmp_path, provider=provider, inst=_installation())
 
-    assert _try_repository(tool, force=False, dry_run=False) == (None, True)
+    assert _try(tool, Source.UPSTREAM, dry_run=False) == (None, True)
 
 
-def test_try_repository_with_no_candidate_is_none(
+def test_upstream_with_no_candidate_is_none(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     source = RepoSource(name="tool", target="owner/tool", is_local=False)
     provider = _FakeProvider(source=source)
     tool = _resolved_tool(tmp_path, provider=provider, inst=_installation())
     monkeypatch.setattr(
-        "maniac.orchestration.install.discover_repo_manpages",
+        "maniac.sources.candidates.discover_repo_manpages",
         lambda *args, **kwargs: ([], True),
     )
 
-    assert _try_repository(tool, force=False, dry_run=False) == (None, True)
+    assert _try(tool, Source.UPSTREAM, dry_run=False) == (None, True)
 
 
-def test_try_repository_dry_run_reports_the_page_without_installing(
+def test_upstream_dry_run_reports_the_page_without_installing(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     source = RepoSource(name="tool", target="owner/tool", is_local=False)
@@ -449,11 +471,11 @@ def test_try_repository_dry_run_reports_the_page_without_installing(
     page.write_text(".TH TOOL 1\n", encoding="utf-8")
     tool = _resolved_tool(tmp_path, provider=provider, inst=_installation())
     monkeypatch.setattr(
-        "maniac.orchestration.install.discover_repo_manpages",
+        "maniac.sources.candidates.discover_repo_manpages",
         lambda *args, **kwargs: ([page], True),
     )
 
-    outcome, definitive = _try_repository(tool, force=False, dry_run=True)
+    outcome, definitive = _try(tool, Source.UPSTREAM, dry_run=True)
 
     assert outcome is not None
     assert definitive is True
@@ -462,7 +484,7 @@ def test_try_repository_dry_run_reports_the_page_without_installing(
     assert outcome.detail.endswith("page (1.2.3)")
 
 
-def test_try_repository_installs_the_page(
+def test_upstream_installs_the_page(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     source = RepoSource(name="tool", target="owner/tool", is_local=False)
@@ -471,7 +493,7 @@ def test_try_repository_installs_the_page(
     page.write_text(".TH TOOL 1\n", encoding="utf-8")
     tool = _resolved_tool(tmp_path, provider=provider, inst=_installation())
     monkeypatch.setattr(
-        "maniac.orchestration.install.discover_repo_manpages",
+        "maniac.sources.candidates.discover_repo_manpages",
         lambda *args, **kwargs: ([page], True),
     )
     monkeypatch.setattr(
@@ -481,7 +503,7 @@ def test_try_repository_installs_the_page(
         ),
     )
 
-    outcome, definitive = _try_repository(tool, force=False, dry_run=False)
+    outcome, definitive = _try(tool, Source.UPSTREAM, dry_run=False)
 
     assert outcome is not None
     assert definitive is True
@@ -510,7 +532,7 @@ def test_run_install_uses_the_exact_tmux_documentation_repository(
         observed.append(source)
         return [page], True
 
-    monkeypatch.setattr("maniac.orchestration.install.discover_repo_manpages", discover)
+    monkeypatch.setattr("maniac.sources.candidates.discover_repo_manpages", discover)
     monkeypatch.setattr(
         "maniac.orchestration.install.install_manpage",
         lambda *args, **kwargs: InstallResult(
@@ -538,7 +560,7 @@ def test_run_install_tier2_rejects_a_page_naming_a_different_binary(
     page = tmp_path / "tool.1"
     page.write_text(".TH SOMETHINGELSE 1\n", encoding="utf-8")
     monkeypatch.setattr(
-        "maniac.orchestration.install.discover_repo_manpages",
+        "maniac.sources.candidates.discover_repo_manpages",
         lambda source, binary, cache_dir=None, config=None, version=None: (
             [page],
             True,
@@ -830,7 +852,7 @@ def test_run_install_tier2_skipped_without_an_installed_version(
         raise AssertionError("tier 2 must not run without an installed version")
 
     monkeypatch.setattr(
-        "maniac.orchestration.install.discover_repo_manpages", _discover_repo_manpages
+        "maniac.sources.candidates.discover_repo_manpages", _discover_repo_manpages
     )
 
     outcome = run_install("tool", no_generate=True)
@@ -865,7 +887,7 @@ def test_run_install_installs_all_anchored_release_manpages(
         lambda name, bin_dir=None, **_: (provider, inst),
     )
     monkeypatch.setattr(
-        "maniac.orchestration.install.discover_repo_manpages",
+        "maniac.sources.candidates.discover_repo_manpages",
         lambda *args, **kwargs: ([primary, companion], True),
     )
 
@@ -925,7 +947,7 @@ def _resolve_eza_release(
         lambda name, bin_dir=None, **_: (provider, inst),
     )
     monkeypatch.setattr(
-        "maniac.orchestration.install.discover_repo_manpages",
+        "maniac.sources.candidates.discover_repo_manpages",
         lambda *args, **kwargs: (list(pages), True),
     )
 
@@ -979,7 +1001,7 @@ def test_run_install_records_no_page_when_a_release_fails_partway(
     assert manifest.load(config=cfg) == {}
 
 
-def test_try_repository_undoes_earlier_pages_when_a_later_page_fails(
+def test_upstream_undoes_earlier_pages_when_a_later_page_fails(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """ADR-0050: the third page's failure must not leave the first two's
@@ -1016,7 +1038,7 @@ def test_try_repository_undoes_earlier_pages_when_a_later_page_fails(
     assert list(cfg.output_dir.rglob("*")) == []
 
 
-def test_try_repository_undo_leaves_an_unrelated_entrys_target_alone(
+def test_upstream_undo_leaves_an_unrelated_entrys_target_alone(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """The `baseline_entries` trap: a target legitimately used by an entry
@@ -1067,7 +1089,7 @@ def test_try_repository_undo_leaves_an_unrelated_entrys_target_alone(
     assert set(manifest.load(config=cfg)) == {"other"}
 
 
-def test_try_repository_undo_restores_a_displaced_foreign_pages_backup(
+def test_upstream_undo_restores_a_displaced_foreign_pages_backup(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """ADR-0051: undoing a page whose own call already succeeded must restore
@@ -1109,7 +1131,7 @@ def test_try_repository_undo_restores_a_displaced_foreign_pages_backup(
     assert foreign_path.read_text(encoding="utf-8") == foreign_content
 
 
-def test_try_repository_undo_restores_a_version_bumped_pages_prior_bytes(
+def test_upstream_undo_restores_a_version_bumped_pages_prior_bytes(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """ADR-0051's examined-and-accepted gap, now closed: reinstalling over a
@@ -1331,7 +1353,7 @@ def test_run_install_refuses_synthesis_after_a_non_definitive_repository_probe(
         lambda name, bin_dir=None, **_: (provider, inst),
     )
     monkeypatch.setattr(
-        "maniac.orchestration.install.discover_repo_manpages",
+        "maniac.sources.candidates.discover_repo_manpages",
         lambda *args, **kwargs: ([], False),
     )
     monkeypatch.setattr(
@@ -1364,7 +1386,7 @@ def test_run_install_no_generate_says_an_incomplete_probe_is_not_an_absence(
         lambda name, bin_dir=None, **_: (provider, inst),
     )
     monkeypatch.setattr(
-        "maniac.orchestration.install.discover_repo_manpages",
+        "maniac.sources.candidates.discover_repo_manpages",
         lambda *args, **kwargs: ([], False),
     )
 
@@ -1741,7 +1763,7 @@ def test_run_install_tier2_refuses_a_foreign_companion_destination(
         lambda name, bin_dir=None, **_: (provider, inst),
     )
     monkeypatch.setattr(
-        "maniac.orchestration.install.discover_repo_manpages",
+        "maniac.sources.candidates.discover_repo_manpages",
         lambda *args, **kwargs: ([primary, companion], True),
     )
     monkeypatch.setattr(
@@ -1782,7 +1804,7 @@ def test_run_install_tier2_force_bypasses_the_widened_precheck(
         lambda name, bin_dir=None, **_: (provider, inst),
     )
     monkeypatch.setattr(
-        "maniac.orchestration.install.discover_repo_manpages",
+        "maniac.sources.candidates.discover_repo_manpages",
         lambda *args, **kwargs: ([primary, companion], True),
     )
 
@@ -1906,7 +1928,7 @@ def test_run_install_dry_run_tier3_writes_nothing(
         lambda name, bin_dir=None, **_: (provider, inst),
     )
     monkeypatch.setattr(
-        "maniac.orchestration.install.discover_repo_manpages",
+        "maniac.sources.candidates.discover_repo_manpages",
         lambda *args, **kwargs: ([], True),
     )
     monkeypatch.setattr(
@@ -1957,7 +1979,7 @@ def test_run_install_dry_run_tier3_without_pandoc_reports_no_page(
         lambda name, bin_dir=None, **_: (provider, inst),
     )
     monkeypatch.setattr(
-        "maniac.orchestration.install.discover_repo_manpages",
+        "maniac.sources.candidates.discover_repo_manpages",
         lambda *args, **kwargs: ([], True),
     )
     monkeypatch.setattr(
@@ -2018,7 +2040,7 @@ def test_install_reaching_tier_3_resolves_the_tool_once_not_twice(
     # Tier 1 finds no page and tier 2 no repository page, so the install
     # falls through to a real (dry-run) tier-3 synthesis.
     monkeypatch.setattr(
-        "maniac.orchestration.install.discover_repo_manpages",
+        "maniac.sources.candidates.discover_repo_manpages",
         lambda *args, **kwargs: ([], True),
     )
     monkeypatch.setattr(
@@ -2059,7 +2081,7 @@ def test_install_leaves_a_page_already_current_alone(
     _resolve_eza_release(monkeypatch, pages)
     run_install("eza", no_generate=True, config=cfg)
     monkeypatch.setattr(
-        "maniac.orchestration.install.discover_repo_manpages",
+        "maniac.sources.candidates.discover_repo_manpages",
         lambda *args, **kwargs: pytest.fail("a current page is not looked up again"),
     )
 

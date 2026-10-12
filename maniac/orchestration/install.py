@@ -36,9 +36,13 @@ from ..listing.models import ActionState
 from ..logging import logger
 from ..manifest import Tier, manpage_owner
 from ..models import PipelineResult
-from ..sources.candidates import select_install_root, select_repository
+from ..sources.candidates import (
+    Attempt,
+    InstallRootCandidate,
+    RepositoryCandidate,
+    attempts,
+)
 from ..sources.crawler import get_version
-from ..sources.docs import discover_repo_manpages
 from ..sources.manpages import find_installed_manpage_path
 from ..sources.resolution import Outcome, is_system_binary, locate, this_shell_runs
 from .context import ResolvedTool, resolve_tool, tool_from
@@ -310,12 +314,17 @@ def _select_page(
 ) -> InstallOutcome:
     """The first tier with a page for `tool`, installed (ADR-0016)."""
     tool_name = tool.tool_name
-    outcome = _try_install_root(tool, force=force, dry_run=dry_run)
-    if outcome is not None:
-        return outcome
-    outcome, repository_definitive = _try_repository(tool, force=force, dry_run=dry_run)
-    if outcome is not None:
-        return outcome
+    repository_definitive = True
+    for attempt in attempts(
+        tool.provider,
+        tool.installation,
+        lambda: tool.documentation_source,
+        config=tool.config,
+        cache_dir=tool.cache_dir,
+    ):
+        if attempt.found is not None:
+            return _install_attempt(tool, attempt, force=force, dry_run=dry_run)
+        repository_definitive = repository_definitive and attempt.definitive
     source = tool.documentation_source
     upstream = source.identity if source is not None else "the upstream repository"
     if no_generate:
@@ -411,9 +420,8 @@ def _refuse_unmanaged_destination(dest_file: Path, cfg: Config, *, force: bool) 
     out foreign.  Each call site passes the destination(s) it is actually
     about to write: the run-level call below still only knows tier 3's
     default guess (`<tool>.1`, before anything is resolved), while
-    `_try_install_root` and `_try_repository` each call this again against
-    their own candidate's resolved destination(s) once that candidate is
-    built -- `_take_backup` stays the real enforcement point this previews.
+    `_install_release` calls this again against every page of the release
+    it is about to install -- `_take_backup` stays the real enforcement point this previews.
     """
     if force or not _holds_a_foreign_page(dest_file, cfg):
         return
@@ -453,6 +461,8 @@ class _PageInstall:
     request: PageRequest
     target_dir: Path
     durable_source: bool = False
+    primary: bool = False
+    """The release's main page: the one the outcome reports."""
 
 
 def _install_page_group(
@@ -464,9 +474,8 @@ def _install_page_group(
 ) -> list[InstallResult]:
     """Install every queued page as one unit, in `txn`, undoing all on any failure.
 
-    Shared by tier 1 (`_try_install_root`) and tier 2 (`_try_repository`): a
-    multi-page release installs the same way regardless of which tier found
-    it -- one transaction around the whole group, so its entries land in a
+    Called by `_install_release` for any source: a multi-page release
+    installs the same way whichever source found it -- one transaction around the whole group, so its entries land in a
     single write or none of them do (ADR-0046, ADR-0042).
     """
     # Snapshot before this loop's own puts, for ADR-0050's undo below --
@@ -504,190 +513,130 @@ def _install_page_group(
     return installed
 
 
-def _try_install_root(
-    tool: ResolvedTool, *, force: bool, dry_run: bool
-) -> InstallOutcome | None:
-    """Tier 1: a page already inside the install root, the installed version by construction."""
-    provider, inst = tool.provider, tool.installation
-    if provider is None or inst is None:
-        return None
-    candidate = select_install_root(provider, inst)
-    if candidate is None:
-        return None
+def _install_attempt(
+    tool: ResolvedTool, attempt: Attempt, *, force: bool, dry_run: bool
+) -> InstallOutcome:
+    """Install the pages a source offered, as one release (ADR-0042, ADR-0046)."""
+    inst = tool.installation
+    assert inst is not None and attempt.found is not None
+    if isinstance(attempt.found, InstallRootCandidate):
+        tier, pages, detail = (
+            Tier.INSTALL_ROOT,
+            _shipped_pages(tool, attempt.found),
+            (f"shipped page ({inst.version})" if inst.version else "shipped page"),
+        )
+        # Keyed on `inst.binary`, not the primary page's file name, which can
+        # match the subcommand pattern (`select_primary_manpage`) instead.
+        group, prune = inst.binary, False
+    else:
+        assert attempt.repository is not None
+        tier, pages = Tier.REPOSITORY, _upstream_pages(tool, attempt.found)
+        detail = f"upstream page ({inst.version})"
+        group, prune = manpage_owner(attempt.found.primary.path), True
+    return _install_release(
+        tool, tier, detail, pages, group, prune=prune, force=force, dry_run=dry_run
+    )
+
+
+def _shipped_pages(
+    tool: ResolvedTool, found: InstallRootCandidate
+) -> list[_PageInstall]:
+    """A shipped release: the primary links to the provider's own target when
+    it owns one (ADR-0029); companions install like any page."""
+    inst = tool.installation
+    assert inst is not None
+    pages = []
+    for page in found.pages:
+        primary = page == found.primary
+        pages.append(
+            _PageInstall(
+                source_file=found.final_target if primary else page.path,
+                tool=inst.binary if primary else manpage_owner(page.path),
+                request=PageRequest(
+                    Tier.INSTALL_ROOT,
+                    str(inst.root),
+                    version=inst.version,
+                    provider_target=found.provider_owned if primary else False,
+                    group=inst.binary,
+                    binary=tool.documented_binary,
+                ),
+                target_dir=_manpage_directory(page.path, tool.config),
+                durable_source=found.provider_owned if primary else False,
+                primary=primary,
+            )
+        )
+    return pages
+
+
+def _upstream_pages(
+    tool: ResolvedTool, found: RepositoryCandidate
+) -> list[_PageInstall]:
+    """An upstream release: every page from the version-matched tag or asset."""
+    inst = tool.installation
+    assert inst is not None
+    group = manpage_owner(found.primary.path)
+    return [
+        _PageInstall(
+            source_file=page.path,
+            tool=manpage_owner(page.path),
+            request=PageRequest(
+                Tier.REPOSITORY,
+                found.source.identity,
+                version=inst.version,
+                source_uri=page.uri,
+                group=group,
+                binary=tool.documented_binary,
+            ),
+            target_dir=_manpage_directory(page.path, tool.config),
+            primary=page == found.primary,
+        )
+        for page in found.pages
+    ]
+
+
+def _install_release(
+    tool: ResolvedTool,
+    tier: Tier,
+    detail: str,
+    pages: list[_PageInstall],
+    group: str,
+    *,
+    prune: bool,
+    force: bool,
+    dry_run: bool,
+) -> InstallOutcome:
+    """Install a release's pages as one unit, whatever source offered them.
+
+    Every page's destination is checked before any is written: a companion's
+    foreign page refuses the whole release, not only the primary's (ADR-0042).
+    One transaction around the whole release: its entries land in a single
+    write or none do (ADR-0046); the pages are already materialized, so no
+    generation happens under the lock (ADR-0043). `prune` forgets a member
+    of `group` this release no longer ships.
+    """
     cfg = tool.config
-    # Every page of the install root installs as one unit, same as tier 2
-    # (ADR-0042, ADR-0046) -- a companion's own destination refuses the
-    # whole group before any of them is materialized, not only the primary's.
-    for page in candidate.pages:
-        dest_name = (
-            candidate.final_target.name if page == candidate.primary else page.path.name
-        )
+    inst = tool.installation
+    assert inst is not None
+    for page in pages:
         _refuse_unmanaged_destination(
-            _manpage_directory(page.path, cfg) / dest_name, cfg, force=force
+            page.target_dir / page.source_file.name, cfg, force=force
         )
-    detail = "shipped page"
-    if inst.version:
-        detail += f" ({inst.version})"
     if dry_run:
         return InstallOutcome(
-            tool=inst.binary,
-            tier=Tier.INSTALL_ROOT,
-            detail=detail,
-            installed_path=None,
+            tool=inst.binary, tier=tier, detail=detail, installed_path=None
         )
-    # Every page of one install root records the primary's manifest key as
-    # its group, the same fact tier 2 records for one release archive
-    # (ADR-0042).  The primary is keyed on `inst.binary` -- not
-    # `manpage_owner(candidate.primary.path)` -- because its filename can
-    # match the subcommand pattern (`select_primary_manpage`) rather than
-    # `inst.binary` verbatim.
-    group = inst.binary
     with manifest.transaction(cfg) as txn:
-        installed = _install_page_group(
-            (
-                _PageInstall(
-                    source_file=candidate.final_target
-                    if page == candidate.primary
-                    else page.path,
-                    tool=inst.binary
-                    if page == candidate.primary
-                    else manpage_owner(page.path),
-                    request=PageRequest(
-                        Tier.INSTALL_ROOT,
-                        str(inst.root),
-                        version=inst.version,
-                        provider_target=candidate.provider_owned
-                        if page == candidate.primary
-                        else False,
-                        group=group,
-                        binary=tool.documented_binary,
-                    ),
-                    target_dir=_manpage_directory(page.path, cfg),
-                    durable_source=candidate.provider_owned
-                    if page == candidate.primary
-                    else False,
-                )
-                for page in candidate.pages
-            ),
-            txn,
-            cfg,
-            force=force,
-        )
+        installed = _install_page_group(pages, txn, cfg, force=force)
+        if prune:
+            kept = {page.tool for page in pages}
+            _prune_dropped_group_members(group, kept, txn, cfg)
     installed_path = next(
         result.path
-        for result, page in zip(installed, candidate.pages, strict=True)
-        if page == candidate.primary
+        for result, page in zip(installed, pages, strict=True)
+        if page.primary
     )
-
     return InstallOutcome(
-        tool=inst.binary,
-        tier=Tier.INSTALL_ROOT,
-        detail=detail,
-        installed_path=installed_path,
-    )
-
-
-def _try_repository(
-    tool: ResolvedTool, *, force: bool, dry_run: bool
-) -> tuple[InstallOutcome | None, bool]:
-    """Tier 2: a hand-authored page fetched from the resolved repository at the matching tag.
-
-    Refuses rather than guesses in two cases ADR-0016 calls out: no
-    installed version to match against (`inst.version` is None -- a raw
-    `local_lib` checkout, for one), and no upstream tag naming that version
-    (`discover_repo_manpage`'s `version=` argument -> `resolve_repo_dir`).
-    A page that clears both is still checked against the binary it claims
-    to document (`manpage_documents`) before being trusted verbatim.
-
-    The `bool` alongside the outcome is whether a `None` outcome is a
-    definitive tier-2 miss (nothing to install, safe to fall through) or a
-    probe that failed to complete (`run_install` refuses synthesis rather
-    than treat that the same as a definitive absence).
-    """
-    inst = tool.installation
-    if inst is None or inst.version is None:
-        return None, True
-    source = tool.documentation_source
-    if source is None:
-        return None, True
-    cfg = tool.config
-
-    candidate, definitive = select_repository(
-        source,
-        inst.binary,
-        cache_dir=tool.cache_dir,
-        config=cfg,
-        version=inst.version,
-        discover=discover_repo_manpages,
-    )
-    if candidate is None:
-        return None, definitive
-    # Every page of the group installs somewhere (ADR-0042, ADR-0046) --
-    # a companion's own destination refuses the whole group before any of
-    # them is materialized, not only the primary's.
-    for page in candidate.pages:
-        _refuse_unmanaged_destination(
-            _manpage_directory(page.path, cfg) / page.path.name, cfg, force=force
-        )
-
-    if dry_run:
-        return (
-            InstallOutcome(
-                tool=inst.binary,
-                tier=Tier.REPOSITORY,
-                detail=f"upstream page ({inst.version})",
-                installed_path=None,
-            ),
-            True,
-        )
-
-    # Every page of one release archive records the primary's owner as its
-    # group: they arrived together and uninstall together, which `source_uri`
-    # cannot say -- it names the asset, not the unit, and cannot mark a primary.
-    group = manpage_owner(candidate.primary.path)
-    # One transaction around the whole loop, not one per page: the release's
-    # entries land in a single write or none of them do, so a failure partway
-    # cannot record a group naming a primary that was never written
-    # (ADR-0046, ADR-0042).  The pages are already materialized by here, so
-    # no generation happens under the lock (ADR-0043).
-    with manifest.transaction(cfg) as txn:
-        installed = _install_page_group(
-            (
-                _PageInstall(
-                    source_file=page.path,
-                    tool=manpage_owner(page.path),
-                    request=PageRequest(
-                        Tier.REPOSITORY,
-                        source.identity,
-                        version=inst.version,
-                        source_uri=page.uri,
-                        group=group,
-                        binary=tool.documented_binary,
-                    ),
-                    target_dir=_manpage_directory(page.path, cfg),
-                )
-                for page in candidate.pages
-            ),
-            txn,
-            cfg,
-            force=force,
-        )
-        kept = {manpage_owner(page.path) for page in candidate.pages}
-        _prune_dropped_group_members(group, kept, txn, cfg)
-    installed_path = next(
-        result.path
-        for result, page in zip(installed, candidate.pages, strict=True)
-        if page == candidate.primary
-    )
-    detail = f"upstream page ({inst.version})"
-    return (
-        InstallOutcome(
-            tool=inst.binary,
-            tier=Tier.REPOSITORY,
-            detail=detail,
-            installed_path=installed_path,
-        ),
-        True,
+        tool=inst.binary, tier=tier, detail=detail, installed_path=installed_path
     )
 
 
@@ -696,7 +645,7 @@ def _prune_dropped_group_members(
 ) -> None:
     """Forget a group member this reinstall's release no longer ships.
 
-    `group` names the primary just (re)installed by `_try_repository`;
+    `group` names the primary `_install_release` just (re)installed;
     `kept` is the manifest key of every page that install actually put
     down this time. An entry still carrying `group` but missing from
     `kept` was recorded by an earlier release of the same upstream that

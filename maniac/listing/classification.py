@@ -14,7 +14,7 @@ from pathlib import Path
 
 from .. import manifest
 from ..config import Config
-from ..sources.candidates import select_install_root
+from ..sources.candidates import shipped_attempt
 from ..sources.crawler import get_version
 from ..sources.manpages import (
     _opener_for,
@@ -278,13 +278,13 @@ def _unresolved_page_classification(candidate: Candidate) -> LocalClassification
     """Classify a binary for which `man` resolves no page."""
     provider, inst = candidate.provider, candidate.installation
     if provider is not None and inst is not None:
-        source = select_install_root(provider, inst)
-        if source is not None:
+        shipped = shipped_attempt(provider, inst).found
+        if shipped is not None:
             return LocalClassification(
                 ActionState.AVAILABLE,
                 PageSource.SHIPPED,
                 False,
-                source.primary.path,
+                shipped.primary.path,
             )
     return LocalClassification(ActionState.MISSING, PageSource.NONE, False, None)
 

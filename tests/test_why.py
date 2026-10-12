@@ -108,10 +108,10 @@ def test_the_upstream_check_is_reported_as_install_would_act_on_it(
         lambda name, **_: (provider, inst),
     )
     monkeypatch.setattr(
-        "maniac.orchestration.why.select_install_root", lambda provider, inst: None
+        "maniac.sources.candidates.select_install_root", lambda provider, inst: None
     )
     monkeypatch.setattr(
-        "maniac.orchestration.why.registry.resolve_source",
+        "maniac.sources.candidates.registry.resolve_source",
         lambda inst, config, provider: source,
     )
     page = tmp_path / "tool.1"
@@ -132,7 +132,9 @@ def test_the_upstream_check_is_reported_as_install_would_act_on_it(
             definitive,
         )
 
-    monkeypatch.setattr("maniac.orchestration.why.select_repository", select_repository)
+    monkeypatch.setattr(
+        "maniac.sources.candidates.select_repository", select_repository
+    )
 
     explanation = explain("tool", Config())
     sources = next(s.lines for s in explanation.sections if s.title == "Sources")

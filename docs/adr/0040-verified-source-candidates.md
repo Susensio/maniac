@@ -1,6 +1,6 @@
 # ADR-0040: Centralize verified source evidence without centralizing consumer policy
 
-Status: Accepted
+Status: Accepted; superseded in part by the 2026-10-12 architecture maintenance (phase A4): the source order (shipped, then upstream) is now written once in `sources/candidates.py` (`attempts`), and repository identity resolved there too (`repository_of`); consumers still keep their verdicts, persistence and freshness policy
 Date: 2026-09-14
 
 ## Context

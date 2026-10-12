@@ -31,10 +31,10 @@ from maniac.listing import (
 )
 from maniac.listing.classification import provider_target_freshness
 from maniac.listing.inventory import _build_inventory, _with_target_clusters, group_rows
-from maniac.listing.upstream import resolve_upstream
 from maniac.manifest import Entry, Tier
 from maniac.models import Installation, RepoSource
 from maniac.sources import discovery
+from maniac.sources.candidates import Repository, repository_of
 from maniac.sources.packages import ExternalPageFreshness, ExternalPageVerification
 from maniac.sources.providers import mise as mise_module
 from maniac.sources.providers.base import SourceResolver
@@ -287,7 +287,7 @@ def _count_registry_resolutions(
         calls[0] += 1
         return source
 
-    monkeypatch.setattr("maniac.listing.upstream.registry.resolve_source", counted)
+    monkeypatch.setattr("maniac.sources.candidates.registry.resolve_source", counted)
     return calls
 
 
@@ -2114,21 +2114,21 @@ def test_compute_rows_reports_drift_for_a_manifest_entry_with_deleted_page(
     assert row.drift is True
 
 
-# -- _resolve_upstream: calls provider.resolve_source uniformly (mise's
+# -- repository_of: calls provider.resolve_source uniformly (mise's
 # registry fallback included) -- ADR-0018 lifted the offline gate, so this
 # now proves resolution still works end-to-end and still degrades to a
 # blank Upstream rather than crashing `list` when the network call fails.
 
 
-def test_resolve_upstream_calls_provider_resolve_source() -> None:
+def test_repository_of_calls_provider_resolve_source() -> None:
     source = RepoSource(name="tool", target="owner/tool", is_local=False)
     provider = _FakeProvider(source=source)
     inst = _installation()
 
-    assert resolve_upstream(_candidate(provider, inst), config=Config()) is source
+    assert repository_of(provider, inst, Config()).source is source
 
 
-def test_resolve_upstream_mise_resolves_from_local_config_without_offline_flag(
+def test_repository_of_mise_resolves_from_local_config_without_offline_flag(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """`list` no longer passes `offline=True` (ADR-0018 lifted); a real
@@ -2153,14 +2153,14 @@ def test_resolve_upstream_mise_resolves_from_local_config_without_offline_flag(
         root=tmp_path / "installs" / "ripgrep" / "14.1.0",
     )
 
-    source = resolve_upstream(
-        _candidate(provider, inst), config=Config(config_dir=tmp_path / "config")
-    )
+    source = repository_of(
+        provider, inst, Config(config_dir=tmp_path / "config")
+    ).source
 
     assert source == RepoSource(name="rg", target="private/rg", is_local=False)
 
 
-def test_resolve_upstream_mise_registry_failure_degrades_to_none(
+def test_repository_of_mise_registry_failure_degrades_to_none(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """No local config match falls through to the mise registry (the gate
@@ -2188,21 +2188,10 @@ def test_resolve_upstream_mise_registry_failure_degrades_to_none(
         root=tmp_path / "installs" / "cargo-https-github-com-nushell-nufmt" / "HEAD",
     )
 
-    assert (
-        resolve_upstream(
-            _candidate(provider, inst),
-            config=Config(config_dir=tmp_path / "empty-config"),
-        )
-        is None
-    )
+    assert repository_of(
+        provider, inst, Config(config_dir=tmp_path / "empty-config")
+    ) == Repository(None)
     discovery._load_mise_registry.cache_clear()
-
-
-def test_resolve_upstream_none_without_provider_or_installation() -> None:
-    assert resolve_upstream(_candidate(), config=Config()) is None
-
-
-# -- _with_target_clusters (ADR-0049) ------------------------------------------
 
 
 def _cluster_row(tool: str, package: str = "python") -> ToolRow:
@@ -2876,3 +2865,24 @@ def test_discovery_says_why_it_passes_over_an_unclaimed_or_system_binary(
     reasons = {found.tool: _skip_reason(found) for found in resolution.locate_all()}
 
     assert reasons == {"ls": Skip.SYSTEM, "wrapper": Skip.UNCLAIMED}
+
+
+def test_a_tool_no_installer_claims_has_no_upstream(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """No installer, no record naming a repository: the row's Upstream is
+    blank, and no registry lookup is attempted."""
+    from maniac.listing.inventory import _classify_and_resolve
+
+    monkeypatch.setattr(
+        "maniac.sources.candidates.registry.resolve_source",
+        lambda *a, **k: pytest.fail("nothing to look up without an installer"),
+    )
+    monkeypatch.setattr(
+        "maniac.listing.classification.find_installed_manpage_path",
+        lambda man_bin, tool_name: None,
+    )
+
+    _, upstream = _classify_and_resolve(_candidate(), _config(tmp_path), {})
+
+    assert upstream is None

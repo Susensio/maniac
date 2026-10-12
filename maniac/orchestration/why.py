@@ -7,7 +7,7 @@ what those commands do.
 """
 
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from .. import manifest
@@ -15,15 +15,18 @@ from ..config import Config
 from ..listing.classification import classify
 from ..listing.models import Candidate
 from ..listing.pages import managed_pages
-from ..models import Installation
-from ..sources import documentation
-from ..sources.candidates import select_install_root, select_repository
+from ..models import Installation, RepoSource
+from ..sources.candidates import (
+    Attempt,
+    InstallRootCandidate,
+    Source,
+    attempts,
+    repository_of,
+)
 from ..sources.crawler import get_version
-from ..sources.docs import discover_repo_manpages
 from ..sources.manpages import find_installed_manpage_path
 from ..sources.pathcache import path_dirs
 from ..sources.providers.base import Provider
-from ..sources.providers.registry import registry
 from ..sources.resolution import Outcome, locate, this_shell_runs
 
 
@@ -220,7 +223,7 @@ def _sources_section(
     refusal: str | None,
     config: Config,
 ) -> tuple[Section, str]:
-    """Each source `install` tries, in order, and the one it would use."""
+    """Each source `install` tries, in its order, and the one it would use."""
     section = Section("Sources")
     if refusal is not None:
         section.lines.append(f"none tried: {refusal}")
@@ -236,54 +239,54 @@ def _sources_section(
         return section, "generated"
 
     provider, inst = claim
-    shipped = select_install_root(provider, inst)
-    if shipped is not None:
-        section.lines.append(f"shipped: {_home(shipped.discovered_page)}")
-        return section, "shipped"
-    section.lines.append(f"shipped: none in {_home(inst.root)}")
+    repository: list[RepoSource | None] = []
 
-    raw = registry.resolve_source(inst, config=config, provider=provider)
-    source = (
-        documentation.documentation_source(
-            raw, config.documentation_repository_overrides
-        )
-        if raw is not None
-        else None
-    )
+    def known_repository() -> RepoSource | None:
+        found = repository_of(provider, inst, config)
+        if found.error is not None:
+            raise found.error
+        repository.append(found.source)
+        return found.source
+
     definitive = True
-    if source is None:
-        section.lines.append("upstream: no repository is known for it")
-    elif inst.version is None:
-        section.lines.append(
-            f"upstream: {source.identity}, but its installer reports no version to match a tag"
-        )
-    else:
-        candidate, definitive = select_repository(
-            source,
-            inst.binary,
-            cache_dir=config.cache_dir,
-            config=config,
-            version=inst.version,
-            discover=discover_repo_manpages,
-        )
-        if candidate is not None:
-            section.lines.append(
-                f"upstream: {source.identity} at {inst.version}: {candidate.primary.path.name}"
-            )
-            return section, "upstream"
-        section.lines.append(
-            f"upstream: {source.identity} at {inst.version}: "
-            + (
-                "no manpage"
-                if definitive
-                else "the check failed (network?), so install refuses to generate"
-            )
-        )
+    for attempt in attempts(
+        provider, inst, known_repository, config=config, cache_dir=config.cache_dir
+    ):
+        if attempt.source is Source.UPSTREAM and inst.version is None:
+            # `install` asks nothing here; `why` still names the repository.
+            attempt = replace(attempt, repository=known_repository())
+        section.lines.append(_attempt_line(attempt, inst))
+        if attempt.found is not None:
+            return section, attempt.source.value
+        definitive = definitive and attempt.definitive
+    source = repository[0] if repository else None
     docs = f" and {source.identity}'s docs (`why --docs`)" if source is not None else ""
     section.lines.append(f"generated: from its own --help (`why --help-text`){docs}")
     if not definitive:
         return section, "refused: the upstream check did not complete"
     return section, "generated"
+
+
+def _attempt_line(attempt: Attempt, inst: Installation) -> str:
+    """One source tried, and what it found or why it found nothing."""
+    if attempt.source is Source.SHIPPED:
+        if isinstance(attempt.found, InstallRootCandidate):
+            return f"shipped: {_home(attempt.found.discovered_page)}"
+        return f"shipped: none in {_home(inst.root)}"
+    repository = attempt.repository
+    if repository is None:
+        return "upstream: no repository is known for it"
+    if inst.version is None:
+        return (
+            f"upstream: {repository.identity}, but its installer reports no "
+            "version to match a tag"
+        )
+    at = f"upstream: {repository.identity} at {inst.version}"
+    if attempt.found is not None:
+        return f"{at}: {attempt.found.primary.path.name}"
+    if attempt.definitive:
+        return f"{at}: no manpage"
+    return f"{at}: the check failed (network?), so install refuses to generate"
 
 
 def _differs(a: Path, b: Path) -> bool:

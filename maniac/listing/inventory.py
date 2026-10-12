@@ -25,10 +25,10 @@ from typing import Any
 
 from .. import manifest
 from ..config import Config
-from ..exceptions import MalformedToolMetadata
 from ..logging import logger
 from ..models import Installation, RepoSource
 from ..sources import resolution
+from ..sources.candidates import repository_of
 from .classification import classify
 from .models import (
     ActionState,
@@ -49,7 +49,6 @@ from .upstream import (
     is_upstream_eligible,
     probe_key,
     probe_upstream,
-    resolve_upstream,
 )
 
 LOCAL_CLASSIFY_WORKERS = 8
@@ -257,19 +256,21 @@ def _classify_and_resolve(
             ),
             None,
         )
-    try:
-        upstream = resolve_upstream(candidate, config=cfg)
-    except MalformedToolMetadata as e:
-        return (
-            LocalClassification(
-                state=ActionState.ERROR,
-                source=PageSource.NONE,
-                managed=False,
-                page_path=None,
-                error=ToolError(e.path, e.reason),
-            ),
-            None,
-        )
+    upstream = None
+    if candidate.provider is not None and candidate.installation is not None:
+        repository = repository_of(candidate.provider, candidate.installation, cfg)
+        if repository.error is not None:
+            return (
+                LocalClassification(
+                    state=ActionState.ERROR,
+                    source=PageSource.NONE,
+                    managed=False,
+                    page_path=None,
+                    error=ToolError(repository.error.path, repository.error.reason),
+                ),
+                None,
+            )
+        upstream = repository.source
     return classify(candidate, cfg, entries), upstream
 
 

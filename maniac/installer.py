@@ -38,7 +38,7 @@ class InstallResult:
     the one a later undo of it acts on are the same path.  `materialized` and
     `backup_path` are those two functions' other inputs, carried past this
     call's own return so a caller making several `install_manpage` calls in
-    one transaction (`orchestration.install._try_repository`) can replay the
+    one transaction (`orchestration.install._install_release`) can replay the
     same undo for an earlier page's already-committed success, once a later
     page in the same transaction fails.
 
@@ -126,7 +126,7 @@ def install_manpage(
             # unchanged in `backup_path` above, so it never becomes this
             # call's own undo point -- but `transaction is not None` means
             # this call is one page of a grouped install
-            # (`orchestration.install._try_repository`'s shared
+            # (`orchestration.install._install_release`'s shared
             # transaction; the two single-page callers never pass one), so
             # a sibling failing later in the same loop still needs
             # something to restore this page's pre-reinstall bytes from

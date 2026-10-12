@@ -67,10 +67,10 @@ A4 carries the one intended behaviour change (pruning), in its own commit, test 
 - [x] One function (`classification.managed_page`) gives a managed page's state, installed version, note and drift; `list`, `scan`, `why` and `install`'s already-current check call it.
 - Done when `page_state_implementations` is 1.
 
-### A4 One source order: next
+### A4 One source order: in progress
 
-- [ ] The source list is written once: each source yields an attempt (found, none, or a check that did not complete). `install` installs the first hit, `why` prints every attempt, `scan` maps the first to `available` or `missing`; `scan` and `install` ask upstream the same way.
-- [ ] One function installs a found set of pages, whatever its source.
+- [x] The source list is written once (`sources/candidates.py`: `attempts`, `shipped_attempt`, `upstream_attempt`, and `repository_of` for repository identity): each source yields an attempt (found, none, or a check that did not complete). `install` installs the first hit, `why` prints every attempt, `scan` maps the first to `available` or `missing`; `scan` and `install` ask upstream the same way.
+- [x] One function (`_install_release`) installs a found set of pages, whatever its source.
 - [ ] Behaviour change, own commit, test first: a shipped release that drops a companion page prunes it, as an upstream one does.
 - Done when `source_order_implementations` is 1.
 
@@ -93,3 +93,4 @@ A4 carries the one intended behaviour change (pruning), in its own commit, test 
 - 2026-10-10: A1 done: dead code deleted (`dead_code` 9 to 0). Started by a session that stalled mid-edit, its deletion of `discover_repo` having also taken the `Skip` class with it; finished here. The three `discover_repo` tests now assert the same behaviour through `find_installation`.
 - 2026-10-10: A2 done: one lookup (`resolution.locate`, `locate_file`, `locate_all`, `this_shell_runs`) returning a `Located` value; `why`'s hand-written chain, `install`'s refusals, `list`'s and `scan`'s lookups all map it. `resolution_implementations` 5 to 0, `resolution_exceptions_handled` 10 to 1, `over_complex` 1 to 0. A test reloading the resolution module re-created its classes under later tests; it now checks the import in a fresh interpreter.
 - 2026-10-10: A3 done: `managed_page` judges a page maniac installed (state, installed version, note, drift); `list` and `scan` call it, `scan` without reading an unrecorded version. `page_state_implementations` 2 to 1.
+- 2026-10-12: A4 refactor landed: the source order and repository identity are written once in `sources/candidates.py`; `install`, `why` and `scan` walk or call it; one release installer. `source_order_implementations` 4 to 0 (target lowered from 1: the order lives in the allowed module), `resolution_exceptions_handled` 1 to 0 (`candidates.py` now converts the repository error to a value, like `resolution.py` does for binaries). ADR-0040 marked superseded in part. Next: pruning for shipped releases (behaviour change).

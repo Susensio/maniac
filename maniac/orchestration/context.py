@@ -14,9 +14,9 @@ from pathlib import Path
 
 from ..config import Config
 from ..models import Installation, RepoSource
-from ..sources import documentation, resolution
+from ..sources import resolution
+from ..sources.candidates import repository_of
 from ..sources.providers.base import Provider
-from ..sources.providers.registry import registry
 
 __all__ = ["ResolvedTool", "resolve_tool"]
 
@@ -84,14 +84,10 @@ class ResolvedTool:
         """
         if self.provider is None or self.installation is None:
             return None
-        source = registry.resolve_source(
-            self.installation, config=self.config, provider=self.provider
-        )
-        if source is None:
-            return None
-        return documentation.documentation_source(
-            source, self.config.documentation_repository_overrides
-        )
+        repository = repository_of(self.provider, self.installation, self.config)
+        if repository.error is not None:
+            raise repository.error
+        return repository.source
 
 
 def resolve_tool(
