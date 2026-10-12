@@ -952,6 +952,42 @@ def _resolve_eza_release(
     )
 
 
+def test_a_shipped_release_that_drops_a_companion_page_prunes_it(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A tool's next version that no longer ships a companion page takes it
+    out, as an upstream release already does: the page is gone from the
+    manpath and the manifest, not left documenting the old version."""
+    cfg = _release_config(tmp_path)
+    root = tmp_path / "root"
+    root.mkdir()
+    pages = _eza_release(root)
+    provider = _FakeProvider(local_docs=pages)
+
+    def at(version: str) -> None:
+        inst = _installation(version=version, binary="eza", root=root)
+        monkeypatch.setattr(
+            "maniac.orchestration.context.resolution.find_installation",
+            lambda name, bin_dir=None, **_: (provider, inst),
+        )
+
+    at("0.23.5")
+    first = run_install("eza", no_generate=True, config=cfg)
+    assert first.tier is Tier.INSTALL_ROOT
+    dropped = manifest.lookup("eza_colors-explanation", config=cfg)
+    assert dropped is not None
+    assert dropped.path.exists()
+
+    pages.pop()  # 0.24.0 no longer ships eza_colors-explanation.5
+    at("0.24.0")
+    second = run_install("eza", no_generate=True, config=cfg)
+
+    assert second.detail == "shipped page (0.24.0)"
+    assert manifest.lookup("eza_colors-explanation", config=cfg) is None
+    assert not dropped.path.exists()
+    assert set(manifest.load(config=cfg)) == {"eza", "eza_colors"}
+
+
 def test_run_install_records_a_release_in_one_manifest_write(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

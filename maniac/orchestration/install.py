@@ -527,14 +527,14 @@ def _install_attempt(
         )
         # Keyed on `inst.binary`, not the primary page's file name, which can
         # match the subcommand pattern (`select_primary_manpage`) instead.
-        group, prune = inst.binary, False
+        group = inst.binary
     else:
         assert attempt.repository is not None
         tier, pages = Tier.REPOSITORY, _upstream_pages(tool, attempt.found)
         detail = f"upstream page ({inst.version})"
-        group, prune = manpage_owner(attempt.found.primary.path), True
+        group = manpage_owner(attempt.found.primary.path)
     return _install_release(
-        tool, tier, detail, pages, group, prune=prune, force=force, dry_run=dry_run
+        tool, tier, detail, pages, group, force=force, dry_run=dry_run
     )
 
 
@@ -601,7 +601,6 @@ def _install_release(
     pages: list[_PageInstall],
     group: str,
     *,
-    prune: bool,
     force: bool,
     dry_run: bool,
 ) -> InstallOutcome:
@@ -611,8 +610,9 @@ def _install_release(
     foreign page refuses the whole release, not only the primary's (ADR-0042).
     One transaction around the whole release: its entries land in a single
     write or none do (ADR-0046); the pages are already materialized, so no
-    generation happens under the lock (ADR-0043). `prune` forgets a member
-    of `group` this release no longer ships.
+    generation happens under the lock (ADR-0043). A member of `group` this
+    release no longer ships is forgotten and removed, whichever source
+    offered the release.
     """
     cfg = tool.config
     inst = tool.installation
@@ -627,9 +627,7 @@ def _install_release(
         )
     with manifest.transaction(cfg) as txn:
         installed = _install_page_group(pages, txn, cfg, force=force)
-        if prune:
-            kept = {page.tool for page in pages}
-            _prune_dropped_group_members(group, kept, txn, cfg)
+        _prune_dropped_group_members(group, {page.tool for page in pages}, txn, cfg)
     installed_path = next(
         result.path
         for result, page in zip(installed, pages, strict=True)
