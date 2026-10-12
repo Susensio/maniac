@@ -6,6 +6,8 @@
 - `docs/STATE.md` — work committed to and not yet finished; absent when nothing is.
 - `audit.toml` — the architecture's rules, checked by `just audit` in `just check`: one place resolves a tool, one writes the source order, one judges a page, layers import downward only, no cycles. A change that needs a ceiling raised says why in its commit. Dead code and complexity are advice: shown, never failing; act on them by judgement.
 
+Before writing code that finds a binary, a page's source or a page's state, read the package docstrings (`maniac/*/__init__.py`): each says what it holds and which entry points to reuse. `audit.toml` names the seams that must be reused; a duplicate fails `just audit`.
+
 Decide an edge case by the contract's rules and explain it in the commit message.
 Write an ADR only when a change alters what `docs/CONTRACT.md` says; a question the rules cannot answer is a gap in the contract, and closing it is that ADR.
 
