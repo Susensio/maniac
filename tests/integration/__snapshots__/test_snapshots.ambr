@@ -42,7 +42,8 @@
   
    Completions, for your login shell or each --shell: shipped, else its
    project's for the installed version, else printed by the tool's own
-   generator. Never written by an LLM.
+   generator, else derived by the shell's own parser from the page or
+   --help. Never written by an LLM.
   
    A page already current is left alone. With no tools it does nothing, so
    `maniac scan --available | xargs maniac install` is safe when the list

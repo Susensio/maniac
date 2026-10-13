@@ -15,7 +15,10 @@ help page or another program's script is never installed.
 
 import os
 import re
+import shutil
 import subprocess
+import sys
+import tempfile
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -262,3 +265,101 @@ def looks_like_completion(script: str, shell: str, tool: str) -> bool:
     """Whether `script` is a completion for `shell` that names `tool`: the
     shell's own registration command, and the tool's name, both present."""
     return bool(_SHELL_MARKS[shell].search(script)) and tool in script
+
+
+@dataclass(frozen=True, slots=True)
+class Derived:
+    """A completion the shell's own parser derives from the tool's page or help.
+
+    The last source (ADR-0066): nothing written by a model or by maniac's own
+    parser. fish's `create_manpage_completions.py` reads the page maniac
+    installed; zsh's `_gnu_generic` and bash-completion's `_longopt` read
+    the tool's `--help` live, each time the shell completes it.
+    """
+
+    script: str
+    how: str
+
+
+_GNU_LONG_OPTION = re.compile(r"(?m)^[ \t]{1,12}(?:-\w,?[ \t]+)?--[A-Za-z][\w-]*")
+"""A help line listing a `--long` option: what the generic parsers read."""
+
+
+def derived_completion(
+    shell: str, tool: str, *, help_text: str, page: Path | None, timeout: int
+) -> Derived | None:
+    """The completion `shell`'s own parser derives for `tool`, if it can."""
+    if shell == "fish":
+        return _fish_from_page(tool, page, timeout) if page is not None else None
+    if not _GNU_LONG_OPTION.search(help_text):
+        # Nothing for the generic parser to read: the shell's default
+        # (file names) beats a completion that offers nothing.
+        return None
+    if shell == "zsh":
+        script = (
+            f"#compdef {tool}\n\n"
+            f"# Derived by maniac (ADR-0066): zsh reads `{tool} --help` itself.\n"
+            '_gnu_generic "$@"\n'
+        )
+        return Derived(script, f"zsh's _gnu_generic, reading `{tool} --help`")
+    script = (
+        f"# Derived by maniac (ADR-0066): bash-completion reads `{tool} --help`.\n"
+        "if declare -F _comp_complete_longopt >/dev/null; then\n"
+        f"    complete -F _comp_complete_longopt {tool}\n"
+        "else\n"
+        f"    complete -F _longopt {tool}\n"
+        "fi\n"
+    )
+    return Derived(script, f"bash-completion's _longopt, reading `{tool} --help`")
+
+
+def _fish_from_page(tool: str, page: Path, timeout: int) -> Derived | None:
+    """fish's own man-page parser, run on `page` alone, to stdout.
+
+    Never `fish_update_completions`: that rewrites fish's cache for every
+    page on the machine. The parser names the command after the file, so it
+    reads a copy named `<tool>.<section>`.
+    """
+    parser = _fish_parser(timeout)
+    if parser is None:
+        return None
+    suffixes = "".join(page.suffixes) or ".1"
+    with tempfile.TemporaryDirectory() as scratch:
+        named = Path(scratch) / f"{tool}{suffixes}"
+        try:
+            shutil.copyfile(page, named)
+            result = subprocess.run(
+                [sys.executable, str(parser), "--stdout", str(named)],
+                capture_output=True,
+                text=True,
+                errors="replace",
+                timeout=timeout,
+                check=False,
+                stdin=subprocess.DEVNULL,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return None
+    script = result.stdout.replace(str(named), str(page))
+    if result.returncode != 0 or not looks_like_completion(script, "fish", tool):
+        return None
+    return Derived(script, f"fish's man-page parser, reading {page}")
+
+
+def _fish_parser(timeout: int) -> Path | None:
+    """`create_manpage_completions.py` from the installed fish, if any."""
+    fish = shutil.which("fish")
+    if fish is None:
+        return None
+    try:
+        result = subprocess.run(
+            [fish, "--no-config", "-c", "echo $__fish_data_dir"],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+            stdin=subprocess.DEVNULL,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    parser = Path(result.stdout.strip()) / "tools" / "create_manpage_completions.py"
+    return parser if result.returncode == 0 and parser.is_file() else None

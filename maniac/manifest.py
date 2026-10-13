@@ -139,7 +139,7 @@ def _row_to_completion(row: Any) -> CompletionEntry:
         isinstance(a, str) for a in arguments
     ):
         raise TypeError("arguments is not a list of strings")
-    if row["source"] not in ("shipped", "upstream", "generated"):
+    if row["source"] not in ("shipped", "upstream", "generated", "derived"):
         raise ValueError(f"unknown completion source {row['source']!r}")
     return CompletionEntry(
         path=Path(row["path"]),

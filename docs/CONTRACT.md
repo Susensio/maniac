@@ -69,8 +69,9 @@ For your login shell (`$SHELL`), or each shell `--shell` names (bash, zsh, fish)
 | `shipped` | The completion file the tool itself installed, linked where the shell finds it. |
 | `upstream` | The upstream project's completion for exactly the installed version, saved and linked. |
 | `generated` | The tool's own output for that shell (`tool completion zsh` and the like), saved and linked. |
+| `derived` | What the shell's own parser derives: fish's from the page maniac installed, zsh's and bash's from the tool's `--help`. |
 
-A completion is never written by a model: it is code your shell runs.
+A completion is never written by a model, nor by maniac's own parser: it is code your shell runs.
 A tool with neither has no completion, and `--no-completions` skips them.
 Completions go with a page: a tool maniac installs no page for gets none.
 

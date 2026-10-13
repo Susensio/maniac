@@ -61,3 +61,9 @@ A check that did not complete falls through to the generator, and `why` says so 
 An install root and a repository tree at the tag are both searched for the tool's completion names, plus the generic `completion.<shell>` (aichat, herdr) and `tool.zsh`; at most six levels deep, never in test fixtures, vendored trees or a virtualenv's packages.
 Two different files that each read as the completion are ambiguous and neither is taken (rule 4), as the dotfiles discovery skips an ambiguous destination; copies of one file are one completion.
 `why` names the ambiguity when no later source answers.
+
+2026-10-13, last: a fourth source, `derived`, after the tool's generator, at the user's suggestion: fish already generates completions from man pages.
+What derives it is the shell's own parser, never a model nor maniac's own: for fish, `create_manpage_completions.py` from the installed fish, run on the page maniac installed alone (never `fish_update_completions`, which rewrites fish's cache for every page on the machine); for zsh, a `_tool` that calls `_gnu_generic`, and for bash one that calls bash-completion's `_longopt`, both of which read the tool's `--help` live when the shell completes.
+zsh and bash get one only when the crawled `--help` lists a `--long` option; otherwise the shell's default beats a completion that offers nothing.
+A fish completion derived from a generated page inherits that page's mistakes; it is regenerated whenever `update` reinstalls the page.
+`argc --argc-completions` is not a generator for argc itself (it completes argc-based scripts) and is not added.

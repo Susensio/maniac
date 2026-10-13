@@ -218,3 +218,27 @@ def test_an_upstream_check_that_did_not_complete_is_said_when_nothing_else_answe
     fish = completion_for(tool, "fish")
     assert fish.none_because is not None
     assert fish.none_because.endswith("the upstream check did not complete")
+
+
+def test_derived_comes_last_when_nothing_else_answers(
+    tmp_path: Path, cfg: Config
+) -> None:
+    """bash: no shipped file, no repository, no bash generator -- but a GNU-style
+    --help bash-completion can read itself."""
+    tool = _tool(tmp_path, cfg)
+    binary = tool.bin_path
+    assert binary is not None
+    binary.write_text(
+        "#!/bin/sh\n"
+        'case "$1" in --help) printf "Usage: tool\\n\\nOptions:\\n  --fast  Go\\n";; '
+        "esac\n",
+        encoding="utf-8",
+    )
+
+    [outcome] = install_completions(tool, ("bash",), dry_run=False)
+
+    assert outcome.installed
+    assert (
+        outcome.detail == "derived by bash-completion's _longopt, reading `tool --help`"
+    )
+    assert manifest.completions_of("tool", cfg)["bash"].source == "derived"

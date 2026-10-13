@@ -1,5 +1,6 @@
 """Finding a tool's shell completion (ADR-0066): shipped, or its own generator."""
 
+import shutil
 import stat
 from pathlib import Path
 
@@ -188,3 +189,63 @@ def test_a_virtualenvs_packages_are_never_searched(tmp_path: Path) -> None:
     )
 
     assert shipped_completion(root, "tool", "zsh") is None
+
+
+_GNU_HELP = (
+    "Usage: tool [OPTIONS]\n\nOptions:\n  -v, --verbose  Print more\n  -h, --help\n"
+)
+
+
+@pytest.mark.parametrize(
+    ("shell", "registers"), [("zsh", "_gnu_generic"), ("bash", "_longopt")]
+)
+def test_zsh_and_bash_derive_from_a_gnu_style_help(shell: str, registers: str) -> None:
+    from maniac.sources.completions import derived_completion
+
+    derived = derived_completion(
+        shell, "tool", help_text=_GNU_HELP, page=None, timeout=5
+    )
+
+    assert derived is not None
+    assert registers in derived.script
+    assert looks_like_completion(derived.script, shell, "tool")
+
+
+@pytest.mark.parametrize("shell", ["zsh", "bash"])
+def test_a_help_with_no_long_options_derives_nothing(shell: str) -> None:
+    """The shell's default (file names) beats a completion that offers nothing."""
+    from maniac.sources.completions import derived_completion
+
+    help_text = "usage: tool [-v] FILE\n  -v  verbose\n"
+    assert (
+        derived_completion(shell, "tool", help_text=help_text, page=None, timeout=5)
+        is None
+    )
+
+
+@pytest.mark.skipif(shutil.which("fish") is None, reason="needs fish installed")
+def test_fish_derives_from_the_page_with_its_own_parser(tmp_path: Path) -> None:
+    """fish's create_manpage_completions.py, on maniac's page alone; the command
+    is named after the tool, not the file the page sits in."""
+    from maniac.sources.completions import derived_completion
+
+    page = _write(
+        tmp_path / "out" / "renamed.1",
+        ".TH TOOL 1\n.SH NAME\ntool \\- does\n.SH OPTIONS\n.TP\n"
+        "\\fB\\-\\-release\\fR\nOptimise the build\n",
+    )
+
+    derived = derived_completion("fish", "tool", help_text="", page=page, timeout=30)
+
+    assert derived is not None
+    assert "complete -c tool -l release" in derived.script
+    assert "fish's man-page parser" in derived.how
+
+
+def test_fish_derives_nothing_without_a_page() -> None:
+    from maniac.sources.completions import derived_completion
+
+    assert (
+        derived_completion("fish", "tool", help_text=_GNU_HELP, page=None, timeout=5)
+        is None
+    )
