@@ -204,10 +204,23 @@ def which_here(binary_name: str) -> Path | None:
     ADR-0062); only to say so when the invoking shell would run another
     copy (CONTRACT.md rule 2).
     """
-    inherited = [
+    return _first_executable(_inherited_dirs(), binary_name)
+
+
+def left_out_dirs() -> list[Path]:
+    """Directories the invoking shell's `$PATH` has and the login one lacks.
+
+    In order, once each: a virtualenv's `bin/`, a project's mise pins, and
+    anything an interactive rc file put there (CONTRACT.md rule 2).
+    """
+    login = set(path_dirs())
+    return [d for d in dict.fromkeys(_inherited_dirs()) if d not in login]
+
+
+def _inherited_dirs() -> list[Path]:
+    return [
         Path(entry) for entry in os.environ.get("PATH", "").split(os.pathsep) if entry
     ]
-    return _first_executable(inherited, binary_name)
 
 
 def _first_executable(directories: list[Path], binary_name: str) -> Path | None:

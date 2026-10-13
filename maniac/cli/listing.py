@@ -668,6 +668,10 @@ _SKIP_WORDS: dict[Skip | str, str] = {
     Skip.UNCLAIMED: "no installer claims: `maniac why <tool>`",
     Skip.SYSTEM: "system tools, whose packages ship their pages",
     Skip.SHIM_RUNS_NOTHING: "mise shims that run nothing from $HOME",
+    Skip.OFF_LOGIN_PATH: (
+        "installed globally, but only this shell's $PATH reaches them: "
+        "`maniac why <tool>`"
+    ),
 }
 
 

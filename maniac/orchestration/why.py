@@ -21,13 +21,14 @@ from ..sources.lookup.candidates import (
     attempts,
     repository_of,
 )
-from ..sources.lookup.resolution import Outcome, locate, this_shell_runs
+from ..sources.lookup.resolution import Located, Outcome, locate, this_shell_runs
 from ..sources.manpages import find_installed_manpage_path
-from ..sources.pathcache import path_dirs
+from ..sources.pathcache import left_out_dirs, path_dirs
 from ..sources.providers.base import Provider
 from ..state.classification import classify
 from ..state.models import Candidate
 from ..state.pages import managed_pages
+from .profile_fix import login_profile_fix
 
 
 @dataclass
@@ -47,8 +48,9 @@ class Explanation:
 
 def explain(tool: str, config: Config) -> Explanation:
     """Every decision about `tool`, in the order maniac makes them."""
-    path = _path_section(tool)
-    binary, claim, binary_path, refusal = _binary_section(tool, config)
+    located = locate(tool)
+    path = _path_section(tool, located)
+    binary, claim, binary_path, refusal = _binary_section(tool, located, config)
     page = _page_section(tool, claim, config)
     sources, verdict = _sources_section(tool, claim, binary_path, refusal, config)
     if refusal is None:
@@ -62,21 +64,18 @@ def explain(tool: str, config: Config) -> Explanation:
     return Explanation(tool, [path, binary, page, sources], verdict)
 
 
-def _path_section(tool: str) -> Section:
+def _path_section(tool: str, located: Located) -> Section:
     section = Section("PATH")
     login = path_dirs()
     shell = os.environ.get("SHELL", "$SHELL")
     section.lines.append(
         f"read from `{shell} -lc` started in $HOME: {len(login)} directories"
     )
-    inherited = [
-        Path(entry) for entry in os.environ.get("PATH", "").split(os.pathsep) if entry
-    ]
-    left_out = [d for d in dict.fromkeys(inherited) if d not in set(login)]
+    left_out = left_out_dirs()
     relevant = [d for d in left_out if (d / tool).exists()]
     for directory in relevant:
         section.lines.append(
-            f"left out: {_home(directory)}, {_why_left_out(directory)}"
+            f"left out: {_home(directory)}, {_why_left_out(directory, located)}"
             " (holds a copy of this tool)"
         )
     others = len(left_out) - len(relevant)
@@ -88,8 +87,14 @@ def _path_section(tool: str) -> Section:
     return section
 
 
-def _why_left_out(directory: Path) -> str:
+def _why_left_out(directory: Path, located: Located) -> str:
     """Why a directory this shell has is not on the login `$PATH`."""
+    if (
+        located.outcome is Outcome.OFF_LOGIN_PATH
+        and located.hit is not None
+        and located.hit.parent == directory
+    ):
+        return "an interactive rc file put it there, not your login profile"
     for variable, what in (
         ("VIRTUAL_ENV", "an activated virtualenv"),
         ("CONDA_PREFIX", "a conda environment"),
@@ -103,12 +108,24 @@ def _why_left_out(directory: Path) -> str:
 
 
 def _binary_section(
-    tool: str, config: Config
+    tool: str, located: Located, config: Config
 ) -> tuple[Section, tuple[Provider, Installation] | None, Path | None, str | None]:
     """The binary a page documents; the claim on it; and why not, if refused."""
     section = Section("Binary")
     here = this_shell_runs(tool)
-    located = locate(tool)
+    if located.outcome is Outcome.OFF_LOGIN_PATH:
+        claim = located.claim
+        assert claim is not None and located.binary is not None
+        provider, inst = claim
+        version = inst.version or "no version reported"
+        section.lines.append("not on the login $PATH")
+        section.lines.append(
+            f"{provider.name} installed it globally as {inst.package} ({version}), "
+            "but only an interactive rc file puts it on $PATH, and maniac reads "
+            "the login profile"
+        )
+        section.lines.append(login_profile_fix(located))
+        return _refused(section, located.binary, "not on the login $PATH")
     if located.hit is None:
         section.lines.append("not on the login $PATH")
         return _refused(section, here, "not installed globally")

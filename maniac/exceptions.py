@@ -109,3 +109,23 @@ class ShimRunsNothing(NotGloballySelected):
 
     def __init__(self, tool: str, shim: Path) -> None:
         super().__init__(tool, shim)
+
+
+class OffLoginPath(ManiacError):
+    """A global install the invoking shell reaches and the login shell does not.
+
+    Its installer calls it global -- not a virtualenv's or a project's copy --
+    but the login `$PATH` maniac resolves through never reaches it: the setup
+    builds `$PATH` in an interactive rc file, not the login profile
+    (CONTRACT.md rule 2). Refused like a tool the login `$PATH` lacks, with
+    the reason; `path` is the copy this shell runs, which `install --force`
+    documents.
+    """
+
+    def __init__(self, tool: str, path: Path, installation: "Installation") -> None:
+        self.tool = tool
+        self.path = path
+        self.installation = installation
+        # Short, for the Source column; the fix belongs to the caller's message.
+        self.reason = "installed globally, not on your login $PATH"
+        super().__init__(f"{tool}: {self.reason} ({path})")

@@ -3,7 +3,9 @@
 The one place that knows both how a binary is named and which providers
 exist, and the one place commands ask: `locate` (one tool), `locate_file` (a
 pinned copy), `locate_all` (the login `$PATH`) and `this_shell_runs`. Each
-answers with a `Located` value; no resolution exception escapes them.
+answers with a `Located` value; no resolution exception escapes them. It is
+also the one place that tells a global install the login profile missed
+(`$PATH` built in an interactive rc file) from a project's copy.
 Providers and `discovery.py` sit below it and import nothing from here, so
 composition is carried by the registry passed down a call rather than by
 module- or class-global state.
@@ -15,9 +17,14 @@ from dataclasses import dataclass, replace
 from enum import Enum
 from pathlib import Path
 
-from ...exceptions import MalformedToolMetadata, NotGloballySelected, ShimRunsNothing
+from ...exceptions import (
+    MalformedToolMetadata,
+    NotGloballySelected,
+    OffLoginPath,
+    ShimRunsNothing,
+)
 from ...models import Installation
-from ..pathcache import path_dirs, resolve_bin_path, which_here
+from ..pathcache import left_out_dirs, path_dirs, resolve_bin_path, which_here
 from ..providers.base import Provider
 from ..providers.mise import is_shim, shim_target, shim_target_here
 from ..providers.registry import registry
@@ -65,6 +72,9 @@ class Outcome(Enum):
     FOUND = "found"
     """A binary runs for it from `$HOME`; an installer may or may not claim it."""
     NOT_ON_PATH = "not on path"
+    OFF_LOGIN_PATH = "off login path"
+    """Not on the login `$PATH`, but the invoking shell reaches an install its
+    installer calls global: `$PATH` is built in an interactive rc file."""
     SHIM_RUNS_NOTHING = "shim runs nothing"
     """A mise shim no globally selected tool provides (ADR-0063 Corrections)."""
     NOT_GLOBAL = "not global"
@@ -89,7 +99,7 @@ class Located:
     binary: Path | None = None
     provider: Provider | None = None
     installation: Installation | None = None
-    error: MalformedToolMetadata | NotGloballySelected | None = None
+    error: MalformedToolMetadata | NotGloballySelected | OffLoginPath | None = None
 
     @property
     def claim(self) -> tuple[Provider, Installation] | None:
@@ -139,7 +149,8 @@ def locate(
     except MalformedToolMetadata as e:
         return Located(tool, Outcome.UNREADABLE, hit, binary=_reached(hit), error=e)
     if claim is None and binary is None:
-        return Located(tool, Outcome.NOT_ON_PATH)
+        missed = _off_login(tool) if bin_dir is None else None
+        return missed or Located(tool, Outcome.NOT_ON_PATH)
     provider, inst = claim if claim is not None else (None, None)
     return Located(tool, Outcome.FOUND, hit, binary, provider, inst)
 
@@ -172,6 +183,45 @@ def this_shell_runs(tool: str) -> Path | None:
     return found
 
 
+def _off_login(name: str, hit: Path | None = None) -> Located | None:
+    """`name` as an install the login `$PATH` misses, if its installer calls it
+    global; None for anything else this shell has (a virtualenv's copy, a
+    project's pin, a binary no installer claims).
+
+    `hit` is where this shell finds it, `which_here`'s answer by default.
+    """
+    hit = hit if hit is not None else which_here(name)
+    if hit is None or _is_environment(hit.parent):
+        return None
+    try:
+        claim = _detect_via_registry(hit)
+    except (MalformedToolMetadata, NotGloballySelected):
+        return None
+    if claim is None:
+        return None
+    provider, inst = claim
+    return Located(
+        name,
+        Outcome.OFF_LOGIN_PATH,
+        hit,
+        inst.bin_path,
+        provider,
+        inst,
+        error=OffLoginPath(name, inst.bin_path, inst),
+    )
+
+
+def _is_environment(directory: Path) -> bool:
+    """A virtualenv's or conda environment's `bin/`, however it got on `$PATH`.
+
+    Its `python` links to the interpreter it was made from, which may well be
+    a global install -- the environment's copy is still a project's, not one
+    the login profile missed.
+    """
+    root = directory.parent
+    return (root / "pyvenv.cfg").is_file() or (root / "conda-meta").is_dir()
+
+
 def _reached(hit: Path | None) -> Path | None:
     """What runs for `hit`, when that is all that can be said: its shim target,
     or None when the shim itself could not be followed."""
@@ -194,10 +244,14 @@ def locate_all(
     one too is kept on the winner's `Installation.losers`, so `why` can say
     when `$PATH` hides a better-documented install.
 
-    `on_start` fires once with the number of names, after the directory
-    walk; `on_scan` once per name looked up.
+    Then each name only the invoking shell reaches, when its installer calls
+    it global (`Outcome.OFF_LOGIN_PATH`): the login `$PATH` misses it, and
+    `scan` says so rather than staying silent (CONTRACT.md rule 3).
+
+    `on_start` fires once with the number of login `$PATH` names, after the
+    directory walk; `on_scan` once per one of those looked up.
     """
-    first, shadowed = _path_names()
+    first, shadowed = _names_in(path_dirs())
     if on_start is not None:
         on_start(len(first))
     located = []
@@ -208,14 +262,19 @@ def locate_all(
         located.append(found)
         if on_scan is not None:
             on_scan()
+    for name, hit in _names_in(left_out_dirs())[0].items():
+        if name not in first and (missed := _off_login(name, hit)) is not None:
+            located.append(missed)
     return located
 
 
-def _path_names() -> tuple[dict[str, Path], dict[str, list[Path]]]:
-    """Every executable name on the login `$PATH`: its first hit, and the rest."""
+def _names_in(
+    directories: list[Path],
+) -> tuple[dict[str, Path], dict[str, list[Path]]]:
+    """Every executable name in `directories`, in order: its first hit, and the rest."""
     first: dict[str, Path] = {}
     shadowed: dict[str, list[Path]] = {}
-    for entry in path_dirs():
+    for entry in directories:
         try:
             children = list(os.scandir(entry))
         except OSError:

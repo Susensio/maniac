@@ -64,3 +64,11 @@ Recognising shims is in `docs/BACKLOG.md`.
 Each process pays one login-shell spawn (tens of milliseconds), serialized so `list`'s thread pool spawns it once.
 
 Tests resolve through their own `$PATH`: `conftest.py` substitutes the spawn, and `tests/test_pathcache.py` exercises the real one against a throwaway `$HOME`.
+
+## Corrections
+
+2026-10-13: maniac is no longer silent about a setup that builds `$PATH` only in an interactive rc file.
+It still resolves through the login `$PATH` alone, but when that misses a tool and the invoking shell reaches an install its installer calls global (a globally selected mise install, a uv, pipx, cargo, go, npm or Homebrew install), the lookup says so (`Outcome.OFF_LOGIN_PATH`).
+`install` refuses with that reason and the line to add to the login profile (`mise activate --shims` for mise, the bin directory otherwise), `why` names the rc file, `scan` counts such tools, and `list` marks a page whose tool moved there `unknown` with the reason.
+A virtualenv's or conda environment's `bin/` is never such an install, even when its `python` links to a global interpreter.
+Falling back to the invoking shell's `$PATH` or to `-ilc` stays rejected, for the reasons above.

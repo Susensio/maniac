@@ -41,6 +41,7 @@ names = [
   "NotGloballySelected",
   "ShimRunsNothing",
   "MalformedToolMetadata",
+  "OffLoginPath",
   "_DiscoveryError",
 ]
 allowed = [

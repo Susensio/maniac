@@ -21,6 +21,7 @@ from .. import manifest
 from ..config import Config
 from ..exceptions import (
     ManiacError,
+    OffLoginPath,
     UnsupportedPandoc,
 )
 from ..generation.compiler import require_supported_pandoc
@@ -51,6 +52,7 @@ from ..sources.lookup.resolution import (
 from ..sources.manpages import find_installed_manpage_path
 from ..state.models import ActionState
 from .context import ResolvedTool, resolve_tool, tool_from
+from .profile_fix import login_profile_fix
 
 __all__ = ["InstallOutcome", "InstallRefused", "Tier", "run_install"]
 
@@ -154,7 +156,11 @@ def run_install(
         this_copy = this_shell_runs(tool_name)
         if this_copy is None:
             raise
-        overrides.append(f"not installed globally; documenting {this_copy}")
+        missed = isinstance(refusal.__cause__, OffLoginPath)
+        overrides.append(
+            f"{'not on your login $PATH' if missed else 'not installed globally'}; "
+            f"documenting {this_copy}"
+        )
         tool = resolve_tool(tool_name, config=cfg, bin_dir=this_copy.parent, here=True)
         logger.debug("Forced past a refusal", tool=tool_name, refusal=str(refusal))
 
@@ -220,6 +226,15 @@ def _resolve_global(
 ) -> ResolvedTool:
     """The copy the login `$PATH` reaches, or `InstallRefused` saying why not."""
     located = locate(tool_name, bin_dir)
+    if located.outcome is Outcome.OFF_LOGIN_PATH:
+        assert located.provider is not None and located.error is not None
+        raise InstallRefused(
+            f"'{tool_name}' is not on your login shell's $PATH, though "
+            f"{located.provider.name} installed it globally ({located.binary}): "
+            "your $PATH is built in an interactive rc file, and maniac reads "
+            f"the login profile. {login_profile_fix(located)} Until then, "
+            "`--force` documents that copy."
+        ) from located.error
     if located.hit is None:
         raise InstallRefused(
             f"'{tool_name}' is not on your login shell's $PATH -- and a "

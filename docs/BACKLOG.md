@@ -29,9 +29,6 @@ Settled decisions live in `docs/adr/`; defects with a line to sit beside are mar
   Only human-written pages qualify: one maniac synthesized (provenance signature, `Tier.SYNTHESIS`) or help2man generated (`is_help2man_content`) is derived from the same help and docs the model already gets, so it is no better a seed than none and would carry the last model's errors forward.
   A loser's page needs proof of the same software first -- the same package or repository as the winner, as ADR-0055 requires -- since a shared name is not evidence.
   Next step: decide how the seed is recorded in provenance; the recorded version stays the current binary's under ADR-0019.
-- Support setups that build `$PATH` outside the login profile.
-  ADR-0062 assumes a conventional setup; a valid one that exports `$PATH` only from an interactive rc file (Mise's front-page `mise activate` in `.bashrc`, behind Debian's interactive guard) has its global tools silently missing from the login `$PATH`.
-  Next step: find evidence that tells such a setup apart from a machine without those tools (e.g. a provider's global install root existing while nothing on the login `$PATH` reaches it), then decide whether to fall back (an `-ilc` read is unsafe: rc files may `exec`) or to report it with the fix.
 - Extract bounded documentation from installed package roots (system packages are out of scope, ADR-0059): recognized local docs, Info pages, package metadata as supplementary context, and absolute-path help.
   Preserve each source's provenance.
 - Add tldr-pages as an examples source, preferring an installed tealdeer cache before its release zip and recording provenance in generated output.

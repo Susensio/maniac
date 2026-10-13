@@ -60,7 +60,8 @@ _Launch = tuple[ProbeKey, RepoSource, Installation]
 
 
 class Skip(Enum):
-    """Why discovery passed over a binary on the login `$PATH` (CONTRACT.md rule 3)."""
+    """Why discovery passed over a binary (CONTRACT.md rule 3): one on the login
+    `$PATH`, or a global install only the invoking shell reaches."""
 
     SYSTEM = "system"
     """A system package's binary: its package ships and upgrades its page (ADR-0059)."""
@@ -68,6 +69,9 @@ class Skip(Enum):
     """No installer claims it: a wrapper script, a hand-copied binary."""
     SHIM_RUNS_NOTHING = "shim"
     """A mise shim that runs nothing from `$HOME`: a project-only tool's."""
+    OFF_LOGIN_PATH = "off login path"
+    """A global install only the invoking shell reaches: `$PATH` is built in
+    an interactive rc file, and the login `$PATH` misses it."""
 
 
 MANAGED = "managed"
@@ -123,6 +127,8 @@ def _skip_reason(located: resolution.Located) -> Skip | None:
     """
     if located.outcome is resolution.Outcome.SHIM_RUNS_NOTHING:
         return Skip.SHIM_RUNS_NOTHING
+    if located.outcome is resolution.Outcome.OFF_LOGIN_PATH:
+        return Skip.OFF_LOGIN_PATH
     if located.outcome is not resolution.Outcome.FOUND or located.installation:
         return None
     assert located.hit is not None
