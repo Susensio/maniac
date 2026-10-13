@@ -15,7 +15,6 @@ from pathlib import Path
 
 from . import manifest
 from .config import Config
-from .sources.completions import Generated
 
 
 class CompletionTaken(Exception):
@@ -40,17 +39,21 @@ def install_completion(
     shell: str,
     *,
     shipped: Path | None = None,
-    generated: Generated | None = None,
+    script: str | None = None,
+    source: str = "generated",
+    arguments: tuple[str, ...] = (),
     version: str | None,
     txn: manifest.Transaction,
 ) -> manifest.CompletionEntry:
     """Link `tool`'s completion for `shell` and record it in `txn`.
 
-    Exactly one of `shipped` (the provider's file, already proven inside
-    its install root) and `generated` is given. Raises `CompletionTaken`
-    when something maniac did not record sits at the link's path.
+    Either `shipped` (the provider's file, already proven inside its install
+    root) is linked, or `script` -- from `source`, "upstream" or
+    "generated" (with the generator's `arguments`) -- is saved as maniac's
+    copy and linked. Raises `CompletionTaken` when something maniac did not
+    record sits at the link's path.
     """
-    assert (shipped is None) != (generated is None)
+    assert (shipped is None) != (script is None)
     cfg = txn.config
     link = link_path(shell, tool, cfg)
     recorded = txn.completions.get(tool, {}).get(shell)
@@ -62,10 +65,9 @@ def install_completion(
     if shipped is not None:
         target, source, arguments = shipped, "shipped", ()
     else:
-        assert generated is not None
+        assert script is not None
         target = cfg.completions_output_dir / shell / link_name(shell, tool)
-        _write_atomically(target, generated.script)
-        source, arguments = "generated", generated.arguments
+        _write_atomically(target, script)
     _link_atomically(link, target)
 
     entry = manifest.CompletionEntry(

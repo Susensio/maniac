@@ -47,3 +47,12 @@ The schema version becomes 2; a version-1 manifest reads as having no completion
 `docs/CONTRACT.md` names completions in its opening sentence, in rule 1 and rule 3, in a section on where a completion comes from, and in its commands.
 
 Out of scope for now: completions for system packages' tools (their package ships them, as it ships their page); shells other than bash, zsh and fish; recovering completion records from links when the manifest is damaged (pages recover; completions are reinstalled by naming the tool); `scan` reporting completions.
+
+## Corrections
+
+2026-10-13: completions gain the `upstream` source pages have, between shipped and generated, at the user's request.
+A cargo or go install is a bare binary: the completions its project keeps (eza's `completions/zsh/_eza`, fd's `contrib/completion/_fd`) were left unused.
+As for pages, only the tag matching the installed version is asked (ADR-0016), so a completion never offers another version's flags: the repository tree at that tag, then the GitHub release's assets named as a completion file.
+Release archives are not unpacked: the platform tarballs that carry completions are megabytes each, and a tool shipping one usually has a generator too.
+A check that did not complete falls through to the generator, and `why` says so when nothing answered (rule 4).
+`fd --gen-completions` joins the generator forms the help is searched for.

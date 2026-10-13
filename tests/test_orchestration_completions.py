@@ -160,3 +160,61 @@ def test_completions_go_to_the_login_shell_unless_shells_are_named(
 
     assert completion_shells(named, no_completions=off) == expected
     assert login_shell() == (Path(shell_env).name if shell_env != "/bin/sh" else None)
+
+
+class _Provider:
+    """Claims nothing itself; names one repository for every installation."""
+
+    name = "fake"
+
+    def resolve_source(self, inst, *, config, sources):
+        from maniac.models import RemoteRepoSource
+
+        return RemoteRepoSource.from_identifier("tool", "https://github.com/a/tool")
+
+
+def _claimed(tmp_path: Path, cfg: Config) -> ResolvedTool:
+    from dataclasses import replace
+
+    root = tmp_path / "root"
+    root.mkdir()
+    return replace(_tool(tmp_path, cfg, root=root), provider=_Provider())
+
+
+def test_the_repositorys_completion_comes_before_the_generator(
+    tmp_path: Path, cfg: Config, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from maniac.sources.docs.completions import Upstream
+
+    asked: list[str | None] = []
+
+    def upstream(source, tool, shell, *, version, **_):
+        asked.append(version)
+        return Upstream("#compdef tool\n# upstream\n", "https://x/_tool"), True
+
+    monkeypatch.setattr(
+        "maniac.orchestration.completions.upstream_completion", upstream
+    )
+
+    [outcome] = install_completions(_claimed(tmp_path, cfg), ("zsh",), dry_run=False)
+
+    assert outcome.detail == "upstream, https://x/_tool"
+    assert asked == ["1.0"]
+    assert manifest.completions_of("tool", cfg)["zsh"].source == "upstream"
+    assert "# upstream" in (cfg.completion_dirs["zsh"] / "_tool").read_text()
+
+
+def test_an_upstream_check_that_did_not_complete_is_said_when_nothing_else_answers(
+    tmp_path: Path, cfg: Config, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Rule 4: a failed check is not "none"; the generator still answers zsh."""
+    monkeypatch.setattr(
+        "maniac.orchestration.completions.upstream_completion",
+        lambda *args, **kwargs: (None, False),
+    )
+    tool = _claimed(tmp_path, cfg)
+
+    assert completion_for(tool, "zsh").generated is not None
+    fish = completion_for(tool, "fish")
+    assert fish.none_because is not None
+    assert fish.none_because.endswith("the upstream check did not complete")

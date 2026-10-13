@@ -44,6 +44,12 @@ _SHELL_DIRS = {
 """Each shell's own tree under a prefix-style install root."""
 
 
+def file_names(shell: str, tool: str) -> tuple[tuple[str, ...], str | None]:
+    """The names a `tool` completion for `shell` goes by anywhere, and the bare
+    name it may also have where only that shell's files live (bash: `tool`)."""
+    return _names(shell, tool, own_dir=False), (tool if shell == "bash" else None)
+
+
 def _names(shell: str, tool: str, *, own_dir: bool) -> tuple[str, ...]:
     """File names a `tool` completion for `shell` goes by; a bare `tool` only in
     a directory that is bash's own, where nothing else could be meant."""
@@ -118,6 +124,7 @@ _COMPLETION_FLAGS = (
     "--show-completion",
     "--generate-shell-completion",
     "--generate-completion",
+    "--gen-completions",
     "--completions",
     "--completion",
 )

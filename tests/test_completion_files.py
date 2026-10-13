@@ -12,7 +12,6 @@ from maniac.completion_files import (
     remove_completions,
 )
 from maniac.config import Config
-from maniac.sources.completions import Generated
 
 _ZSH = "#compdef tool\n_tool() { }\n"
 
@@ -35,7 +34,8 @@ def test_a_generated_completion_is_saved_and_linked(cfg: Config) -> None:
         entry = install_completion(
             "tool",
             "zsh",
-            generated=Generated(_ZSH, ("completion", "zsh")),
+            script=_ZSH,
+            arguments=("completion", "zsh"),
             version="1.0",
             txn=txn,
         )
@@ -79,7 +79,8 @@ def test_a_completion_maniac_did_not_install_is_never_replaced(cfg: Config) -> N
         install_completion(
             "tool",
             "bash",
-            generated=Generated("complete -F _tool tool\n", ("completion", "bash")),
+            script="complete -F _tool tool\n",
+            arguments=("completion", "bash"),
             version="1.0",
             txn=txn,
         )
@@ -93,7 +94,8 @@ def test_reinstalling_replaces_maniacs_own_link(cfg: Config) -> None:
             install_completion(
                 "tool",
                 "zsh",
-                generated=Generated(f"#compdef tool\n# {version}\n", ("c", "zsh")),
+                script=f"#compdef tool\n# {version}\n",
+                arguments=("c", "zsh"),
                 version=version,
                 txn=txn,
             )
@@ -110,7 +112,7 @@ def test_removing_unlinks_and_deletes_only_maniacs_copies(
     shipped.write_text("complete -c tool\n", encoding="utf-8")
     with manifest.transaction(cfg) as txn:
         generated = install_completion(
-            "tool", "zsh", generated=Generated(_ZSH, ("c",)), version=None, txn=txn
+            "tool", "zsh", script=_ZSH, arguments=("c",), version=None, txn=txn
         )
         install_completion("tool", "fish", shipped=shipped, version=None, txn=txn)
 
@@ -129,7 +131,7 @@ def test_a_link_someone_repointed_is_kept_and_reported(
 ) -> None:
     with manifest.transaction(cfg) as txn:
         install_completion(
-            "tool", "zsh", generated=Generated(_ZSH, ("c",)), version=None, txn=txn
+            "tool", "zsh", script=_ZSH, arguments=("c",), version=None, txn=txn
         )
     link = link_path("zsh", "tool", cfg)
     mine = tmp_path / "mine"

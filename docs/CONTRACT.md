@@ -67,6 +67,7 @@ For your login shell (`$SHELL`), or each shell `--shell` names (bash, zsh, fish)
 | Source | What it is |
 |---|---|
 | `shipped` | The completion file the tool itself installed, linked where the shell finds it. |
+| `upstream` | The upstream project's completion for exactly the installed version, saved and linked. |
 | `generated` | The tool's own output for that shell (`tool completion zsh` and the like), saved and linked. |
 
 A completion is never written by a model: it is code your shell runs.

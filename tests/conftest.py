@@ -127,6 +127,12 @@ def _no_seed_unless_a_test_asks(
             monkeypatch.setattr(
                 f"maniac.orchestration.{user}.seed_for", lambda *args, **kwargs: None
             )
+        # The same for a completion's upstream check (ADR-0066): a network
+        # and git lookup no unit test may depend on.
+        monkeypatch.setattr(
+            "maniac.orchestration.completions.upstream_completion",
+            lambda *args, **kwargs: (None, True),
+        )
 
 
 @pytest.fixture(autouse=True)

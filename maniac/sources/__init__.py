@@ -8,5 +8,5 @@ repository documents it. Below them: `pathcache` (the login `$PATH`),
 (repositories and release assets), `crawler` (`--help`), `packages` and
 `roff` (verifying a page another package owns), `discovery` (mise's
 registry and config), `completions` (a tool's shell completions: shipped,
-or its own generator).
+or its own generator; `docs.completions` finds its repository's).
 """

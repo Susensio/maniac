@@ -143,8 +143,9 @@ def install(
     (its project's page for the installed version), else generated (one an
     LLM writes from its --help and its project's docs).
 
-    Completions, for your login shell or each --shell: shipped, else printed
-    by the tool's own generator. Never written by an LLM.
+    Completions, for your login shell or each --shell: shipped, else its
+    project's for the installed version, else printed by the tool's own
+    generator. Never written by an LLM.
 
     A page already current is left alone. With no tools it does nothing, so
     `maniac scan --available | xargs maniac install` is safe when the list
