@@ -25,6 +25,7 @@ from ..config import Config
 from ..exceptions import CrawlerError
 from ..sources.completions import (
     SHELLS,
+    Ambiguous,
     Generated,
     generated_completion,
     shipped_completion,
@@ -85,10 +86,13 @@ def completion_for(tool: ResolvedTool, shell: str, help_: _Help | None = None) -
     installed version, else its own generator."""
     inst = tool.installation
     name = inst.binary if inst is not None else tool.tool_name
-    upstream_incomplete = False
+    # Why an earlier source gave nothing, said when no later one answers.
+    passed_over: list[str] = []
     if inst is not None:
         shipped = shipped_completion(inst.root, name, shell)
-        if shipped is not None:
+        if isinstance(shipped, Ambiguous):
+            passed_over.append(f"its install root has {shipped}")
+        elif shipped is not None:
             return Found(shell, shipped=shipped)
     if inst is not None and tool.provider is not None:
         source = repository_of(tool.provider, inst, tool.config).source
@@ -101,19 +105,21 @@ def completion_for(tool: ResolvedTool, shell: str, help_: _Help | None = None) -
                 cache_dir=tool.cache_dir,
                 config=tool.config,
             )
-            if upstream is not None:
+            if isinstance(upstream, Ambiguous):
+                passed_over.append(
+                    f"{source.identity} at {inst.version} has {upstream}"
+                )
+            elif upstream is not None:
                 return Found(
                     shell,
                     upstream=upstream,
                     upstream_from=f"{source.identity} at {inst.version}",
                 )
-            upstream_incomplete = not definitive
+            if not definitive:
+                passed_over.append("the upstream check did not complete")
     found = _generated(tool, name, shell, help_)
-    if found.none_because is not None and upstream_incomplete:
-        return Found(
-            shell,
-            none_because=f"{found.none_because}; the upstream check did not complete",
-        )
+    if found.none_because is not None and passed_over:
+        return Found(shell, none_because="; ".join([found.none_because, *passed_over]))
     return found
 
 

@@ -154,3 +154,37 @@ def test_a_hidden_generator_is_asked_only_of_tools_known_to_hide_one() -> None:
         ("generate-shell-completion", "zsh")
     ]
     assert generator_commands("", [], "zsh", "ssh") == []
+
+
+def test_a_generic_completion_name_counts_inside_the_tools_own_root(
+    tmp_path: Path,
+) -> None:
+    """aichat and herdr ship `completion.fish`: generic, but in their own root."""
+    root = tmp_path / "root"
+    shipped = _write(root / "scripts" / "completion.fish", _SCRIPTS["fish"])
+
+    assert shipped_completion(root, "tool", "fish") == shipped
+
+
+def test_different_shipped_completions_are_ambiguous(tmp_path: Path) -> None:
+    from maniac.sources.completions import Ambiguous
+
+    root = tmp_path / "root"
+    _write(root / "completions" / "_tool", _SCRIPTS["zsh"])
+    _write(root / "share" / "zsh" / "site-functions" / "_tool", "#compdef tool\n# 2\n")
+    _write(root / "copy" / "_tool", _SCRIPTS["zsh"])
+
+    found = shipped_completion(root, "tool", "zsh")
+
+    assert isinstance(found, Ambiguous)
+    assert len(found.paths) == 2
+
+
+def test_a_virtualenvs_packages_are_never_searched(tmp_path: Path) -> None:
+    """A uv tool's root is a virtualenv: its dependencies are not the tool."""
+    root = tmp_path / "root"
+    _write(
+        root / "lib" / "python3.12" / "site-packages" / "x" / "_tool", _SCRIPTS["zsh"]
+    )
+
+    assert shipped_completion(root, "tool", "zsh") is None

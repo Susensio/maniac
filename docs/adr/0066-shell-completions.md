@@ -56,3 +56,8 @@ As for pages, only the tag matching the installed version is asked (ADR-0016), s
 Release archives are not unpacked: the platform tarballs that carry completions are megabytes each, and a tool shipping one usually has a generator too.
 A check that did not complete falls through to the generator, and `why` says so when nothing answered (rule 4).
 `fd --gen-completions` joins the generator forms the help is searched for.
+
+2026-10-13, later: completions are found by name, as the user's own dotfiles discovery finds them (`find -name`, a tree listing at the tag), rather than in a fixed list of directories.
+An install root and a repository tree at the tag are both searched for the tool's completion names, plus the generic `completion.<shell>` (aichat, herdr) and `tool.zsh`; at most six levels deep, never in test fixtures, vendored trees or a virtualenv's packages.
+Two different files that each read as the completion are ambiguous and neither is taken (rule 4), as the dotfiles discovery skips an ambiguous destination; copies of one file are one completion.
+`why` names the ambiguity when no later source answers.

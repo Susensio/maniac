@@ -9,7 +9,8 @@ import pytest
 
 from maniac.config import Config
 from maniac.models import RepoSource
-from maniac.sources.docs.completions import candidate_paths, upstream_completion
+from maniac.sources.completions import Ambiguous, completion_paths
+from maniac.sources.docs.completions import upstream_completion
 
 
 @dataclass(frozen=True)
@@ -96,21 +97,45 @@ def test_an_unreachable_repository_is_not_a_definitive_none(tmp_path: Path) -> N
     assert not definitive
 
 
-def test_completion_directories_come_first_then_the_shallowest() -> None:
+def test_candidates_are_found_by_name_anywhere_but_in_fixtures() -> None:
     paths = [
         "docs/_tool",
         "contrib/completion/_tool",
-        "extra/deep/a/b/c/_tool",
+        "a/b/c/d/e/f/_tool",
         "completions/zsh/_tool",
         "vendor/x/_tool",
+        "tests/fixtures/_tool",
+        "scripts/completions/completion.zsh",
         "completions/bash/tool",
         "tool",
     ]
 
-    assert candidate_paths(paths, "tool", "zsh") == [
+    assert completion_paths(paths, "tool", "zsh") == [
         "completions/zsh/_tool",
         "contrib/completion/_tool",
         "docs/_tool",
+        "scripts/completions/completion.zsh",
     ]
     # A bare name counts only below a directory naming bash.
-    assert candidate_paths(paths, "tool", "bash") == ["completions/bash/tool"]
+    assert completion_paths(paths, "tool", "bash") == ["completions/bash/tool"]
+
+
+def test_two_different_completions_at_the_tag_are_ambiguous(tmp_path: Path) -> None:
+    """Nothing says which is the tool's (rule 4): neither is taken."""
+    work = tmp_path / "work"
+    for relative, body in [
+        ("completions/_tool", "#compdef tool\n# one\n"),
+        ("contrib/_tool", "#compdef tool\n# two\n"),
+    ]:
+        (work / relative).parent.mkdir(parents=True, exist_ok=True)
+        (work / relative).write_text(body, encoding="utf-8")
+    _git("init", "-q", "-b", "main", cwd=work)
+    _git("add", ".", cwd=work)
+    _git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "1", cwd=work)
+    _git("tag", "1.0", cwd=work)
+    source = cast(RepoSource, _Source("local/tool", f"file://{work}"))
+
+    found, definitive = _ask(source, "zsh", "1.0", tmp_path)
+
+    assert definitive
+    assert found == Ambiguous(("completions/_tool", "contrib/_tool"))

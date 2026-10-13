@@ -3,7 +3,7 @@
 Two sources, never a model: a completion is code the shell runs.
 
 - `shipped_completion`: a completion file the tool installed in its install
-  root, in the handful of places release archives and packages put them.
+  root, found by name anywhere in it (`completion_paths`).
 - `generated_completion`: the tool's own generator, offered only when its
   `--help` names one (`completion <shell>`, `--show-completion <shell>`...),
   run by its resolved path from `$HOME`.
@@ -16,100 +16,141 @@ help page or another program's script is never installed.
 import os
 import re
 import subprocess
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from ..logging import logger
 
 SHELLS = ("bash", "zsh", "fish")
 
-_GENERIC_DIRS = (
-    "completions",
-    "completion",
-    "complete",
-    "autocomplete",
-    "shell-completions",
-    "contrib/completion",
-    "contrib/completions",
-    "etc/completions",
-)
-"""Where a release archive puts completions, below its root or one wrapper
-directory (`fd-v10.2.0-x86_64-unknown-linux-gnu/autocomplete/_fd`)."""
-
-_SHELL_DIRS = {
-    "bash": ("share/bash-completion/completions", "etc/bash_completion.d"),
-    "zsh": ("share/zsh/site-functions", "share/zsh/vendor-completions"),
-    "fish": ("share/fish/vendor_completions.d", "share/fish/completions"),
+_SKIPPED_DIRS = {
+    "test",
+    "tests",
+    "testdata",
+    "fixtures",
+    "vendor",
+    "node_modules",
+    "site-packages",
+    "__pycache__",
+    "third_party",
+    "examples",
+    ".git",
 }
-"""Each shell's own tree under a prefix-style install root."""
+"""Never a tool's own completion: test fixtures, vendored trees, a
+virtualenv's packages (a uv tool's root is one), dependencies' modules."""
+
+MAX_DEPTH = 6
+"""Directories below the root a completion may sit in, counting the file:
+`fd-v10.2.0-x86_64-unknown-linux-gnu/autocomplete/_fd` is three."""
 
 
-def file_names(shell: str, tool: str) -> tuple[tuple[str, ...], str | None]:
-    """The names a `tool` completion for `shell` goes by anywhere, and the bare
-    name it may also have where only that shell's files live (bash: `tool`)."""
-    return _names(shell, tool, own_dir=False), (tool if shell == "bash" else None)
+def file_names(shell: str, tool: str) -> tuple[str, ...]:
+    """The names a `tool` completion for `shell` goes by, wherever it sits.
 
-
-def _names(shell: str, tool: str, *, own_dir: bool) -> tuple[str, ...]:
-    """File names a `tool` completion for `shell` goes by; a bare `tool` only in
-    a directory that is bash's own, where nothing else could be meant."""
+    Besides the tool's own (`_tool`, `tool.fish`, `tool.bash`...), the
+    generic `completion.<shell>` some projects ship (aichat, herdr): inside
+    a tool's own install root or repository it can only be that tool's,
+    and its content must still name the tool.
+    """
+    generic = f"completion.{shell}"
     if shell == "bash":
-        named = (
+        return (
             f"{tool}.bash",
             f"{tool}.bash-completion",
             f"{tool}-completion.bash",
             f"{tool}.bash_completion",
+            generic,
         )
-        return (*named, tool) if own_dir else named
     if shell == "zsh":
-        return (f"_{tool}",)
-    return (f"{tool}.fish",)
+        # `tool.zsh` is aichat's; its content must still register with compdef.
+        return (f"_{tool}", f"{tool}.zsh", generic)
+    return (f"{tool}.fish", generic)
 
 
-def shipped_completion(root: Path, tool: str, shell: str) -> Path | None:
+def completion_paths(paths: Iterable[str], tool: str, shell: str) -> list[str]:
+    """The relative paths, of those given, that may hold `tool`'s completion for
+    `shell`: named as one, at most `MAX_DEPTH` deep, outside `_SKIPPED_DIRS`.
+    A bare `tool` counts for bash only below a directory naming bash
+    (`completions/bash/tool`, `bash-completion/completions/tool`)."""
+    names = file_names(shell, tool)
+    found = []
+    for path in paths:
+        parts = PurePosixPath(path).parts
+        directories = [part.lower() for part in parts[:-1]]
+        if len(parts) > MAX_DEPTH or _SKIPPED_DIRS.intersection(directories):
+            continue
+        name = parts[-1]
+        bare = shell == "bash" and name == tool
+        if name in names or (bare and any("bash" in d for d in directories)):
+            found.append(path)
+    return sorted(found)
+
+
+@dataclass(frozen=True, slots=True)
+class Ambiguous:
+    """Several different completions for one shell: none is taken, since
+    nothing says which is the tool's (CONTRACT.md rule 4)."""
+
+    paths: tuple[str, ...]
+
+    def __str__(self) -> str:
+        return f"several different ones ({', '.join(self.paths)})"
+
+
+def choose(candidates: list[tuple[str, str]]) -> tuple[str, str] | Ambiguous | None:
+    """One `(path, script)` of those that read as a completion, if their
+    contents agree; copies of one file are one completion."""
+    by_content: dict[str, str] = {}
+    for path, script in candidates:
+        by_content.setdefault(script, path)
+    if not by_content:
+        return None
+    if len(by_content) > 1:
+        return Ambiguous(tuple(sorted(by_content.values())))
+    [(script, path)] = by_content.items()
+    return path, script
+
+
+def shipped_completion(root: Path, tool: str, shell: str) -> Path | Ambiguous | None:
     """The completion for `shell` that `tool` installed in `root`, if any.
 
-    Looked for only where completions live, never by walking the whole root
-    (a uv tool's root is a virtualenv). A file is taken only when it resolves
-    inside `root` -- the provider's own, as a shipped page must be -- and
-    reads as a completion for that shell and tool.
+    Searched for by name anywhere in the root (bounded and pruned), as a
+    user would with `find`. A file counts only when it resolves inside
+    `root` -- the provider's own, as a shipped page must be -- and reads as a
+    completion for that shell and tool; different ones are `Ambiguous`.
     """
     if not root.is_dir():
         return None
-    places: list[tuple[Path, bool]] = [
-        (root / relative, True) for relative in _SHELL_DIRS[shell]
-    ]
-    for top in (root, *_wrapper_dirs(root)):
-        for relative in _GENERIC_DIRS:
-            base = top / relative
-            places += [(base, False), (base / shell, True)]
-    for directory, own in places:
-        for name in _names(shell, tool, own_dir=own):
-            candidate = directory / name
-            if _usable(candidate, root, tool, shell):
-                return candidate
-    return None
+    candidates = []
+    for relative in completion_paths(_files_below(root), tool, shell):
+        candidate = root / relative
+        try:
+            candidate.resolve().relative_to(root.resolve())
+            script = candidate.read_text(encoding="utf-8", errors="replace")
+        except (OSError, ValueError):
+            continue
+        if looks_like_completion(script, shell, tool):
+            candidates.append((relative, script))
+    chosen = choose(candidates)
+    if chosen is None or isinstance(chosen, Ambiguous):
+        return chosen
+    return root / chosen[0]
 
 
-def _wrapper_dirs(root: Path) -> list[Path]:
-    """The single directory a release archive wraps its files in, if that is all
-    `root` holds besides files."""
-    try:
-        directories = [child for child in root.iterdir() if child.is_dir()]
-    except OSError:
-        return []
-    return directories if len(directories) == 1 else []
-
-
-def _usable(candidate: Path, root: Path, tool: str, shell: str) -> bool:
-    try:
-        if not candidate.is_file():
-            return False
-        candidate.resolve().relative_to(root.resolve())
-        script = candidate.read_text(encoding="utf-8", errors="replace")
-    except (OSError, ValueError):
-        return False
-    return looks_like_completion(script, shell, tool)
+def _files_below(root: Path) -> Iterator[str]:
+    """Every file's path relative to `root`, pruned of `_SKIPPED_DIRS` and of
+    anything deeper than a completion could sit."""
+    for directory, subdirectories, files in os.walk(root):
+        relative = Path(directory).relative_to(root)
+        depth = 0 if relative == Path(".") else len(relative.parts)
+        subdirectories[:] = [
+            d
+            for d in subdirectories
+            if d.lower() not in _SKIPPED_DIRS and depth + 1 < MAX_DEPTH
+        ]
+        for name in files:
+            yield (relative / name).as_posix()
 
 
 _COMPLETION_SUBCOMMANDS = (
