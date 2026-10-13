@@ -564,27 +564,28 @@ def _install_attempt(
 def _shipped_pages(
     tool: ResolvedTool, found: InstallRootCandidate
 ) -> list[_PageInstall]:
-    """A shipped release: the primary links to the provider's own target when
-    it owns one (ADR-0029); companions install like any page."""
+    """A shipped release: each page links to the provider's own file when it
+    is proven inside the install root (ADR-0029), companions as the primary,
+    so an upgrade in place refreshes them all; any other page is copied."""
     inst = tool.installation
     assert inst is not None
     pages = []
-    for page in found.pages:
+    for page, link in zip(found.pages, found.links, strict=True):
         primary = page == found.primary
         pages.append(
             _PageInstall(
-                source_file=found.final_target if primary else page.path,
+                source_file=link.target,
                 tool=inst.binary if primary else manpage_owner(page.path),
                 request=PageRequest(
                     Tier.INSTALL_ROOT,
                     str(inst.root),
                     version=inst.version,
-                    provider_target=found.provider_owned if primary else False,
+                    provider_target=link.provider_owned,
                     group=inst.binary,
                     binary=tool.documented_binary,
                 ),
                 target_dir=_manpage_directory(page.path, tool.config),
-                durable_source=found.provider_owned if primary else False,
+                durable_source=link.provider_owned,
                 primary=primary,
             )
         )

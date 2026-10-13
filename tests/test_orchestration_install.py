@@ -207,7 +207,7 @@ def test_run_install_installs_every_page_of_a_multi_page_install_root_candidate(
     assert outcome.installed_path is not None
     assert outcome.installed_path.resolve() == primary
     companion_path = cfg.man_dir.parent / "man5" / companion.name
-    assert companion_path.resolve() == cfg.output_dir / companion.name
+    assert companion_path.resolve() == companion
 
     primary_entry = manifest.lookup("tool", config=cfg)
     companion_entry = manifest.lookup("tool_colors", config=cfg)
@@ -215,10 +215,52 @@ def test_run_install_installs_every_page_of_a_multi_page_install_root_candidate(
     assert companion_entry is not None
     assert primary_entry.group == "tool"
     assert companion_entry.group == "tool"
-    # The primary links directly to its provider-owned source; the
-    # companion, never checked for containment, is copied through the
-    # ordinary materialize path instead.
+    # Both inside the install root: each links to the provider's own file,
+    # so an upgrade in place refreshes the companion as it does the primary.
     assert primary_entry.provider_target is True
+    assert companion_entry.provider_target is True
+    assert not (cfg.output_dir / companion.name).exists()
+
+    # Removed as one release: both links go, the provider's files stay.
+    from maniac.installer import uninstall_manpage
+
+    uninstall_manpage("tool", config=cfg)
+    assert not companion_path.is_symlink()
+    assert not outcome.installed_path.is_symlink()
+    assert primary.exists() and companion.exists()
+    assert manifest.lookup("tool_colors", config=cfg) is None
+
+
+def test_a_companion_resolving_outside_the_install_root_is_copied(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Containment is checked per page: a companion that leaves the root is
+    no file of the provider's to link to, so it is copied, as before."""
+    root = tmp_path / "provider" / "tool" / "1.2.3"
+    primary = root / "share" / "man" / "man1" / "tool.1"
+    primary.parent.mkdir(parents=True)
+    primary.write_text(".TH TOOL 1\n", encoding="utf-8")
+    outside = tmp_path / "elsewhere" / "tool_colors.5"
+    outside.parent.mkdir()
+    outside.write_text(".TH TOOL_COLORS 5\n", encoding="utf-8")
+    companion = root / "share" / "man" / "man5" / "tool_colors.5"
+    companion.parent.mkdir(parents=True)
+    companion.symlink_to(outside)
+    provider = _FakeProvider(local_docs=[primary, companion])
+    cfg = Config(
+        man_dir=tmp_path / "man" / "man1",
+        output_dir=tmp_path / "maniac",
+        manifest_path=tmp_path / "state" / "installed.json",
+    )
+    monkeypatch.setattr(
+        "maniac.orchestration.context.resolution.find_installation",
+        lambda name, bin_dir=None, **_: (provider, _installation(root=root)),
+    )
+
+    run_install("tool", config=cfg)
+
+    companion_entry = manifest.lookup("tool_colors", config=cfg)
+    assert companion_entry is not None
     assert companion_entry.provider_target is False
     assert companion_entry.target == cfg.output_dir / companion.name
 

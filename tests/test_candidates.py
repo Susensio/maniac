@@ -51,8 +51,7 @@ def test_install_root_candidate_keeps_discovery_and_derives_ownership_from_targe
 
     assert evidence is not None
     assert evidence.discovered_page == page
-    assert evidence.final_target == escaped
-    assert not evidence.provider_owned
+    assert evidence.links == (candidates.PageLink(escaped, provider_owned=False),)
     assert evidence.primary.uri == page.absolute().as_uri()
 
 

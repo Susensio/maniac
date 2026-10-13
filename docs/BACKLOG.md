@@ -16,8 +16,6 @@ Settled decisions live in `docs/adr/`; defects with a line to sit beside are mar
 - Cut `maniac scan` below ~10s warm.
   Re-measure first: the profile on record (2026-09-24, at 0ae53ad) predates the redesign, when discovery was `list`; it found no single hotspot (`man -w`, provider `local_docs` and `resolve_source` each ~2-3s of wall-union inside the local-classify pool, startup ~1s).
   Measure thread-aware (wall-clock union across the pool), never by summing per-call durations or plain cProfile -- both misled that session.
-- Link tier-1 companion pages from the install root instead of copying them.
-  `_shipped_pages` copies every non-primary page into `output_dir` because only `final_target`'s containment is verified (`candidate.provider_owned`); a per-page containment check on `InstallRootCandidate` would let companions link like the primary.
 - Merge `ResolvedTool` and `Candidate`.
   Both are built from one `resolution.Located` now (`tool_from`, `candidate_from`) and differ in what they carry for install's tiers and scan's rows; one type would mean one fewer translation.
 

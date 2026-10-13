@@ -44,14 +44,28 @@ class CandidatePage:
 
 
 @dataclass(frozen=True, slots=True)
+class PageLink:
+    """Where one shipped page's manpath link points, and whether that is the
+    provider's own file (inside the install root) or needs maniac's copy."""
+
+    target: Path
+    provider_owned: bool
+
+
+@dataclass(frozen=True, slots=True)
 class InstallRootCandidate:
-    """Local install-root evidence, including the provider's chosen link target."""
+    """Local install-root evidence, with each page's link target.
+
+    `links` is one per page, in `pages`' order: every page of a release --
+    the primary and its companions alike -- links to the provider's file
+    when that file is proven inside the install root, and is copied
+    otherwise.
+    """
 
     pages: tuple[CandidatePage, ...]
     primary: CandidatePage
     discovered_page: Path
-    final_target: Path
-    provider_owned: bool
+    links: tuple[PageLink, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,6 +86,15 @@ def _contained(path: Path, root: Path) -> bool:
     return True
 
 
+def _link(provider: Provider, installation: Installation, page: Path) -> PageLink:
+    """The provider's own target for `page` (a validated alias, ADR-0029, or
+    the page itself), owned only when it resolves inside the install root."""
+    target = page
+    if isinstance(provider, DirectPageProvider):
+        target = provider.direct_page_target(installation, page) or page
+    return PageLink(target, _contained(target, installation.root))
+
+
 def select_install_root(
     provider: Provider, installation: Installation
 ) -> InstallRootCandidate | None:
@@ -80,19 +103,13 @@ def select_install_root(
     discovered = select_primary_manpage(found, installation.binary)
     if discovered is None:
         return None
-    final_target = discovered
-    if isinstance(provider, DirectPageProvider):
-        final_target = (
-            provider.direct_page_target(installation, discovered) or discovered
-        )
     pages = tuple(CandidatePage(page, page.absolute().as_uri()) for page in found)
     primary = next(page for page in pages if page.path == discovered)
     return InstallRootCandidate(
         pages=pages,
         primary=primary,
         discovered_page=discovered,
-        final_target=final_target,
-        provider_owned=_contained(final_target, installation.root),
+        links=tuple(_link(provider, installation, page.path) for page in pages),
     )
 
 
