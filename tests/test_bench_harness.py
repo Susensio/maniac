@@ -48,7 +48,9 @@ def test_run_benchmark_records_skips_and_preserves_prior_run(
     models = [("flash-high", "gemini/gemini-flash-latest", "high")]
     tools = ["howdoi", "hx"]
 
-    def fake_generate(tool, model_name, reasoning_effort, cfg, out_dir, retries):
+    def fake_generate(
+        tool, model_name, reasoning_effort, cfg, out_dir, retries, seeded
+    ):
         if tool == "howdoi":
             context_path = cfg.intermediate_dir / f"{tool}_context.md"
             context_path.write_text("context", encoding="utf-8")
@@ -58,6 +60,7 @@ def test_run_benchmark_records_skips_and_preserves_prior_run(
                 {
                     "context_path": context_path,
                     "markdown_content": "% HOWDOI(1) | User Commands\n",
+                    "seed": None,
                 },
             )()
             return result, None, 1.0
@@ -109,7 +112,58 @@ def test_generate_returns_error_after_retries_exhausted(
         Config(),
         Path("/tmp/out"),
         retries=1,
+        seeded=True,
     )
 
     assert result is None
     assert error == "nope"
+
+
+def test_a_no_seed_run_sits_beside_the_seeded_one(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`dev bench --no-seed` measures seeding: both runs of one model and tool
+    are kept, each generated as asked and in its own directory."""
+    cfg = Config(bench_dir=tmp_path / "bench", intermediate_dir=tmp_path / "i")
+    cfg.intermediate_dir.mkdir(parents=True)
+    asked: list[tuple[bool, Path]] = []
+
+    def fake_synthesize(tool, **kwargs):
+        seeded = kwargs["seeded"]
+        asked.append((seeded, tool))
+        context = cfg.intermediate_dir / "howdoi_context.md"
+        context.write_text("context", encoding="utf-8")
+        return type(
+            "FakePipelineResult",
+            (),
+            {
+                "context_path": context,
+                "markdown_content": "% HOWDOI(1)\n",
+                "seed": "an old page (1.0)" if seeded else None,
+            },
+        )()
+
+    monkeypatch.setattr(harness, "resolve_tool", lambda name, config: config.output_dir)
+    monkeypatch.setattr(harness, "synthesize", fake_synthesize)
+    monkeypatch.setattr(
+        harness,
+        "evaluate_manpage",
+        lambda **kwargs: EvaluationResult(
+            score=80, passed=True, rubric_breakdown={}, summary="ok"
+        ),
+    )
+    models = [("flash", "gemini/flash", None)]
+
+    harness.run_benchmark(tools=["howdoi"], models=models, config=cfg)
+    merged = harness.run_benchmark(
+        tools=["howdoi"], models=models, config=cfg, seeded=False
+    )
+
+    by_seeding = {r["seeded"]: r for r in merged}
+    assert by_seeding[True]["seed"] == "an old page (1.0)"
+    assert by_seeding[False]["seed"] is None
+    assert [(seeded, out.name) for seeded, out in asked] == [
+        (True, "seeded"),
+        (False, "unseeded"),
+    ]
+    assert harness._seed_cell(by_seeding[False]) == "off"

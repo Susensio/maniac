@@ -39,6 +39,7 @@ def synthesize(
     install: bool = False,
     force: bool = False,
     dry_run: bool = False,
+    seeded: bool = True,
 ) -> PipelineResult:
     """Extract source material for an already-resolved tool, synthesize, compile.
 
@@ -48,6 +49,9 @@ def synthesize(
     it sits past the early return below). The crawl and doc fetch still run,
     since reporting what synthesis would have to work with is the point of
     a preview.
+
+    `seeded=False` generates without a seed page (`dev bench --no-seed`, to
+    measure what seeding is worth).
     """
     cfg = tool.config
     out_dir = cfg.output_dir
@@ -61,7 +65,7 @@ def synthesize(
     help_block = format_help_block(tree)
     docs_block = format_docs_section(doc_files)
     _report_material(tool, tree=tree, doc_files=doc_files, matched=version_matched)
-    seed = tool.seed
+    seed = tool.seed if seeded else None
     if seed is not None:
         logger.info("Seeding generation", tool=tool.tool_name, seed=seed.label)
 
@@ -71,12 +75,9 @@ def synthesize(
             context_file,
             f"# {tool.tool_name} Extracted Context\n\n"
             f"## CLI Help\n```text\n{help_block}\n```\n\n"
-            f"## Repository Documentation\n{docs_block}\n"
-            + (
-                f"\n## Seed: {seed.label}\n```roff\n{seed.content}\n```\n"
-                if seed is not None
-                else ""
-            ),
+            # What the tool is now, and so what `dev eval` judges a page
+            # against: never the seed, a page for another version.
+            f"## Repository Documentation\n{docs_block}\n",
             "Saved intermediate context",
         )
     full_prompt = build_synthesis_prompt(

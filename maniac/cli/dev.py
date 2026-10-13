@@ -38,6 +38,14 @@ def bench(
     retries: Annotated[
         int, typer.Option(help="Retry attempts per generation/evaluation step.")
     ] = 2,
+    seed: Annotated[
+        bool,
+        typer.Option(
+            help="Start each page from an older page people wrote, when one "
+            "exists. `--no-seed` generates without, to measure what seeding "
+            "is worth: results keep both runs side by side."
+        ),
+    ] = True,
 ) -> None:
     """Generate and judge a page for every (model, tool) combination."""
     from ..bench.harness import DEFAULT_MODELS, DEFAULT_TOOLS, run_benchmark
@@ -50,5 +58,9 @@ def bench(
         else DEFAULT_MODELS
     )
     run_benchmark(
-        tools=tool or DEFAULT_TOOLS, models=models, config=cfg, retries=retries
+        tools=tool or DEFAULT_TOOLS,
+        models=models,
+        config=cfg,
+        retries=retries,
+        seeded=seed,
     )

@@ -26,7 +26,6 @@ Settled decisions live in `docs/adr/`; defects with a line to sit beside are mar
 - Seed generation from two more pages of the same software (`candidates.seed_for` takes the first it finds).
   A losing `$PATH` copy's shipped page (`Installation.losers`), once proven the same software by package or repository (ADR-0055); `locate` does not collect losers yet, only `locate_all` does.
   The page `install --force` replaced (its backup), if something beyond the shared name ties it to the tool.
-- Measure seeding with `maniac dev bench`: the same tools with and without a seed, judged by `dev eval`.
 - Extract bounded documentation from installed package roots (system packages are out of scope, ADR-0059): recognized local docs, Info pages, package metadata as supplementary context, and absolute-path help.
   Preserve each source's provenance.
 - Add tldr-pages as an examples source, preferring an installed tealdeer cache before its release zip and recording provenance in generated output.
@@ -38,6 +37,8 @@ Settled decisions live in `docs/adr/`; defects with a line to sit beside are mar
 
 ## Verification and research
 
+- Measure seeding: `maniac dev bench` and `maniac dev bench --no-seed` on tools that have a seed (`maniac why <tool>` names it), then compare the judge's scores side by side in `results.json`.
+  Needs an API key; the default tools (howdoi, hx, uv) may well have no seed, so pick ones that do.
 - Verify `maniac dev eval --against-installed` against a live LLM and a real installed page; its tests mock synthesis.
   Runs wherever an API key is configured (as `maniac dev bench` does); the staged fzf context is ready.
 - Measure the coverage cost of refusing an unmatched upstream version before changing ADR-0016's version-match policy.

@@ -43,12 +43,13 @@ JUDGE_MODEL = "gemini/gemini-flash-latest"
 
 
 def _skipped_entry(
-    model_key: str, model_name: str, tool: str, reason: str
+    model_key: str, model_name: str, tool: str, reason: str, *, seeded: bool
 ) -> dict[str, Any]:
     return {
         "model_key": model_key,
         "model_name": model_name,
         "tool": tool,
+        "seeded": seeded,
         "status": "skipped",
         "reason": reason,
     }
@@ -57,15 +58,17 @@ def _skipped_entry(
 def _merge_results(
     existing: list[dict[str, Any]], new_entries: list[dict[str, Any]]
 ) -> list[dict[str, Any]]:
-    """Merge this run's entries into prior results, keyed by (model_key, tool).
+    """Merge this run's entries into prior results, keyed by (model_key, tool,
+    seeded) -- so a `--no-seed` run sits beside a seeded one to compare.
+    Results from before seeding existed carry no `seeded` key: their own row.
 
     A run only touches the model/tool pairs it was given; historical rows for
     anything else are carried through unchanged so a later run cannot wipe
     out earlier results.
     """
-    by_key = {(r["model_key"], r["tool"]): r for r in existing}
+    by_key = {(r["model_key"], r["tool"], r.get("seeded")): r for r in existing}
     for entry in new_entries:
-        by_key[(entry["model_key"], entry["tool"])] = entry
+        by_key[(entry["model_key"], entry["tool"], entry.get("seeded"))] = entry
     return list(by_key.values())
 
 
@@ -82,6 +85,7 @@ def _generate(
     cfg: Config,
     out_dir: Path,
     retries: int,
+    seeded: bool,
 ) -> tuple[PipelineResult | None, str | None, float]:
     start = time.perf_counter()
     error: str | None = None
@@ -93,6 +97,7 @@ def _generate(
                 reasoning_effort=reasoning_effort,
                 install=False,
                 dry_run=False,
+                seeded=seeded,
             )
             return result, None, time.perf_counter() - start
         except RETRYABLE_ERRORS as e:
@@ -136,6 +141,7 @@ def _print_table(entries: list[dict[str, Any]]) -> None:
     table = Table(title="Benchmark: Model Effort vs Performance and Speed")
     table.add_column("Model", style="cyan")
     table.add_column("Tool", style="magenta")
+    table.add_column("Seed")
     table.add_column("Gen Time (s)", justify="right")
     table.add_column("Eval Time (s)", justify="right")
     table.add_column("Total Time (s)", justify="right")
@@ -148,6 +154,7 @@ def _print_table(entries: list[dict[str, Any]]) -> None:
             table.add_row(
                 r["model_key"],
                 r["tool"],
+                _seed_cell(r),
                 "-",
                 "-",
                 "-",
@@ -159,6 +166,7 @@ def _print_table(entries: list[dict[str, Any]]) -> None:
         table.add_row(
             r["model_key"],
             r["tool"],
+            _seed_cell(r),
             f"{r['gen_duration_sec']:.1f}",
             f"{r['eval_duration_sec']:.1f}",
             f"{r['total_duration_sec']:.1f}",
@@ -170,18 +178,27 @@ def _print_table(entries: list[dict[str, Any]]) -> None:
     console.print(table)
 
 
+def _seed_cell(entry: dict[str, Any]) -> str:
+    """off (`--no-seed`), the seed a page started from, or none found."""
+    if not entry.get("seeded", True):
+        return "off"
+    return entry.get("seed") or "none found"
+
+
 def run_benchmark(
     tools: list[str] | None = None,
     models: Sequence[tuple[str, str, str | None]] | None = None,
     config: Config | None = None,
     retries: int = 2,
+    seeded: bool = True,
 ) -> list[dict[str, Any]]:
     """Generate and judge a manpage for every (model, tool) combination.
 
     Merges into any prior `results.json` under `config.bench_dir` rather than
     overwriting it; a combo whose generation or evaluation fails after
     retries is recorded with status "skipped" and a reason instead of being
-    dropped.
+    dropped. `seeded=False` generates without a seed page; each entry says
+    which, and which seed a seeded page started from.
     """
     cfg = config or Config()
     tools = tools if tools is not None else DEFAULT_TOOLS
@@ -202,11 +219,11 @@ def run_benchmark(
                 f"\n[bold yellow]>>> Benchmarking {tool} with {model_key} "
                 f"({model_name}, effort={reasoning_effort})...[/bold yellow]"
             )
-            out_dir = bench_dir / model_key
+            out_dir = bench_dir / model_key / ("seeded" if seeded else "unseeded")
             out_dir.mkdir(parents=True, exist_ok=True)
 
             pipeline_res, gen_error, gen_duration = _generate(
-                tool, model_name, reasoning_effort, cfg, out_dir, retries
+                tool, model_name, reasoning_effort, cfg, out_dir, retries, seeded
             )
             if pipeline_res is None:
                 console.print(
@@ -215,7 +232,11 @@ def run_benchmark(
                 )
                 new_entries.append(
                     _skipped_entry(
-                        model_key, model_name, tool, f"generation failed: {gen_error}"
+                        model_key,
+                        model_name,
+                        tool,
+                        f"generation failed: {gen_error}",
+                        seeded=seeded,
                     )
                 )
                 continue
@@ -235,7 +256,11 @@ def run_benchmark(
                 )
                 new_entries.append(
                     _skipped_entry(
-                        model_key, model_name, tool, f"evaluation failed: {eval_error}"
+                        model_key,
+                        model_name,
+                        tool,
+                        f"evaluation failed: {eval_error}",
+                        seeded=seeded,
                     )
                 )
                 continue
@@ -245,6 +270,8 @@ def run_benchmark(
                 "model_name": model_name,
                 "reasoning_effort": reasoning_effort,
                 "tool": tool,
+                "seeded": seeded,
+                "seed": pipeline_res.seed,
                 "status": "success",
                 "gen_duration_sec": round(gen_duration, 2),
                 "eval_duration_sec": round(eval_duration, 2),

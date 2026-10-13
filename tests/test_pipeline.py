@@ -533,3 +533,6 @@ def test_a_seed_reaches_the_prompt_the_page_header_and_the_result(
     assert "ANOTHER VERSION: an old page (1.0.0)" in prompt
     assert compiled["seed"] == "an old page (1.0.0)"
     assert result.seed == "an old page (1.0.0)"
+    # The context `dev eval` judges against is the tool as it is now.
+    assert result.context_path is not None
+    assert ".TH TESTTOOL 1" not in result.context_path.read_text(encoding="utf-8")
