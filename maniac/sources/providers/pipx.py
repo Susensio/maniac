@@ -100,12 +100,12 @@ def find_distribution_metadata(
 ) -> email.message.Message | None:
     """Locate the dist-info `METADATA` matching `package` under a pipx venv.
 
-    Mirrors `UvProvider`'s glob across `lib/**/site-packages/*.dist-info`,
+    Mirrors `UvProvider`'s glob across `lib/*/site-packages/*.dist-info`,
     comparing distribution names with separators collapsed since dist-info
     directory names normalize `-`/`_`/`.` interchangeably.
     """
     normalized = _normalize(package)
-    for dist_info in root.glob("lib/**/site-packages/*.dist-info"):
+    for dist_info in root.glob("lib/*/site-packages/*.dist-info"):
         name, _, _version = dist_info.stem.rpartition("-")
         if _normalize(name) != normalized:
             continue

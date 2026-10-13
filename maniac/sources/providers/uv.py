@@ -65,7 +65,9 @@ def _installed_version(root: Path, tool: str) -> str | None:
     exact match against the tool directory's own name.
     """
     normalized_tool = _normalize(tool)
-    for dist_info in root.glob("lib/**/site-packages/*.dist-info"):
+    # One level (`lib/python3.X`), never `**`: walking the whole venv from
+    # `scan`'s thread pool made each syscall queue for the GIL.
+    for dist_info in root.glob("lib/*/site-packages/*.dist-info"):
         name, _, version = dist_info.stem.rpartition("-")
         if _normalize(name) == normalized_tool:
             return version
@@ -84,7 +86,7 @@ def _local_editable_dir(root: Path) -> Path | None:
     package's own -- mirrors `discovery._find_uv_tool_local_dir`'s prior scope,
     since that is the extent of the evidence uv itself records for the install.
     """
-    for dist_info in root.glob("lib/**/site-packages/*.dist-info"):
+    for dist_info in root.glob("lib/*/site-packages/*.dist-info"):
         direct_url = dist_info / "direct_url.json"
         if not direct_url.exists():
             continue
