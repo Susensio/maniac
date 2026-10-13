@@ -1043,9 +1043,9 @@ def test_run_install_records_a_release_in_one_manifest_write(
     real_save = manifest.save
     monkeypatch.setattr(
         "maniac.manifest.save",
-        lambda entries, config=None: (
+        lambda entries, config=None, completions=None: (
             writes.append(sorted(entries)),
-            real_save(entries, config),
+            real_save(entries, config, completions),
         )[1],
     )
 

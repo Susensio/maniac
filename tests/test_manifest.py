@@ -193,7 +193,7 @@ def test_record_persists_across_loads(tmp_path: Path) -> None:
     )
 
     document = json.loads(cfg.manifest_path.read_text(encoding="utf-8"))
-    assert document["version"] == 1
+    assert document["version"] == manifest.SCHEMA_VERSION
     assert document["entries"]["tool"]["tier"] == "synthesis"
 
 
@@ -570,10 +570,12 @@ def test_a_transaction_writes_once_for_every_mutation_it_holds(
     real_save = manifest.save
 
     def counting_save(
-        entries: dict[str, manifest.Entry], config: Config | None = None
+        entries: dict[str, manifest.Entry],
+        config: Config | None = None,
+        completions: manifest.Completions | None = None,
     ) -> None:
         writes.append(dict(entries))
-        real_save(entries, config)
+        real_save(entries, config, completions)
 
     monkeypatch.setattr(manifest, "save", counting_save)
 
@@ -1231,3 +1233,51 @@ def test_a_first_transaction_with_no_manifest_warns_nothing(tmp_path: Path) -> N
 
     rebuilt = [e for e in logs if e["event"] == "Rebuilt an untrustworthy manifest"]
     assert [e["log_level"] for e in rebuilt] == ["debug"]
+
+
+def test_completions_are_recorded_beside_pages_and_survive_a_reload(
+    tmp_path: Path,
+) -> None:
+    """ADR-0066: a `completions` section, by tool and shell."""
+    cfg = Config(manifest_path=tmp_path / "state" / "installed.json")
+    entry = manifest.CompletionEntry(
+        path=tmp_path / "zsh" / "_tool",
+        target=tmp_path / "data" / "_tool",
+        source="generated",
+        checksum="c",
+        version="1.0",
+        arguments=("completion", "zsh"),
+    )
+
+    with manifest.transaction(config=cfg) as txn:
+        txn.put_completion("tool", "zsh", entry)
+
+    assert manifest.completions_of("tool", config=cfg) == {"zsh": entry}
+    with manifest.transaction(config=cfg) as txn:
+        txn.forget_completion("tool", "zsh")
+    assert manifest.completions_of("tool", config=cfg) == {}
+    assert manifest.read(cfg).completions == {}
+
+
+def test_a_version_1_manifest_reads_as_having_no_completions(tmp_path: Path) -> None:
+    path = tmp_path / "installed.json"
+    path.write_text(json.dumps({"version": 1, "entries": {}}), encoding="utf-8")
+
+    read = manifest.read(Config(manifest_path=path))
+
+    assert read.health is manifest.Health.INTACT
+    assert read.completions == {}
+
+
+def test_a_malformed_completion_row_makes_the_read_damaged(tmp_path: Path) -> None:
+    """Ownership that silently evaporates would be written out by the next save."""
+    path = tmp_path / "installed.json"
+    path.write_text(
+        json.dumps({"version": 2, "entries": {}, "completions": {"tool": {"zsh": {}}}}),
+        encoding="utf-8",
+    )
+
+    read = manifest.read(Config(manifest_path=path))
+
+    assert read.health is manifest.Health.DAMAGED
+    assert "completion:tool:zsh" in read.lost

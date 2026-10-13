@@ -28,7 +28,8 @@ from .logging import logger
 # understands is refused, and it is refused as damaged -- never as empty.
 # Absent and unparseable stamps are damaged too: an unstamped document is
 # not a version-0 document, it is one whose shape nothing vouches for.
-SCHEMA_VERSION = 1
+# 2 added the `completions` section (ADR-0066); a version-1 document has none.
+SCHEMA_VERSION = 2
 # Generation stamps this on every page it writes, and recovery is the only
 # reader: it separates a synthesized page from a repository page copied
 # verbatim, both of which live under `output_dir`.
@@ -95,6 +96,64 @@ class Entry:
     provider_target: bool = False
     group: str | None = None
     binary: Path | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class CompletionEntry:
+    """One shell completion maniac installed for a tool (ADR-0066).
+
+    `path` is the link in the shell's user directory, `target` what it
+    points at: the provider's own file for a shipped completion
+    (`provider_target`), else maniac's copy of what the tool generated.
+    `arguments` are the generator's, so `update` can run it again; empty for
+    a shipped one. `checksum` is the target's bytes when installed.
+    """
+
+    path: Path
+    target: Path
+    source: str
+    checksum: str
+    version: str | None = None
+    provider_target: bool = False
+    arguments: tuple[str, ...] = ()
+
+
+def _completion_to_row(entry: CompletionEntry) -> dict[str, Any]:
+    return {
+        "path": str(entry.path),
+        "target": str(entry.target),
+        "source": entry.source,
+        "checksum": entry.checksum,
+        "version": entry.version,
+        "provider_target": entry.provider_target,
+        "arguments": list(entry.arguments),
+    }
+
+
+def _row_to_completion(row: Any) -> CompletionEntry:
+    """Raises KeyError, TypeError or ValueError for a malformed row."""
+    if not isinstance(row, dict):
+        raise TypeError(f"row is {type(row).__name__}, not an object")
+    arguments = row.get("arguments") or []
+    if not isinstance(arguments, list) or not all(
+        isinstance(a, str) for a in arguments
+    ):
+        raise TypeError("arguments is not a list of strings")
+    if row["source"] not in ("shipped", "generated"):
+        raise ValueError(f"unknown completion source {row['source']!r}")
+    return CompletionEntry(
+        path=Path(row["path"]),
+        target=Path(row["target"]),
+        source=row["source"],
+        checksum=row["checksum"],
+        version=row.get("version"),
+        provider_target=row.get("provider_target") is True,
+        arguments=tuple(arguments),
+    )
+
+
+Completions = dict[str, dict[str, CompletionEntry]]
+"""Completion entries by tool, then by shell."""
 
 
 def manpage_owner(page: Path) -> str:
@@ -293,6 +352,8 @@ class Read:
     reason: str | None = None
     lost: dict[str, str] = field(default_factory=dict)
     links: dict[str, Link] = field(default_factory=dict)
+    completions: Completions = field(default_factory=dict)
+    """Completion rows that deserialized, by tool and shell (ADR-0066)."""
 
 
 def _damaged(reason: str) -> Read:
@@ -346,9 +407,31 @@ def _read_document(path: Path) -> Read:
             entries[tool] = _row_to_entry(row)
         except (KeyError, TypeError, ValueError) as exc:
             lost[tool] = f"{type(exc).__name__}: {exc}"
+    completions = _read_completions(document.get("completions", {}), lost)
     if lost:
-        return Read(entries=entries, health=Health.DAMAGED, lost=lost)
-    return Read(entries=entries, health=Health.INTACT)
+        return Read(
+            entries=entries, health=Health.DAMAGED, lost=lost, completions=completions
+        )
+    return Read(entries=entries, health=Health.INTACT, completions=completions)
+
+
+def _read_completions(raw: Any, lost: dict[str, str]) -> Completions:
+    """The completion section's rows; each one that fails to parse lands in
+    `lost` under `completion:<tool>:<shell>`, which makes the read DAMAGED."""
+    if not isinstance(raw, dict):
+        lost["completions"] = f"section is {type(raw).__name__}, not an object"
+        return {}
+    completions: Completions = {}
+    for tool, shells in raw.items():
+        if not isinstance(shells, dict):
+            lost[f"completion:{tool}"] = "not an object"
+            continue
+        for shell, row in shells.items():
+            try:
+                completions.setdefault(tool, {})[shell] = _row_to_completion(row)
+            except (KeyError, TypeError, ValueError) as exc:
+                lost[f"completion:{tool}:{shell}"] = f"{type(exc).__name__}: {exc}"
+    return completions
 
 
 def load(config: Config | None = None) -> dict[str, Entry]:
@@ -381,16 +464,27 @@ def _write_document(path: Path, document: dict[str, Any]) -> None:
         os.close(directory)
 
 
-def _document(entries: dict[str, Entry]) -> dict[str, Any]:
+def _document(
+    entries: dict[str, Entry], completions: Completions | None = None
+) -> dict[str, Any]:
     return {
         "version": SCHEMA_VERSION,
         "entries": {tool: _entry_to_row(entry) for tool, entry in entries.items()},
+        "completions": {
+            tool: {shell: _completion_to_row(e) for shell, e in shells.items()}
+            for tool, shells in (completions or {}).items()
+            if shells
+        },
     }
 
 
-def save(entries: dict[str, Entry], config: Config | None = None) -> None:
-    """Persist `entries` as the whole manifest, replacing what it held."""
-    _write_document(_manifest_path(config), _document(entries))
+def save(
+    entries: dict[str, Entry],
+    config: Config | None = None,
+    completions: Completions | None = None,
+) -> None:
+    """Persist `entries` and `completions` as the whole manifest."""
+    _write_document(_manifest_path(config), _document(entries, completions))
 
 
 def checkpoint_path(config: Config | None = None) -> Path:
@@ -412,8 +506,18 @@ def promote(read_result: Read, config: Config | None = None) -> bool:
     """
     if read_result.health is not Health.INTACT:
         return False
-    _write_document(checkpoint_path(config), _document(read_result.entries))
+    _write_document(
+        checkpoint_path(config),
+        _document(read_result.entries, read_result.completions),
+    )
     return True
+
+
+def completions_of(
+    tool: str, config: Config | None = None
+) -> dict[str, CompletionEntry]:
+    """`tool`'s recorded completions by shell; empty if maniac installed none."""
+    return dict(read(config).completions.get(tool, {}))
 
 
 def lookup(tool: str, config: Config | None = None) -> Entry | None:
@@ -703,6 +807,7 @@ class Transaction:
     entries: dict[str, Entry]
     dirty: bool = False
     recovery: Recovery | None = None
+    completions: Completions = field(default_factory=dict)
 
     def put(self, tool: str, entry: Entry) -> None:
         """Record `entry` as `tool`'s, replacing any entry it already had."""
@@ -713,6 +818,19 @@ class Transaction:
         """Drop `tool`'s entry. A no-op if it was never recorded."""
         if self.entries.pop(tool, None) is not None:
             self.dirty = True
+
+    def put_completion(self, tool: str, shell: str, entry: CompletionEntry) -> None:
+        """Record `entry` as `tool`'s completion for `shell`."""
+        self.completions.setdefault(tool, {})[shell] = entry
+        self.dirty = True
+
+    def forget_completion(self, tool: str, shell: str) -> None:
+        """Drop `tool`'s completion for `shell`. A no-op if none was recorded."""
+        shells = self.completions.get(tool, {})
+        if shells.pop(shell, None) is not None:
+            self.dirty = True
+        if not shells:
+            self.completions.pop(tool, None)
 
 
 @contextmanager
@@ -746,10 +864,15 @@ def transaction(config: Config | None = None) -> Iterator[Transaction]:
             entries=entries,
             dirty=recovery is not None or bool(adopted),
             recovery=recovery,
+            # Salvaged rows only: completions are not rebuilt from links
+            # (ADR-0066); naming the tool again reinstalls them.
+            completions={
+                tool: dict(shells) for tool, shells in current.completions.items()
+            },
         )
         yield txn
         if txn.dirty:
-            save(txn.entries, cfg)
+            save(txn.entries, cfg, txn.completions)
 
 
 @contextmanager
