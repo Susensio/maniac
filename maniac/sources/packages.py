@@ -276,36 +276,29 @@ class _DedupedCache:
 @_DedupedCache
 def _debian_version(package: str) -> str | None:
     """Installed Debian package version, or `None` if it cannot be read."""
-    try:
-        result = subprocess.run(
-            ["dpkg-query", "-W", "-f=${Version}", package],
-            capture_output=True,
-            check=False,
-            text=True,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return None
-    version = result.stdout.strip()
-    return version if result.returncode == 0 and version else None
+    return _dpkg_field(package, "Version") or None
 
 
 @_DedupedCache
 def _debian_source(package: str) -> str | None:
     """Debian source package for `package`, or `package` itself when the
     field is blank -- a package that is its own source leaves it empty."""
+    source = _dpkg_field(package, "Source")
+    return None if source is None else source or package
+
+
+def _dpkg_field(package: str, field: str) -> str | None:
+    """One field of an installed package, maybe empty; None if dpkg cannot say."""
     try:
         result = subprocess.run(
-            ["dpkg-query", "-W", "-f=${Source}", package],
+            ["dpkg-query", "-W", f"-f=${{{field}}}", package],
             capture_output=True,
             check=False,
             text=True,
         )
     except (OSError, subprocess.SubprocessError):
         return None
-    if result.returncode != 0:
-        return None
-    source = result.stdout.strip()
-    return source or package
+    return result.stdout.strip() if result.returncode == 0 else None
 
 
 def _same_software(owner: str, package: str) -> bool:

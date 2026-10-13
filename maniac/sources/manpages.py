@@ -252,33 +252,27 @@ def _prune_manpage_dirs(
 
 def _iter_repo_manpage_files(repo_dir: Path) -> Iterator[Path]:
     """Yield files at a repository root and under its manpage trees."""
-    if not repo_dir.is_dir():
-        return
-    yield from (item for item in repo_dir.iterdir() if item.is_file())
-    for root, directories, files in os.walk(repo_dir):
-        rel_dir = Path(root).relative_to(repo_dir)
-        parts = () if rel_dir == Path(".") else tuple(p.lower() for p in rel_dir.parts)
-        _prune_manpage_dirs(directories, parts, _REPO_DEPTHS)
-        if rel_dir == Path(".") or not _matches_manpage_dir(parts, _REPO_DEPTHS):
-            continue
-        for filename in files:
-            yield Path(root, filename)
+    return _iter_manpage_files(repo_dir, _REPO_DEPTHS)
 
 
 def _iter_install_root_manpage_files(root: Path) -> Iterator[Path]:
     """Yield files at an install root and under its manpage trees, tolerating
     one leading release-archive wrapper directory before them.
     """
-    if not root.is_dir():
+    return _iter_manpage_files(root, _INSTALL_ROOT_WRAPPER_DEPTHS)
+
+
+def _iter_manpage_files(top: Path, depths: tuple[int, ...]) -> Iterator[Path]:
+    """Files directly in `top`, then those in its manpage trees, which may sit
+    at any of `depths` directories below it."""
+    if not top.is_dir():
         return
-    yield from (item for item in root.iterdir() if item.is_file())
-    for path, directories, files in os.walk(root):
-        rel_dir = Path(path).relative_to(root)
+    yield from (item for item in top.iterdir() if item.is_file())
+    for path, directories, files in os.walk(top):
+        rel_dir = Path(path).relative_to(top)
         parts = () if rel_dir == Path(".") else tuple(p.lower() for p in rel_dir.parts)
-        _prune_manpage_dirs(directories, parts, _INSTALL_ROOT_WRAPPER_DEPTHS)
-        if rel_dir == Path(".") or not _matches_manpage_dir(
-            parts, _INSTALL_ROOT_WRAPPER_DEPTHS
-        ):
+        _prune_manpage_dirs(directories, parts, depths)
+        if rel_dir == Path(".") or not _matches_manpage_dir(parts, depths):
             continue
         for filename in files:
             yield Path(path, filename)

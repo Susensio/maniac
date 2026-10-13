@@ -135,19 +135,8 @@ def locate(
     try:
         claim = find_installation(tool, bin_dir=bin_dir, here=accept_project)
         binary = claim[1].bin_path if claim is not None else binary_path(tool, bin_dir)
-    except ShimRunsNothing as e:
-        return Located(tool, Outcome.SHIM_RUNS_NOTHING, hit, error=e)
-    except NotGloballySelected as e:
-        return Located(
-            tool,
-            Outcome.NOT_GLOBAL,
-            hit,
-            binary=_reached(hit),
-            installation=e.installation,
-            error=e,
-        )
-    except MalformedToolMetadata as e:
-        return Located(tool, Outcome.UNREADABLE, hit, binary=_reached(hit), error=e)
+    except (MalformedToolMetadata, NotGloballySelected) as e:
+        return _refused(tool, hit, e)
     if claim is None and binary is None:
         missed = _off_login(tool) if bin_dir is None else None
         return missed or Located(tool, Outcome.NOT_ON_PATH)
@@ -220,6 +209,24 @@ def _is_environment(directory: Path) -> bool:
     """
     root = directory.parent
     return (root / "pyvenv.cfg").is_file() or (root / "conda-meta").is_dir()
+
+
+def _refused(
+    name: str, hit: Path | None, error: MalformedToolMetadata | NotGloballySelected
+) -> Located:
+    """A lookup's refusal as the value every command maps (no exception escapes)."""
+    if isinstance(error, ShimRunsNothing):
+        return Located(name, Outcome.SHIM_RUNS_NOTHING, hit, error=error)
+    if isinstance(error, NotGloballySelected):
+        return Located(
+            name,
+            Outcome.NOT_GLOBAL,
+            hit,
+            binary=_reached(hit),
+            installation=error.installation,
+            error=error,
+        )
+    return Located(name, Outcome.UNREADABLE, hit, binary=_reached(hit), error=error)
 
 
 def _reached(hit: Path | None) -> Path | None:
@@ -296,19 +303,8 @@ def _locate_hit(name: str, hit: Path) -> Located:
     """`locate` for a name whose `$PATH` hit is already known."""
     try:
         claim = _detect_via_registry(hit)
-    except ShimRunsNothing as e:
-        return Located(name, Outcome.SHIM_RUNS_NOTHING, hit, error=e)
-    except NotGloballySelected as e:
-        return Located(
-            name,
-            Outcome.NOT_GLOBAL,
-            hit,
-            binary=_reached(hit),
-            installation=e.installation,
-            error=e,
-        )
-    except MalformedToolMetadata as e:
-        return Located(name, Outcome.UNREADABLE, hit, binary=_reached(hit), error=e)
+    except (MalformedToolMetadata, NotGloballySelected) as e:
+        return _refused(name, hit, e)
     if claim is None:
         return Located(name, Outcome.FOUND, hit, _reached(hit))
     provider, inst = claim
