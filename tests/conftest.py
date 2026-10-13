@@ -129,6 +129,17 @@ def _no_seed_unless_a_test_asks(
             )
 
 
+@pytest.fixture(autouse=True)
+def _a_login_shell_with_no_completions(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`$SHELL=/bin/sh`: `install` adds completions for none (ADR-0066).
+
+    Otherwise every test that installs would also ask the tool for the
+    developer's shell's completion. A test of completions names its shells,
+    or sets `SHELL` itself.
+    """
+    monkeypatch.setenv("SHELL", "/bin/sh")
+
+
 _INTEGRATION_DIR = Path(__file__).parent / "integration"
 
 

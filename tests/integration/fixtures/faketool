@@ -1,6 +1,7 @@
 #!/bin/sh
 # A small CLI for integration tests: top-level help listing subcommands,
-# per-subcommand help, and a --version line -- what the crawler walks.
+# per-subcommand help, and a --version line -- what the crawler walks --
+# and a completion generator, as clap and cobra tools have.
 case "$1" in
 --version)
     echo "faketool 2.3.1"
@@ -12,8 +13,9 @@ Usage: faketool [OPTIONS] COMMAND [ARGS]...
 Build and serve fake projects.
 
 Commands:
-  build  Build the project
-  serve  Serve the last build
+  build       Build the project
+  serve       Serve the last build
+  completion  Print a shell completion script
 
 Options:
   -v, --verbose       Print every step
@@ -45,6 +47,23 @@ Options:
       --format <FORMAT>  Log format [possible values: text, json]
   -h, --help             Print help
 EOF
+    ;;
+completion)
+    case "$2" in
+    bash) echo "complete -W 'build serve completion' faketool" ;;
+    zsh) printf '#compdef faketool\n_arguments "1: :(build serve completion)"\n' ;;
+    fish) echo "complete -c faketool -f -a 'build serve completion'" ;;
+    *)
+        cat <<'USAGE'
+Usage: faketool completion <SHELL>
+
+Print a shell completion script
+
+Arguments:
+  <SHELL>  [possible values: bash, zsh, fish]
+USAGE
+        ;;
+    esac
     ;;
 *)
     echo "error: unrecognized subcommand '$1'" >&2

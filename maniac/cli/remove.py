@@ -22,13 +22,18 @@ class RemoveOutcome:
 
     tool: str
     result: UninstallResult
+    completions: tuple[str, ...] = ()
+    """The shells whose completions went with the page (ADR-0066)."""
 
 
 def compute_remove(tool: str, config: Config | None = None) -> RemoveOutcome:
     from ..installer import uninstall_manpage
+    from ..orchestration.completions import remove_tool_completions
 
+    cfg = config or Config()
+    result = uninstall_manpage(tool, config=cfg)
     return RemoveOutcome(
-        tool=tool, result=uninstall_manpage(tool, config=config or Config())
+        tool=tool, result=result, completions=remove_tool_completions(tool, cfg)
     )
 
 
@@ -65,6 +70,8 @@ def _render_remove(target_console: Any, outcome: RemoveOutcome, config: Config) 
     # Each file is for -v, where the installer logs it: a release can be
     # dozens of pages (npm ships 68).
     lines = [f"restored the page it had replaced: {p}" for p in result.restored]
+    if outcome.completions:
+        lines.append(f"removed its completions: {', '.join(outcome.completions)}")
     lines += [
         f"removed {p}, though it had been edited since it was installed"
         for p in result.changed

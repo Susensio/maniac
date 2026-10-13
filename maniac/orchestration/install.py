@@ -51,6 +51,7 @@ from ..sources.lookup.resolution import (
 )
 from ..sources.manpages import find_installed_manpage_path
 from ..state.models import ActionState
+from .completions import CompletionOutcome, install_completions, zsh_fpath_hint
 from .context import ResolvedTool, resolve_tool, tool_from
 from .profile_fix import login_profile_fix
 
@@ -94,6 +95,10 @@ class InstallOutcome:
     """Each refusal `--force` overrode, said the way the user reads it."""
     unchanged: bool = False
     """The page was already current and left alone: installed, not redone."""
+    completions: tuple[CompletionOutcome, ...] = ()
+    """What was done about each shell's completion (ADR-0066)."""
+    fpath_hint: str | None = None
+    """The `.zshrc` line zsh needs to find maniac's completions, when missing."""
 
 
 def run_install(
@@ -106,8 +111,12 @@ def run_install(
     config: Config | None = None,
     bin_dir: str | Path | None = None,
     copy: Path | None = None,
+    shells: tuple[str, ...] = (),
 ) -> InstallOutcome:
     """Resolve `tool_name` through ADR-0016's tiers and report which one answered.
+
+    `shells` also installs the tool's completion for each (ADR-0066), once
+    it has a page: a refused tool gets neither.
 
     `copy` reinstalls a page for exactly the binary it recorded (`update`,
     for a page `--force` pinned): the earlier choice stands, so no refusal
@@ -146,7 +155,12 @@ def run_install(
         outcome = _select_page(
             tool, model=model, no_generate=no_generate, force=force, dry_run=dry_run
         )
-        return replace(outcome, resolution=_resolution(tool, bin_dir=copy.parent))
+        return _with_completions(
+            replace(outcome, resolution=_resolution(tool, bin_dir=copy.parent)),
+            tool,
+            shells,
+            dry_run=dry_run,
+        )
 
     try:
         tool = _resolve_global(tool_name, cfg, bin_dir)
@@ -173,7 +187,12 @@ def run_install(
     if not force and bin_dir is None:
         current = already_current(tool_name, cfg)
         if current is not None:
-            return replace(current, resolution=_resolution(tool, bin_dir=None))
+            return _with_completions(
+                replace(current, resolution=_resolution(tool, bin_dir=None)),
+                tool,
+                shells,
+                dry_run=dry_run,
+            )
 
     outcome = _select_page(
         tool,
@@ -182,10 +201,37 @@ def run_install(
         force=force,
         dry_run=dry_run,
     )
+    return _with_completions(
+        replace(
+            outcome,
+            resolution=_resolution(tool, bin_dir=None if tool.pinned else bin_dir),
+            overrides=tuple(overrides),
+        ),
+        tool,
+        shells,
+        dry_run=dry_run,
+    )
+
+
+def _with_completions(
+    outcome: InstallOutcome,
+    tool: ResolvedTool,
+    shells: tuple[str, ...],
+    *,
+    dry_run: bool,
+) -> InstallOutcome:
+    """`outcome`, with the tool's completions installed beside its page."""
+    has_page = (
+        outcome.tier is not None if dry_run else outcome.installed_path is not None
+    ) or outcome.unchanged
+    if not shells or not has_page:
+        return outcome
+    completions = install_completions(tool, shells, dry_run=dry_run)
+    zsh_linked = any(c.shell == "zsh" and c.installed for c in completions)
     return replace(
         outcome,
-        resolution=_resolution(tool, bin_dir=None if tool.pinned else bin_dir),
-        overrides=tuple(overrides),
+        completions=completions,
+        fpath_hint=zsh_fpath_hint(tool.config) if zsh_linked else None,
     )
 
 

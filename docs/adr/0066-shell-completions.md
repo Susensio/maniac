@@ -15,6 +15,7 @@ The user decided: completions are installed by default; the shell is the login s
 ## Decision
 
 `install` installs a tool's completions with its page, for the login shell, unless `--no-completions`.
+They go with the page: a tool that ends up with no page (refused, or `--no-generate` with nothing shipped or upstream) gets no completions either, so `list`, `update` and `remove`, which work page by page, account for every completion maniac installed.
 `--shell bash|zsh|fish` (repeatable) names the shells instead; the shells a tool's completions were installed for are recorded, and `update` keeps to them.
 
 A completion comes from the first of:

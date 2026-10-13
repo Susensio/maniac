@@ -30,6 +30,8 @@ from ..sources.providers.base import Provider
 from ..state.classification import classify
 from ..state.models import Candidate
 from ..state.pages import managed_pages
+from .completions import completion_for, login_shell, zsh_fpath_hint
+from .context import tool_from
 from .profile_fix import login_profile_fix
 
 
@@ -63,7 +65,45 @@ def explain(tool: str, config: Config) -> Explanation:
         current = already_current(tool, config)
         if current is not None:
             verdict = f"{current.detail} ({verdict})"
-    return Explanation(tool, [path, binary, page, sources], verdict)
+    completions = _completions_section(tool, located, refusal, config)
+    return Explanation(tool, [path, binary, page, sources, completions], verdict)
+
+
+def _completions_section(
+    tool: str, located: Located, refusal: str | None, config: Config
+) -> Section:
+    """For the login shell and each shell maniac installed one for: what is
+    installed, and where `install` would take each completion from (rule 3)."""
+    section = Section("Completions")
+    recorded = manifest.completions_of(tool, config)
+    login = login_shell()
+    shells = tuple(dict.fromkeys([*([login] if login else []), *sorted(recorded)]))
+    if login is None:
+        name = Path(os.environ.get("SHELL") or "$SHELL").name
+        section.lines.append(
+            f"your login shell ({name}) is none maniac installs completions for; "
+            "`install --shell bash|zsh|fish` names one"
+        )
+    if refusal is not None:
+        section.lines.append(f"none installed: {refusal}")
+        return section
+    resolved = tool_from(located, config=config)
+    for shell in shells:
+        found = completion_for(resolved, shell)
+        entry = recorded.get(shell)
+        if entry is not None:
+            state = f"installed at {_home(entry.path)}"
+        elif found.none_because is None:
+            state = "install would add it"
+        else:
+            state = None
+        line = f"{shell}: {found.describe(tool)}"
+        section.lines.append(f"{line}; {state}" if state else line)
+    if "zsh" in shells:
+        hint = zsh_fpath_hint(config)
+        if hint is not None:
+            section.lines.append(hint)
+    return section
 
 
 def _path_section(tool: str, located: Located) -> Section:

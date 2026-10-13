@@ -1,8 +1,11 @@
 """Option type aliases shared across CLI commands, declared once."""
 
+from enum import StrEnum
 from typing import Annotated
 
 import typer
+
+from ..sources.completions import SHELLS
 
 ModelOption = Annotated[
     str | None,
@@ -47,4 +50,23 @@ UnknownOption = Annotated[
     typer.Option(
         "--unknown", help="Only pages whose version nothing proves either way."
     ),
+]
+
+
+# The shells maniac installs completions for, named once (ADR-0066).
+Shell = StrEnum("Shell", {shell: shell for shell in SHELLS})
+
+
+ShellOption = Annotated[
+    list[Shell] | None,
+    typer.Option(
+        "--shell",
+        help="Install completions for this shell instead of your login shell's "
+        "($SHELL). Repeatable.",
+        show_default=False,
+    ),
+]
+NoCompletionsOption = Annotated[
+    bool,
+    typer.Option("--no-completions", help="Install the page only, no completions."),
 ]

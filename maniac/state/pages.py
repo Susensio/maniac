@@ -35,6 +35,8 @@ class PageRow:
     copy: Path | None = None
     drift: bool = False
     note: str | None = None
+    completions: tuple[str, ...] = ()
+    """The shells maniac installed this tool's completions for (ADR-0066)."""
 
 
 def managed_pages(
@@ -45,7 +47,8 @@ def managed_pages(
     With no names, every page maniac installed; with names, exactly those,
     and the names maniac manages no page for come back separately.
     """
-    entries = manifest.load(config)
+    read = manifest.read(config)
+    entries = read.entries
     primaries = {
         tool: entry for tool, entry in entries.items() if entry.group in (None, tool)
     }
@@ -56,10 +59,20 @@ def managed_pages(
         named = list(dict.fromkeys(tools))
         wanted = [tool for tool in named if tool in primaries]
         unmanaged = [tool for tool in named if tool not in primaries]
-    return [_page_row(tool, primaries[tool], config) for tool in wanted], unmanaged
+    return [
+        _page_row(
+            tool, primaries[tool], config, tuple(sorted(read.completions.get(tool, {})))
+        )
+        for tool in wanted
+    ], unmanaged
 
 
-def _page_row(tool: str, entry: manifest.Entry, config: Config) -> PageRow:
+def _page_row(
+    tool: str,
+    entry: manifest.Entry,
+    config: Config,
+    completions: tuple[str, ...] = (),
+) -> PageRow:
     judged = managed_page(named_candidate(tool), entry, config)
     return PageRow(
         tool=tool,
@@ -70,6 +83,7 @@ def _page_row(tool: str, entry: manifest.Entry, config: Config) -> PageRow:
         copy=entry.binary,
         drift=judged.drift,
         note=judged.note,
+        completions=completions,
     )
 
 

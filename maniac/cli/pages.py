@@ -84,6 +84,7 @@ def _render(rows: list[Any]) -> None:
     table.add_column("Documents", overflow="fold")
     table.add_column("Installed", overflow="fold")
     table.add_column("Source", no_wrap=True)
+    table.add_column("Completions", no_wrap=True)
     notes = []
     for row in rows:
         table.add_row(
@@ -92,6 +93,7 @@ def _render(rows: list[Any]) -> None:
             Text(row.documented or "-"),
             Text(row.installed or "-"),
             row.source.value,
+            Text(" ".join(row.completions) or "-"),
         )
         if row.copy is not None:
             notes.append(f"{row.tool}: documents {_home(row.copy)}")
@@ -122,6 +124,7 @@ def update(
     you name it to `maniac install`. Each tool commits on its own, so an
     interrupted update resumes by running it again.
     """
+    from ..orchestration.completions import recorded_shells
     from ..orchestration.install import InstallRefused, run_install
     from ..state.pages import managed_pages
     from .install import render_install
@@ -160,6 +163,8 @@ def update(
                     dry_run=dry_run,
                     config=cfg,
                     copy=row.copy,
+                    # Only the shells maniac installed completions for (rule 1).
+                    shells=recorded_shells(row.tool, cfg),
                 )
             if not render_install(console, outcome, dry_run=dry_run):
                 failures += 1

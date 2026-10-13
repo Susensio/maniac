@@ -154,6 +154,8 @@ def maniac(
     pathcache.clear_login_path()
     monkeypatch.setenv("PATH", os.pathsep.join(map(str, login + tooling)))
     monkeypatch.setenv("SHELL", "/bin/sh")
+    # Where zsh's startup files are read, for the `$fpath` hint (ADR-0066).
+    monkeypatch.setenv("ZDOTDIR", str(tmp_path / "zdotdir"))
     monkeypatch.setenv("MANPATH", str(Config().man_dir.parent))
     monkeypatch.setenv("COLUMNS", "120")
     # The canned model answers; this only lets maniac pick a model to ask.
@@ -179,6 +181,10 @@ def test_every_command_as_a_user_sees_it(
     shows("install", "cowsay", "--no-generate")
     shows("install", "nowhere-xyz")
     shows("install")
+    # Completions: the login shell here (`/bin/sh`) has none; name shells.
+    shows(
+        "install", "faketool", "--shell", "zsh", "--shell", "fish", when="completions"
+    )
 
     # Look at them.
     shows("list", terminal=True)
@@ -199,7 +205,7 @@ def test_every_command_as_a_user_sees_it(
     shows("why", "nowhere-xyz")
 
     # Take them out.
-    shows("remove", "marked", "nowhere-xyz")
+    shows("remove", "marked", "faketool", "nowhere-xyz")
     shows("list", terminal=True, when="after remove")
 
     # The help a user reads.

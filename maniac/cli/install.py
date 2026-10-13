@@ -14,7 +14,14 @@ import typer
 from ..exceptions import ManiacError
 from ..orchestration.install import InstallOutcome, InstallRefused
 from . import app, console, get_config, require_login_path
-from .options import DryRunOption, ForceOption, ModelOption, NoGenerateOption
+from .options import (
+    DryRunOption,
+    ForceOption,
+    ModelOption,
+    NoCompletionsOption,
+    NoGenerateOption,
+    ShellOption,
+)
 
 
 def _no_page_installed(outcome: InstallOutcome, *, dry_run: bool) -> bool:
@@ -55,7 +62,31 @@ def render_install(
         target_console.print(f"[bold green]{tool}[/bold green]   {verdict}: {detail}")
     for line in _resolution_lines(outcome):
         target_console.print(f"  [dim]{escape(line)}[/dim]")
+    for completion in outcome.completions:
+        style = "dim" if completion.installed else "yellow"
+        target_console.print(
+            f"  [{style}]{completion.shell} completion: "
+            f"{escape(completion.detail)}[/{style}]",
+            soft_wrap=True,
+        )
+    if outcome.fpath_hint is not None:
+        target_console.print(f"  [yellow]{escape(outcome.fpath_hint)}[/yellow]")
     return not _no_page_installed(outcome, dry_run=dry_run)
+
+
+def completion_shells(
+    shells: list[Any] | None, *, no_completions: bool
+) -> tuple[str, ...]:
+    """The shells to install completions for: those named, else the login
+    shell's; none under `--no-completions` or for a shell maniac has none for."""
+    if no_completions:
+        return ()
+    if shells:
+        return tuple(dict.fromkeys(shell.value for shell in shells))
+    from ..orchestration.completions import login_shell
+
+    login = login_shell()
+    return (login,) if login is not None else ()
 
 
 def _resolution_lines(outcome: InstallOutcome) -> list[str]:
@@ -103,12 +134,17 @@ def install(
     no_generate: NoGenerateOption = False,
     force: ForceOption = False,
     dry_run: DryRunOption = False,
+    shell: ShellOption = None,
+    no_completions: NoCompletionsOption = False,
 ) -> None:
-    """Install a page for each tool: shipped, else upstream, else generated.
+    """Install a page for each tool, and its shell completions.
 
-    Shipped is the page the tool installed itself; upstream, its project's
-    page for the installed version; generated, one an LLM writes from its
-    --help and its project's docs.
+    The page: shipped (the one the tool installed itself), else upstream
+    (its project's page for the installed version), else generated (one an
+    LLM writes from its --help and its project's docs).
+
+    Completions, for your login shell or each --shell: shipped, else printed
+    by the tool's own generator. Never written by an LLM.
 
     A page already current is left alone. With no tools it does nothing, so
     `maniac scan --available | xargs maniac install` is safe when the list
@@ -124,6 +160,7 @@ def install(
 
     from ..orchestration.install import run_install
 
+    shells = completion_shells(shell, no_completions=no_completions)
     failures = 0
     for index, tool in enumerate(tools):
         if index:
@@ -137,6 +174,7 @@ def install(
                     force=force,
                     dry_run=dry_run,
                     config=cfg,
+                    shells=shells,
                 )
             if not render_install(console, outcome, dry_run=dry_run):
                 # No page landed on disk for this tool -- whether tiers 1-2

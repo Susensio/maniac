@@ -259,5 +259,6 @@ def test_list_on_a_terminal_draws_the_frame_scan_draws(
         "Documents",
         "Installed",
         "Source",
+        "Completions",
     ]
     assert "│ older │ outdated  │ 1.0.0" in output.getvalue()
