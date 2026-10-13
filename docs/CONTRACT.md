@@ -1,18 +1,18 @@
 # How maniac decides
 
-> Adopted in [ADR-0065](adr/0065-a-user-contract-and-a-smaller-command-surface.md), live since 2026-10-10.
+> Adopted in [ADR-0065](adr/0065-a-user-contract-and-a-smaller-command-surface.md), live since 2026-10-10; completions added by [ADR-0066](adr/0066-shell-completions.md).
 
-maniac gives the command-line tools you installed yourself a correct `man` page.
+maniac gives the command-line tools you installed yourself a correct `man` page, and their shell completions where the tool provides them.
 Everything a user can observe it doing follows from the four rules below.
 A behaviour that cannot be traced to one of them is a bug, either in maniac or in this document.
 
 ## The rules
 
-### 1. maniac changes only pages it installed, or tools you name
+### 1. maniac changes only pages and completions it installed, or tools you name
 
 - `install` acts on the tools you name.
-- `update` and `remove` act only on pages maniac installed.
-- A page maniac did not install is reported and never changed.
+- `update` and `remove` act only on pages and completions maniac installed.
+- A page or completion maniac did not install is reported and never changed, and maniac never edits your shell's startup files.
   The one exception is a tool you name whose page sits exactly where maniac would write: `--force` replaces it, after keeping a backup that `remove` puts back.
 
 Where `install` would refuse, `--force` installs anyway and prints each refusal it overrode (`forced: ...`).
@@ -39,7 +39,8 @@ An activated virtualenv, a project's mise pin or a direnv directory does not cha
   - which `$PATH` it used and what it left out;
   - which binary that reaches, which installer put it there, and at what version;
   - which page `man` shows today and whose it is;
-  - each source tried below, and why it was used or passed over.
+  - each source tried below, and why it was used or passed over;
+  - for each shell, where its completion would come from, or why there is none.
 
 ### 4. When the evidence is missing, maniac says "unknown"
 
@@ -59,6 +60,18 @@ maniac takes the first of these that exists:
 
 Only `generated` costs a model call, and `--no-generate` forbids it.
 
+## Where a completion comes from
+
+For your login shell (`$SHELL`), or each shell `--shell` names (bash, zsh, fish), maniac takes the first of these that exists:
+
+| Source | What it is |
+|---|---|
+| `shipped` | The completion file the tool itself installed, linked where the shell finds it. |
+| `generated` | The tool's own output for that shell (`tool completion zsh` and the like), saved and linked. |
+
+A completion is never written by a model: it is code your shell runs.
+A tool with neither has no completion, and `--no-completions` skips them.
+
 ## States
 
 | State | Meaning |
@@ -73,10 +86,10 @@ Only `generated` costs a model call, and `--no-generate` forbids it.
 
 | Command | Acts on | Does |
 |---|---|---|
-| `install <tool>...` | the tools you name | Finds or generates each page and installs it, printing what it documents. |
-| `update` | maniac's pages | Reinstalls each page whose tool changed version. |
-| `remove <tool>...` | maniac's pages | Removes the page and restores any page it replaced. |
-| `list` | maniac's pages | Each page: the version it documents, the version installed, its state. |
+| `install <tool>...` | the tools you name | Finds or generates each page and installs it with the tool's completions, printing what it documents. |
+| `update` | maniac's pages | Reinstalls each page and completion whose tool changed version. |
+| `remove <tool>...` | maniac's pages | Removes the page and completions, and restores any page it replaced. |
+| `list` | maniac's pages | Each page: the version it documents, the version installed, its state, the shells it has completions for. |
 | `scan` | your `$PATH` | Your other tools and the state of their pages, best effort, with every skip counted. |
 | `why <tool>` | one tool | The full decision trace (rule 3). |
 
@@ -94,6 +107,7 @@ Edge cases are decided by the rules, not by new decisions:
 - *A mise shim?* The binary mise runs for it from `$HOME` (rule 2).
 - *A page installed before maniac recorded versions?* `unknown`; `update` leaves it alone until you name it (rules 1 and 4).
 - *A wrapper script no installer claims?* Its page is generated from its own help, and its version is its own `--version` (rule 4).
+- *zsh's `$fpath` lacks maniac's completion directory?* maniac prints the line to add to `.zshrc`, and does not add it (rule 1).
 - *A setup that builds `$PATH` only in an interactive `.bashrc`?* Those tools are not on the login `$PATH`; `why` shows exactly that (rules 2 and 3).
 
 ## Changing this contract
