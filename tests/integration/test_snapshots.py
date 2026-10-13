@@ -137,7 +137,17 @@ def maniac(
     for tool in TOOLING:
         found = shutil.which(tool)
         assert found is not None, f"the snapshot journey needs `{tool}`"
-        if Path(found).parent not in tooling + login:
+        if tool == "node":
+            # node's own directory holds its bundled npm, npx and corepack,
+            # which npm installed globally: off the login `$PATH`, `scan`
+            # would count them, as many as this machine's node ships. Only
+            # node itself is lent. (man and groff find their helpers through
+            # `$PATH`, so their directories go in whole.)
+            lent = tmp_path / "node-only"
+            lent.mkdir()
+            (lent / "node").symlink_to(found)
+            tooling.append(lent)
+        elif Path(found).parent not in tooling + login:
             tooling.append(Path(found).parent)
     login_path = os.pathsep.join(map(str, login))
     monkeypatch.setattr(pathcache, "_spawn_login_shell", lambda: login_path)
