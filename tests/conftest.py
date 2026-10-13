@@ -110,6 +110,25 @@ def _login_path_is_the_test_path(
     pathcache.clear_login_path()
 
 
+@pytest.fixture(autouse=True)
+def _no_seed_unless_a_test_asks(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Generation finds no seed page in unit tests.
+
+    `seed_for` asks `man -w` about this machine and the repository's default
+    branch over the network; a unit test exercising synthesis must not
+    depend on either. `test_seed.py` calls `seed_for` itself, and a test of
+    the seed's path through synthesis patches this name back. The
+    integration suite runs the real thing.
+    """
+    if request.node.get_closest_marker("integration") is None:
+        for user in ("context", "why"):
+            monkeypatch.setattr(
+                f"maniac.orchestration.{user}.seed_for", lambda *args, **kwargs: None
+            )
+
+
 _INTEGRATION_DIR = Path(__file__).parent / "integration"
 
 

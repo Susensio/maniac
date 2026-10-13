@@ -23,12 +23,10 @@ Settled decisions live in `docs/adr/`; defects with a line to sit beside are mar
 
 ## Features and discovery
 
-- Seed synthesis with an outdated, human-written page of the same software.
-  A page documenting another version carries structure, prose and examples that `--help` lacks: a losing `$PATH` copy's own page (`Installation.losers`, retained for this and shown nowhere), an upstream page at a non-matching tag (refused by tier 2, ADR-0016), a page maniac replaced (its backup).
-  Give it to the model labelled with the version it documents; the current `--help` wins wherever they disagree, and options it no longer lists are dropped.
-  Only human-written pages qualify: one maniac synthesized (provenance signature, `Tier.SYNTHESIS`) or help2man generated (`is_help2man_content`) is derived from the same help and docs the model already gets, so it is no better a seed than none and would carry the last model's errors forward.
-  A loser's page needs proof of the same software first -- the same package or repository as the winner, as ADR-0055 requires -- since a shared name is not evidence.
-  Next step: decide how the seed is recorded in provenance; the recorded version stays the current binary's under ADR-0019.
+- Seed generation from two more pages of the same software (`candidates.seed_for` takes the first it finds).
+  A losing `$PATH` copy's shipped page (`Installation.losers`), once proven the same software by package or repository (ADR-0055); `locate` does not collect losers yet, only `locate_all` does.
+  The page `install --force` replaced (its backup), if something beyond the shared name ties it to the tool.
+- Measure seeding with `maniac dev bench`: the same tools with and without a seed, judged by `dev eval`.
 - Extract bounded documentation from installed package roots (system packages are out of scope, ADR-0059): recognized local docs, Info pages, package metadata as supplementary context, and absolute-path help.
   Preserve each source's provenance.
 - Add tldr-pages as an examples source, preferring an installed tealdeer cache before its release zip and recording provenance in generated output.

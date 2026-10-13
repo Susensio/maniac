@@ -7,6 +7,7 @@ what those commands do.
 """
 
 import os
+from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
@@ -20,6 +21,7 @@ from ..sources.lookup.candidates import (
     Source,
     attempts,
     repository_of,
+    seed_for,
 )
 from ..sources.lookup.resolution import Located, Outcome, locate, this_shell_runs
 from ..sources.manpages import find_installed_manpage_path
@@ -253,6 +255,7 @@ def _sources_section(
         section.lines.append(
             "generated: from its own --help (`why --help-text` shows it)"
         )
+        section.lines.append(_seed_line(tool, None, None, lambda: None, config))
         return section, "generated"
 
     provider, inst = claim
@@ -279,9 +282,34 @@ def _sources_section(
     source = repository[0] if repository else None
     docs = f" and {source.identity}'s docs (`why --docs`)" if source is not None else ""
     section.lines.append(f"generated: from its own --help (`why --help-text`){docs}")
+    section.lines.append(
+        _seed_line(
+            tool,
+            provider,
+            inst,
+            lambda: repository[0] if repository else known_repository(),
+            config,
+        )
+    )
     if not definitive:
         return section, "refused: the upstream check did not complete"
     return section, "generated"
+
+
+def _seed_line(
+    tool: str,
+    provider: Provider | None,
+    inst: Installation | None,
+    repository: Callable[[], RepoSource | None],
+    config: Config,
+) -> str:
+    """Which page people wrote for another version generation would start from."""
+    seed = seed_for(
+        tool, provider, inst, repository, config=config, cache_dir=config.cache_dir
+    )
+    if seed is None:
+        return "seed: none found -- no page people wrote for another version of it"
+    return f"seed: {seed.label}, {_home(seed.path)}"
 
 
 def _attempt_line(attempt: Attempt, inst: Installation) -> str:

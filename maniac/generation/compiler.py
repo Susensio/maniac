@@ -59,12 +59,21 @@ def require_supported_pandoc() -> str | None:
     return pandoc_bin
 
 
-def build_provenance_header(tool_name: str, model: str | None = None) -> str:
-    """Construct structured provenance comment header for roff files."""
+def build_provenance_header(
+    tool_name: str, model: str | None = None, seed: str | None = None
+) -> str:
+    """Construct structured provenance comment header for roff files.
+
+    `seed` names the page people wrote for another version that generation
+    started from (`Seed.label`), when there was one.
+    """
     now_str = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%SZ")
     model_str = f" | Model: {model}" if model else ""
+    # `|` separates the header's fields; a label never needs one.
+    seed_str = f" | Seed: {seed.replace('|', '/')}" if seed else ""
     return (
-        f'{PROVENANCE_SIGNATURE}\n.\\" Tool: {tool_name} | Date: {now_str}{model_str}\n'
+        f'{PROVENANCE_SIGNATURE}\n.\\" Tool: {tool_name} | Date: {now_str}'
+        f"{model_str}{seed_str}\n"
     )
 
 
@@ -91,6 +100,7 @@ def compile_to_man(
     footer: str | None = None,
     timeout: int | None = None,
     config: Config | None = None,
+    seed: str | None = None,
 ) -> bool:
     """Compile Markdown manpage to roff format using pandoc with provenance header.
 
@@ -137,7 +147,7 @@ def compile_to_man(
             return False
 
         header = build_provenance_header(
-            tool_name=tool_name or out_path.stem, model=model
+            tool_name=tool_name or out_path.stem, model=model, seed=seed
         )
         current_content = out_path.read_text(encoding="utf-8", errors="replace")
         if not current_content.startswith(PROVENANCE_SIGNATURE):

@@ -2161,3 +2161,25 @@ def test_install_reinstalls_a_page_whose_version_is_unknown(
     outcome = run_install("eza", no_generate=True, config=cfg)
 
     assert outcome.detail.startswith("upstream page (0.23.5)")
+
+
+def test_install_names_the_seed_a_generated_page_started_from(tmp_path: Path) -> None:
+    from maniac.orchestration.install import _generated_detail
+
+    result = PipelineResult(
+        tool_name="tool",
+        repo_source=None,
+        command_count=3,
+        doc_file_count=0,
+        context_path=None,
+        markdown_path=tmp_path / "tool.1.md",
+        roff_path=None,
+        installed_path=None,
+        markdown_content="# doc",
+        seed="the tool package's page (1.4.0)",
+    )
+
+    assert _generated_detail(result) == (
+        "generated page, from --help (3 commands), "
+        "seeded with the tool package's page (1.4.0)"
+    )

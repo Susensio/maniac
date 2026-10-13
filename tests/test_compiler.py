@@ -187,3 +187,30 @@ def test_compile_to_man_refuses_an_old_pandoc_without_running_it(
 
     with pytest.raises(UnsupportedPandoc):
         compile_to_man("% TOOL(1)\n# NAME\ntool", tmp_path / "tool.1", tool_name="tool")
+
+
+def test_the_provenance_header_names_the_seed(tmp_path: Path) -> None:
+    """Read back the way recovery reads every header (`read_provenance_header`)."""
+    from maniac.generation.compiler import build_provenance_header
+    from maniac.manifest import read_provenance_header
+
+    page = tmp_path / "tool.1"
+    page.write_text(
+        build_provenance_header("tool", "m", seed="the a|b package's page (1.0)")
+        + ".TH TOOL 1\n",
+        encoding="utf-8",
+    )
+
+    header = read_provenance_header(page)
+
+    assert header is not None
+    assert (header["model"], header["seed"]) == ("m", "the a/b package's page (1.0)")
+    assert "seed" not in (read_provenance_header(_unseeded(tmp_path)) or {})
+
+
+def _unseeded(tmp_path: Path) -> Path:
+    from maniac.generation.compiler import build_provenance_header
+
+    page = tmp_path / "plain.1"
+    page.write_text(build_provenance_header("plain", "m") + ".TH PLAIN 1\n")
+    return page

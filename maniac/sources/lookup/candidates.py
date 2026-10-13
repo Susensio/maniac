@@ -5,24 +5,34 @@ The order is written here once. `attempts` walks it for `install` and `why`;
 `upstream_attempt`, on its own schedule (the upstream check runs in the
 background, for rows nothing local answered). Callers keep their verdicts,
 persistence and freshness policy (ADR-0040); generating a page is what is
-left when no attempt finds one.
+left when no attempt finds one, and `seed_for` picks, in its own order, the
+page people wrote for another version that generation starts from.
 """
 
 from collections.abc import Callable, Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 from pathlib import Path
 
+from ... import manifest
 from ...config import Config
 from ...exceptions import MalformedToolMetadata
 from ...models import Installation, LocalRepoSource, RepoSource
 from ..docs import discover_repo_manpages
 from ..docs.pages import discovered_manpage_uri
 from ..documentation import documentation_source
-from ..manpages import manpage_documents, read_manpage_source, select_primary_manpage
+from ..manpages import (
+    find_installed_manpage_path,
+    is_help2man_content,
+    manpage_documents,
+    read_manpage_source,
+    select_primary_manpage,
+)
+from ..packages import ExternalPageFreshness, verify_external_page
 from ..pathcache import resolve_cached
 from ..providers.base import DirectPageProvider, Provider
 from ..providers.registry import registry
+from ..roff import header_version
 
 
 @dataclass(frozen=True, slots=True)
@@ -248,3 +258,99 @@ def attempts(
     yield upstream_attempt(
         repository(), installation, config=config, cache_dir=cache_dir
     )
+
+
+SEED_MAX_CHARS = 40_000
+"""A seed is context, not the answer: enough of a page to carry its structure."""
+
+
+@dataclass(frozen=True, slots=True)
+class Seed:
+    """A page people wrote for another version of the same software.
+
+    Generation reads it for structure, prose and examples `--help` lacks;
+    the current `--help` wins wherever they disagree. `documents` is the
+    version it was written for, None when nothing says.
+    """
+
+    path: Path
+    content: str
+    origin: str
+    documents: str | None
+
+    @property
+    def label(self) -> str:
+        """What the seed is, the way the page header and `why` name it."""
+        version = self.documents or "version unknown"
+        return f"{self.origin} ({version})"
+
+
+def seed_for(
+    tool: str,
+    provider: Provider | None,
+    installation: Installation | None,
+    repository: Callable[[], RepoSource | None],
+    *,
+    config: Config,
+    cache_dir: str | Path | None = None,
+) -> Seed | None:
+    """The page generation starts from, if one exists; first found wins.
+
+    1. The page maniac installed before from the tool itself or its
+       repository -- for this tool, so the same software, written by people.
+    2. The page `man` shows today, when dpkg proves its package is the same
+       software at another version.
+    3. The repository's own page from its default branch or latest release:
+       the installation's repository, so the same software by construction.
+
+    Only pages people wrote: never one maniac generated, nor one help2man
+    made from the same `--help` the model already gets. A shared name alone
+    is no evidence, so a page nothing ties to this software is passed over.
+    """
+    entry = manifest.lookup(tool, config=config)
+    if (
+        entry is not None
+        and entry.tier is not manifest.Tier.SYNTHESIS
+        and entry.target is not None
+    ):
+        seed = _seed_from(entry.target, tool, "the page maniac installed before")
+        if seed is not None:
+            return replace(seed, documents=entry.version or seed.documents)
+
+    if installation is not None and installation.version is not None:
+        shown = find_installed_manpage_path("man", tool)
+        if shown is not None:
+            verdict = verify_external_page(
+                shown, package=installation.package, version=installation.version
+            )
+            if verdict.freshness is ExternalPageFreshness.MISMATCH:
+                seed = _seed_from(shown, tool, f"the {verdict.owner} package's page")
+                if seed is not None:
+                    return replace(seed, documents=verdict.version or seed.documents)
+
+    if provider is None or installation is None:
+        return None
+    source = repository()
+    if source is None or isinstance(source, LocalRepoSource):
+        return None
+    found, _ = discover_repo_manpages(
+        source, installation.binary, cache_dir=cache_dir, config=config, version=None
+    )
+    if not found:
+        return None
+    return _seed_from(found[0], tool, f"the current page in {source.identity}")
+
+
+def _seed_from(page: Path, tool: str, origin: str) -> Seed | None:
+    """`page` as a seed, if people wrote it for `tool`; None otherwise."""
+    try:
+        content = read_manpage_source(page)
+    except (OSError, UnicodeError, EOFError):
+        return None
+    if (
+        content.startswith(manifest.PROVENANCE_SIGNATURE)
+        or is_help2man_content(content)
+        or not manpage_documents(content, tool)
+    ):
+        return None
+    return Seed(page, content[:SEED_MAX_CHARS], origin, header_version(content))

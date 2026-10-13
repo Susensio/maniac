@@ -25,6 +25,7 @@ from ..models import DocFile, PipelineResult
 from ..sources.crawler import find_subcommands, format_help_block, get_version
 from ..sources.docs import fetch_and_extract_docs
 from ..sources.docs.extraction import format_docs_section
+from ..sources.lookup.candidates import Seed
 from .context import ResolvedTool
 
 __all__ = ["synthesize"]
@@ -60,6 +61,9 @@ def synthesize(
     help_block = format_help_block(tree)
     docs_block = format_docs_section(doc_files)
     _report_material(tool, tree=tree, doc_files=doc_files, matched=version_matched)
+    seed = tool.seed
+    if seed is not None:
+        logger.info("Seeding generation", tool=tool.tool_name, seed=seed.label)
 
     context_file = inter_dir / f"{tool.tool_name}_context.md"
     if not dry_run:
@@ -67,13 +71,20 @@ def synthesize(
             context_file,
             f"# {tool.tool_name} Extracted Context\n\n"
             f"## CLI Help\n```text\n{help_block}\n```\n\n"
-            f"## Repository Documentation\n{docs_block}\n",
+            f"## Repository Documentation\n{docs_block}\n"
+            + (
+                f"\n## Seed: {seed.label}\n```roff\n{seed.content}\n```\n"
+                if seed is not None
+                else ""
+            ),
             "Saved intermediate context",
         )
     full_prompt = build_synthesis_prompt(
         tool_name=tool.tool_name,
         help_text=help_block,
         doc_text=docs_block,
+        seed_text=seed.content if seed is not None else None,
+        seed_label=seed.label if seed is not None else None,
     )
 
     md_file = out_dir / f"{tool.tool_name}.1.md"
@@ -92,6 +103,7 @@ def synthesize(
             roff_path=None,
             installed_path=None,
             markdown_content=dummy_md,
+            seed=seed,
         )
 
     # Before the model is paid for: a pandoc that cannot compile a usable
@@ -123,6 +135,7 @@ def synthesize(
             else None
         ),
         config=cfg,
+        seed=seed.label if seed is not None else None,
     )
     actual_roff_path = roff_file if compiled else None
 
@@ -150,6 +163,7 @@ def synthesize(
         roff_path=actual_roff_path,
         installed_path=installed_path,
         markdown_content=markdown_content,
+        seed=seed,
     )
 
 
@@ -244,6 +258,7 @@ def _result(
     roff_path: Path | None,
     installed_path: Path | None,
     markdown_content: str,
+    seed: Seed | None,
 ) -> PipelineResult:
     return PipelineResult(
         tool_name=tool.tool_name,
@@ -255,4 +270,5 @@ def _result(
         roff_path=roff_path,
         installed_path=installed_path,
         markdown_content=markdown_content,
+        seed=seed.label if seed is not None else None,
     )

@@ -15,7 +15,7 @@ from pathlib import Path
 from ..config import Config
 from ..models import Installation, RepoSource
 from ..sources.lookup import resolution
-from ..sources.lookup.candidates import repository_of
+from ..sources.lookup.candidates import Seed, repository_of, seed_for
 from ..sources.providers.base import Provider
 
 __all__ = ["ResolvedTool", "resolve_tool"]
@@ -88,6 +88,19 @@ class ResolvedTool:
         if repository.error is not None:
             raise repository.error
         return repository.source
+
+    @cached_property
+    def seed(self) -> Seed | None:
+        """The page people wrote for another version that generation starts
+        from (`candidates.seed_for`), or None."""
+        return seed_for(
+            self.tool_name,
+            self.provider,
+            self.installation,
+            lambda: self.documentation_source,
+            config=self.config,
+            cache_dir=self.cache_dir,
+        )
 
 
 def resolve_tool(

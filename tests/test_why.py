@@ -170,3 +170,24 @@ def test_path_names_only_left_out_directories_holding_the_tool(
         f"left out: {venv}, an activated virtualenv (VIRTUAL_ENV) (holds a copy of this tool)",
         "2 more this shell has are left out; none holds this tool",
     ]
+
+
+def test_why_names_the_seed_generation_would_start_from(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, no_page: None
+) -> None:
+    """Rule 3: `why` says which page people wrote generation would build on."""
+    from maniac.sources.lookup.candidates import Seed
+
+    _script(tmp_path / "bin" / "tool", "tool 2")
+    monkeypatch.setenv("PATH", str(tmp_path / "bin"))
+    monkeypatch.setattr(
+        "maniac.sources.lookup.resolution.find_installation", lambda n, **_: None
+    )
+    seed = Seed(tmp_path / "old.1", ".TH TOOL 1", "an old page", "1.0")
+    monkeypatch.setattr(
+        "maniac.orchestration.why.seed_for", lambda *args, **kwargs: seed
+    )
+
+    sources = _lines("tool", "Sources")
+
+    assert sources[-1] == f"seed: an old page (1.0), {tmp_path / 'old.1'}"

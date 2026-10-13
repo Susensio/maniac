@@ -492,3 +492,44 @@ def test_synthesize_refuses_an_old_pandoc_before_calling_the_model(
 
     with pytest.raises(UnsupportedPandoc, match=r"pandoc 3\.1\.3 is too old"):
         synthesize(_resolved(output_dir=tmp_path))
+
+
+def test_a_seed_reaches_the_prompt_the_page_header_and_the_result(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The seed is context for the model, named in the page's provenance and
+    in what `install` reports (CONTRACT.md rule 3)."""
+    from maniac.sources.lookup.candidates import Seed
+
+    seed = Seed(tmp_path / "old.1", ".TH TESTTOOL 1", "an old page", "1.0.0")
+    monkeypatch.setattr(
+        "maniac.orchestration.context.seed_for", lambda *args, **kwargs: seed
+    )
+    _help_tree(monkeypatch, {"testtool": "Usage: testtool"})
+    monkeypatch.setattr(
+        "maniac.orchestration.pipeline.fetch_and_extract_docs",
+        lambda *args, **kwargs: _one_doc_file(True),
+    )
+    _mock_synthesis(monkeypatch, tmp_path)
+    prompts: list[str] = []
+    monkeypatch.setattr(
+        "maniac.orchestration.pipeline.run_llm_synthesis",
+        lambda prompt, **kwargs: prompts.append(prompt) or "% TESTTOOL(1)",
+    )
+    compiled: dict[str, object] = {}
+
+    def _compile(markdown_text: str, output_file: str | Path, **kwargs: object) -> bool:
+        compiled.update(kwargs)
+        Path(output_file).write_text(".TH TESTTOOL 1\n", encoding="utf-8")
+        return True
+
+    monkeypatch.setattr("maniac.orchestration.pipeline.compile_to_man", _compile)
+
+    result = synthesize(
+        _resolved(version="2.0.0", output_dir=tmp_path / "out"), install=True
+    )
+
+    [prompt] = prompts
+    assert "ANOTHER VERSION: an old page (1.0.0)" in prompt
+    assert compiled["seed"] == "an old page (1.0.0)"
+    assert result.seed == "an old page (1.0.0)"

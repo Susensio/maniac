@@ -220,8 +220,9 @@ install  generated
 
 1. **Crawl**: the `--help` tree, subcommands included, with cycle protection, pager suppression and ANSI stripping. A failed `--help` counts only when its output contains a recognizable `usage:` line.
 2. **Documentation**: the project's reference material, concepts and keybindings from the repository at the installed version, leaving out build scripts, CI configuration and changelogs.
-3. **Write**: an LLM structures the page around the tool's domain (sessions, buffers, modes), separates global options from subcommands, and adds worked examples.
-4. **Compile**: pandoc turns it into roff, installed under `~/.local/share/man/`.
+3. **Seed**: a page people wrote for another version of the same software, when one exists: the page maniac installed before from the tool or its repository, a distro package's page that dpkg proves is the same software, or the repository's current page. The model keeps its structure, prose and examples; the current `--help` wins wherever they disagree. A page maniac or help2man generated never qualifies, and the page's header names the seed.
+4. **Write**: an LLM structures the page around the tool's domain (sessions, buffers, modes), separates global options from subcommands, and adds worked examples.
+5. **Compile**: pandoc turns it into roff, installed under `~/.local/share/man/`.
 
 Root `--help` alone is enough when nothing better exists, and repository documentation alone when the crawl fails; generation stops only when neither gives usable material. A page written from documentation for another version records no version, so it reads `unknown`.
 

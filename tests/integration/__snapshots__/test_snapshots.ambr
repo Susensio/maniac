@@ -361,6 +361,7 @@
   Sources  shipped: none in <npm>/lib/node_modules/cowsay
            upstream: piuccio/cowsay at 1.6.0: the check failed (network?), so install refuses to generate
            generated: from its own --help (`why --help-text`) and piuccio/cowsay's docs (`why --docs`)
+           seed: none found -- no page people wrote for another version of it
   install  refused: the upstream check did not complete
   
   '''
@@ -377,6 +378,7 @@
   Sources  shipped: no installer, so no install root to look in
            upstream: no installer, so no repository or version known
            generated: from its own --help (`why --help-text` shows it)
+           seed: none found -- no page people wrote for another version of it
   install  already up to date (faketool 2.3.1); --force reinstalls it (generated)
   
   '''

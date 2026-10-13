@@ -49,15 +49,15 @@ def verify_page_header(
         return ExternalPageFreshness.UNVERIFIED
     if not manpage_documents(prefix, binary_name):
         return ExternalPageFreshness.UNVERIFIED
-    header_version = _header_version(prefix)
-    if header_version is None:
+    declared = header_version(prefix)
+    if declared is None:
         return ExternalPageFreshness.UNVERIFIED
-    if header_version == version:
+    if declared == version:
         return ExternalPageFreshness.MATCH
     return ExternalPageFreshness.MISMATCH
 
 
-def _header_version(prefix: str) -> str | None:
+def header_version(prefix: str) -> str | None:
     """Field 4 (1-indexed) of the page's `.TH`/`.Dt` line, if it parses cleanly."""
     match = _TH_ARGS.search(prefix) or _DT_ARGS.search(prefix)
     if match is None:

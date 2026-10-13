@@ -32,6 +32,8 @@ class ExternalPageVerification:
 
     freshness: ExternalPageFreshness
     owner: str | None
+    version: str | None = None
+    """The owner's upstream version, once proven the same software."""
 
 
 def _package_name(package: str) -> str:
@@ -337,6 +339,7 @@ def verify_external_page(
     package_version = _debian_version(owner)
     if package_version is None:
         return ExternalPageVerification(ExternalPageFreshness.UNVERIFIED, owner)
-    if _debian_upstream_version(package_version) == version:
-        return ExternalPageVerification(ExternalPageFreshness.MATCH, owner)
-    return ExternalPageVerification(ExternalPageFreshness.MISMATCH, owner)
+    upstream = _debian_upstream_version(package_version)
+    if upstream == version:
+        return ExternalPageVerification(ExternalPageFreshness.MATCH, owner, upstream)
+    return ExternalPageVerification(ExternalPageFreshness.MISMATCH, owner, upstream)

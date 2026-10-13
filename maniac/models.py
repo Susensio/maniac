@@ -216,6 +216,8 @@ class PipelineResult:
     roff_path: Path | None
     installed_path: Path | None
     markdown_content: str
+    seed: str | None = None
+    """The page generation started from (`Seed.label`), or None."""
 
 
 @dataclass

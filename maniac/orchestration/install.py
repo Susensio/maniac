@@ -424,7 +424,10 @@ def _generated_detail(result: PipelineResult) -> str:
         if result.repo_source is not None:
             docs += f" in {result.repo_source.identity}"
         sources.append(docs)
-    return "generated page, from " + " and ".join(sources)
+    detail = "generated page, from " + " and ".join(sources)
+    if result.seed is not None:
+        detail += f", seeded with {result.seed}"
+    return detail
 
 
 def _refuse_unmanaged_destination(dest_file: Path, cfg: Config, *, force: bool) -> None:
