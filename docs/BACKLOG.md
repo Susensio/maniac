@@ -26,10 +26,8 @@ Settled decisions live in `docs/adr/`; defects with a line to sit beside are mar
   Preserve each source's provenance.
 - Add tldr-pages as an examples source, preferring an installed tealdeer cache before its release zip and recording provenance in generated output.
   Its examples are additive; do not substitute it for authoritative option documentation.
-- Pick up shell completions alongside manpages.
-  Next step: decide scope and shape.
-  The discovery problem transfers -- does the tool ship its own, can one be generated, is it reachable -- and many CLIs expose a completions subcommand the way others ship a manpage.
-  The installation surface does not: completions have one convention per shell (bash-completion, zsh `fpath`, fish `completions/`), so this is closer to a second product than an extension of `install_manpage`.
+- Completions beyond ADR-0066's first cut.
+  For a tool maniac installs no page for (today they go with a page, so `list`, `update` and `remove` see every one); recovered from their links when the manifest is damaged, as pages are; counted by `scan`; for shells beyond bash, zsh and fish (nu, PowerShell, elvish).
 
 ## Verification and research
 

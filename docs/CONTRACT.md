@@ -71,6 +71,7 @@ For your login shell (`$SHELL`), or each shell `--shell` names (bash, zsh, fish)
 
 A completion is never written by a model: it is code your shell runs.
 A tool with neither has no completion, and `--no-completions` skips them.
+Completions go with a page: a tool maniac installs no page for gets none.
 
 ## States
 
