@@ -79,7 +79,7 @@ layers = [
     "cli",
     "bench",
     "orchestration | listing | evaluation",
-    "state | installer | generation",
+    "state | installer | generation | completion_files",
     "sources | lifecycle",
     "manifest | github_token",
     "config",

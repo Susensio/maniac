@@ -201,6 +201,18 @@ class Config:
     backup_dir: Path = field(
         default_factory=lambda: _xdg_state_dir() / "maniac" / "backups"
     )
+    completions_output_dir: Path = field(
+        default_factory=lambda: _xdg_data_dir() / "maniac" / "completions"
+    )
+    """Where maniac keeps the completion scripts tools generated (ADR-0066)."""
+    completion_dirs: dict[str, Path] = field(
+        default_factory=lambda: {
+            "bash": _xdg_data_dir() / "bash-completion" / "completions",
+            "zsh": _xdg_data_dir() / "zsh" / "site-functions",
+            "fish": _xdg_data_dir() / "fish" / "vendor_completions.d",
+        }
+    )
+    """Each shell's user directory for completions, where maniac links them."""
     llm_api_key: str | None = cast(str | None, _UNSET)
     llm_reasoning_effort: str | None = cast(str | None, _UNSET)
     max_total_doc_chars: int = field(
