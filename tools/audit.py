@@ -2,9 +2,10 @@
 
 Each metric counts one kind of structural debt an architecture review found
 on 2026-10-10 and the work after it removed: a question answered in several
-places, imports against the intended layering, import cycles, functions too
-complex to read, code nothing runs. With every metric at its target, the
-audit now holds that shape: a change that brings any of it back fails.
+places, functions too complex to read, code nothing runs. With every metric
+at its target, the audit now holds that shape: a change that brings any of
+it back fails. Imports -- layers and cycles -- are import-linter's job
+(`[tool.importlinter]` in pyproject.toml); `just audit` runs both.
 `audit.toml` holds, per metric, a target and whether it is a rule
 (`gate`, the default). A rule has a ceiling: the audit fails when it rises
 above it, so that debt can only shrink; `--update` lowers each ceiling to
@@ -108,82 +109,6 @@ def handlers_of(cfg: dict) -> Measure:
     return Measure(sum(int(w.rsplit("(", 1)[1][:-1]) for w in where), where)
 
 
-def _import_graph():
-    import grimp
-    import networkx as nx
-
-    sys.path.insert(0, str(ROOT))
-    graph = grimp.build_graph("maniac")
-    directed = nx.DiGraph()
-    for module in graph.modules:
-        for imported in graph.find_modules_directly_imported_by(module):
-            if imported.startswith("maniac"):
-                directed.add_edge(module, imported)
-    return graph, directed
-
-
-def _package(module: str, depth: int) -> str:
-    """The package a module belongs to, at most `depth` levels below `maniac`.
-
-    A module directly under `maniac` (`maniac.config`) is a package of its
-    own; any other belongs to its enclosing package, so `sources/pathcache.py`
-    and `sources/providers/mise.py` fall in `maniac.sources` and
-    `maniac.sources.providers`.
-    """
-    parts = module.split(".")
-    is_package = (ROOT.joinpath(*parts) / "__init__.py").exists()
-    enclosing = parts if is_package else parts[:-1]
-    if enclosing == ["maniac"]:
-        enclosing = parts
-    return ".".join(enclosing[: depth + 1])
-
-
-def package_cycles(cfg: dict) -> Measure:
-    """Package-level import cycles: groups of packages importing each other."""
-    import networkx as nx
-
-    _, modules = _import_graph()
-    ignore = cfg.get("ignore", [])
-    packages = nx.DiGraph()
-    for a, b in modules.edges:
-        pa, pb = _package(a, cfg["depth"]), _package(b, cfg["depth"])
-        if pa != pb and not _matches(pa, ignore) and not _matches(pb, ignore):
-            packages.add_edge(pa, pb)
-    cycles = [
-        " <-> ".join(sorted(c))
-        for c in nx.strongly_connected_components(packages)
-        if len(c) > 1
-    ]
-    return Measure(len(cycles), sorted(cycles))
-
-
-def module_cycles(cfg: dict) -> Measure:
-    """Module-level import cycles, outside the packages `ignore` names."""
-    import networkx as nx
-
-    _, modules = _import_graph()
-    keep = [m for m in modules if not _matches(m, cfg.get("ignore", []))]
-    cycles = [
-        ", ".join(sorted(c))
-        for c in nx.strongly_connected_components(modules.subgraph(keep))
-        if len(c) > 1
-    ]
-    return Measure(len(cycles), sorted(cycles))
-
-
-def forbidden_imports(cfg: dict) -> Measure:
-    """Module imports from one package into another the layering forbids."""
-    _, modules = _import_graph()
-    where = [
-        f"{a} -> {b}"
-        for importer, imported in cfg["rules"]
-        for a, b in modules.edges
-        if (a == importer or a.startswith(importer + "."))
-        and (b == imported or b.startswith(imported + "."))
-    ]
-    return Measure(len(where), sorted(where))
-
-
 def over_complex(cfg: dict) -> Measure:
     """Functions whose cognitive complexity (complexipy) exceeds `limit`."""
     import complexipy
@@ -227,9 +152,6 @@ def dead_code(cfg: dict) -> Measure:
 METRICS: dict[str, Callable[[dict], Measure]] = {
     "modules_calling": modules_calling,
     "handlers_of": handlers_of,
-    "package_cycles": package_cycles,
-    "module_cycles": module_cycles,
-    "forbidden_imports": forbidden_imports,
     "over_complex": over_complex,
     "dead_code": dead_code,
 }
@@ -280,7 +202,7 @@ def main(argv: list[str]) -> int:
     width = max(len(name) for name in metrics)
     failed, lowered = [], []
 
-    print("Rules: a change that breaks one fails `just check`")
+    print("\nRules: a change that breaks one fails `just check`")
     print(f"  {'metric':<{width}}  {'now':>4}  {'ceiling':>7}  {'target':>6}")
     for name, metric in rules.items():
         measure = METRICS[metric["kind"]](metric)

@@ -1,5 +1,9 @@
 # Architecture audit (`just audit`, tools/audit.py).
 #
+# What answers each question, and what is worth a look. Import rules --
+# layers and cycles -- live in pyproject.toml's `[tool.importlinter]`;
+# `just audit` checks both.
+#
 # Each metric counts one kind of structural debt, and is one of two things:
 #
 # - a rule (the default): precise and cheap, a violation almost always a
@@ -63,40 +67,6 @@ names = ["managed_page_state", "provider_target_freshness", "link_state"]
 allowed = ["maniac/manifest.py"]
 ceiling = 1
 target = 1
-
-[metric.package_cycles]
-kind = "package_cycles"
-why = "Packages that import each other cannot be understood, tested or moved apart."
-depth = 2
-ignore = []
-ceiling = 0
-target = 0
-
-[metric.module_cycles]
-kind = "module_cycles"
-why = "Modules that import each other; the CLI's command registration is the one accepted cycle."
-ignore = ["maniac.cli*"]
-ceiling = 0
-target = 0
-
-[metric.layering]
-kind = "forbidden_imports"
-why = "A lower layer imports a higher one: move the shared code down instead."
-rules = [
-  ["maniac.sources", "maniac.state"],
-  ["maniac.sources", "maniac.orchestration"],
-  ["maniac.sources", "maniac.listing"],
-  ["maniac.sources", "maniac.cli"],
-  ["maniac.state", "maniac.listing"],
-  ["maniac.state", "maniac.orchestration"],
-  ["maniac.state", "maniac.cli"],
-  ["maniac.listing", "maniac.orchestration"],
-  ["maniac.listing", "maniac.cli"],
-  ["maniac.orchestration", "maniac.listing"],
-  ["maniac.orchestration", "maniac.cli"],
-]
-ceiling = 0
-target = 0
 
 [metric.over_complex]
 kind = "over_complex"

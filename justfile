@@ -44,10 +44,15 @@ fix:
 # Run all verification checks (linter, formatting, typing, architecture audit, unit and integration tests)
 check: lint format-check typecheck audit test integration
 
-# Architecture audit: fails when structural debt grows past audit.toml's ceilings.
+# Architecture audit: import-linter's contracts (layers, cycles; pyproject.toml), then
+# audit.toml's seam rules and advice. Fails when either finds a rule broken.
 # `-v` lists what each metric counts; `--update` lowers ceilings after an improvement.
 audit *args:
-    uv run python tools/audit.py {{ args }}
+    #!/usr/bin/env bash
+    set -uo pipefail
+    uv run lint-imports --no-logo; imports=$?
+    uv run python tools/audit.py "$@"; seams=$?
+    exit $(( imports || seams ))
 
 # Where to start reducing complexity: complexipy's refactor suggestions (advisory).
 audit-suggest:

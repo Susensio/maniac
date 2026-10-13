@@ -24,8 +24,7 @@ build-backend = "hatchling.build"
 [dependency-groups]
 dev = [
     "complexipy>=8.0.1",
-    "grimp>=3.17",
-    "networkx>=3.7",
+    "import-linter>=2.15",
     "pytest>=8.0.0",
     "python-semantic-release>=10.0.0",
     "ruff>=0.5.0",
@@ -62,3 +61,37 @@ version_toml = ["pyproject.toml:project.version"]
 build_command = "uv lock --upgrade-package $PACKAGE_NAME && git add uv.lock"
 allow_zero_version = true
 major_on_zero = false
+
+# The architecture's import rules (`just audit`): layers import downward only,
+# and no package or module imports its siblings in a cycle. Each top-level
+# module belongs to exactly one layer (`exhaustive`); `|` separates siblings
+# that must not import each other.
+[tool.importlinter]
+root_package = "maniac"
+
+[[tool.importlinter.contracts]]
+name = "Layers import downward only"
+type = "layers"
+containers = ["maniac"]
+exhaustive = true
+layers = [
+    "__main__",
+    "cli",
+    "bench",
+    "orchestration | listing | evaluation",
+    "state | installer | generation",
+    "sources | lifecycle",
+    "manifest | github_token",
+    "config",
+    "exceptions",
+    "models | logging | templates",
+]
+broken_contract_guidance = "A lower layer imports a higher one: move the shared code down instead. Placing a new top-level module is a layer decision; the module docstring of `maniac/__init__.py` describes the layers."
+
+[[tool.importlinter.contracts]]
+name = "No import cycles"
+type = "acyclic_siblings"
+ancestors = ["maniac"]
+# The CLI's command registration is the one accepted cycle.
+skip_descendants = ["maniac.cli"]
+broken_contract_guidance = "Modules that import each other cannot be understood, tested or moved apart."

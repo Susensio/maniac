@@ -4,7 +4,7 @@
 - `docs/adr/` — changes to the contract, and the decisions made before it existed.
 - `docs/BACKLOG.md` — open work nobody has committed to.
 - `docs/STATE.md` — work committed to and not yet finished; absent when nothing is.
-- `audit.toml` — the architecture's rules, checked by `just audit` in `just check`: one place resolves a tool, one writes the source order, one judges a page, layers import downward only, no cycles. A change that needs a ceiling raised says why in its commit. Dead code and complexity are advice: shown, never failing; act on them by judgement.
+- `audit.toml` and `[tool.importlinter]` in `pyproject.toml` — the architecture's rules, checked by `just audit` in `just check`: one place resolves a tool, one writes the source order, one judges a page (audit.toml); layers import downward only, every top-level module sits in a layer, no cycles (import-linter). A change that needs a ceiling raised says why in its commit. Dead code and complexity are advice: shown, never failing; act on them by judgement.
 
 Before writing code that finds a binary, a page's source or a page's state, read the package docstrings (`maniac/*/__init__.py`): each says what it holds and which entry points to reuse. `audit.toml` names the seams that must be reused; a duplicate fails `just audit`.
 
