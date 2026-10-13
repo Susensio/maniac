@@ -7,5 +7,6 @@ repository documents it. Below them: `pathcache` (the login `$PATH`),
 `providers` (one module per installer), `manpages` (pages on disk), `docs`
 (repositories and release assets), `crawler` (`--help`), `packages` and
 `roff` (verifying a page another package owns), `discovery` (mise's
-registry and config).
+registry and config), `completions` (a tool's shell completions: shipped,
+or its own generator).
 """
