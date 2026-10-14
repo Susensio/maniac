@@ -180,8 +180,10 @@ missing_manpages.txt
 # Agent worktrees and local agent state
 .claude/*
 !.claude/rules/
-# Shared Claude Code setup (code-review-graph): committed so cloud sessions get it
+# Shared Claude Code setup (code-review-graph, cloud setup hook): committed so
+# cloud sessions get it
 !.claude/settings.json
+!.claude/hooks/
 # Added by code-review-graph
 .code-review-graph/
 
