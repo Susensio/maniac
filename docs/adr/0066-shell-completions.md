@@ -67,3 +67,9 @@ What derives it is the shell's own parser, never a model nor maniac's own: for f
 zsh and bash get one only when the crawled `--help` lists a `--long` option; otherwise the shell's default beats a completion that offers nothing.
 A fish completion derived from a generated page inherits that page's mistakes; it is regenerated whenever `update` reinstalls the page.
 `argc --argc-completions` is not a generator for argc itself (it completes argc-based scripts) and is not added.
+
+2026-10-14: completion records are recovered from their links when the manifest is damaged, by the rules pages follow (ADR-0028), at the user's request.
+Salvaged rows first, then the checkpoint's where the link still points at its recorded target, then a link that points at maniac's own copy under the name `install` writes it under; that copy is the only evidence, as `output_dir` is for a page.
+A shipped completion links to the provider's file, which a hand-made link looks the same as, so it is not reconstructed: naming the tool to `install` again records it.
+A reconstructed record has no version or generator arguments, which exist nowhere on disk.
+An unrecorded link to maniac's own copy is adopted on every manifest write too, as an orphaned page link is: an install interrupted between linking and recording otherwise refused its own link next time.

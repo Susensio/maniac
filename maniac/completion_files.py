@@ -9,7 +9,6 @@ or removed: a completion maniac did not install is reported, never touched
 (CONTRACT.md rule 1).
 """
 
-import os
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -25,13 +24,8 @@ class CompletionTaken(Exception):
         super().__init__(f"a completion maniac did not install is there: {path}")
 
 
-def link_name(shell: str, tool: str) -> str:
-    """The file name each shell looks a tool's completion up by."""
-    return {"bash": tool, "zsh": f"_{tool}", "fish": f"{tool}.fish"}[shell]
-
-
 def link_path(shell: str, tool: str, config: Config) -> Path:
-    return config.completion_dirs[shell] / link_name(shell, tool)
+    return config.completion_dirs[shell] / manifest.completion_link_name(shell, tool)
 
 
 def install_completion(
@@ -66,7 +60,11 @@ def install_completion(
         target, source, arguments = shipped, "shipped", ()
     else:
         assert script is not None
-        target = cfg.completions_output_dir / shell / link_name(shell, tool)
+        target = (
+            cfg.completions_output_dir
+            / shell
+            / manifest.completion_link_name(shell, tool)
+        )
         _write_atomically(target, script)
     _link_atomically(link, target)
 
@@ -100,7 +98,7 @@ def remove_completions(tool: str, txn: manifest.Transaction) -> Removed:
     repointed (it is forgotten and reported instead)."""
     removed, kept = [], []
     for shell, entry in sorted(txn.completions.get(tool, {}).items()):
-        if _points_at(entry.path, entry.target):
+        if manifest.completion_link_holds(entry):
             entry.path.unlink()
             removed.append(shell)
         elif entry.path.exists() or entry.path.is_symlink():
@@ -108,13 +106,6 @@ def remove_completions(tool: str, txn: manifest.Transaction) -> Removed:
         _remove_own_copy(entry, txn.config)
         txn.forget_completion(tool, shell)
     return Removed(tuple(removed), tuple(kept))
-
-
-def _points_at(link: Path, target: Path) -> bool:
-    try:
-        return link.is_symlink() and Path(os.readlink(link)) == target
-    except OSError:
-        return False
 
 
 def _remove_own_copy(entry: manifest.CompletionEntry, config: Config) -> None:

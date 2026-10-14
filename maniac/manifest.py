@@ -139,7 +139,7 @@ def _row_to_completion(row: Any) -> CompletionEntry:
         isinstance(a, str) for a in arguments
     ):
         raise TypeError("arguments is not a list of strings")
-    if row["source"] not in ("shipped", "upstream", "generated", "derived"):
+    if row["source"] not in _COMPLETION_SOURCES:
         raise ValueError(f"unknown completion source {row['source']!r}")
     return CompletionEntry(
         path=Path(row["path"]),
@@ -154,6 +154,78 @@ def _row_to_completion(row: Any) -> CompletionEntry:
 
 Completions = dict[str, dict[str, CompletionEntry]]
 """Completion entries by tool, then by shell."""
+
+_COMPLETION_SOURCES = (
+    "shipped",
+    "upstream",
+    "generated",
+    "derived",
+    _RECONSTRUCTED_SOURCE,
+)
+_COMPLETION_LINK_NAMES = {"bash": "{}", "zsh": "_{}", "fish": "{}.fish"}
+
+
+def completion_link_name(shell: str, tool: str) -> str:
+    """The file name each shell looks a tool's completion up by."""
+    return _COMPLETION_LINK_NAMES[shell].format(tool)
+
+
+def _completion_link_tool(shell: str, name: str) -> str | None:
+    """The tool a completion link's file name is for; None if no tool's."""
+    prefix, _, suffix = _COMPLETION_LINK_NAMES[shell].partition("{}")
+    if not (name.startswith(prefix) and name.endswith(suffix)):
+        return None
+    tool = name[len(prefix) : len(name) - len(suffix)]
+    return tool if tool and not tool.startswith(".") else None
+
+
+def completion_link_holds(entry: CompletionEntry) -> bool:
+    """Whether a recorded completion link still points literally at its target."""
+    try:
+        return entry.path.is_symlink() and entry.path.readlink() == entry.target
+    except OSError:
+        return False
+
+
+def _completion_from_link(shell: str, path: Path, config: Config) -> str | None:
+    """The tool one completion link proves maniac linked, or None.
+
+    The page rule (ADR-0028) applied to completions: only a link to a file
+    under maniac's own copies, at the name `install` writes it under, proves
+    anything. A shipped completion links to the provider's file, which a
+    hand-made link looks the same as, so it is not reconstructible.
+    """
+    tool = _completion_link_tool(shell, path.name)
+    target = resolve_symlink_target(path) if path.is_symlink() else None
+    if tool is None or target is None or not target.is_file():
+        return None
+    own = config.completions_output_dir.absolute() / shell / path.name
+    return tool if target.absolute() == own else None
+
+
+def _linked_completions(config: Config) -> Completions:
+    """A record for every completion link whose target proves maniac linked it.
+
+    The source, version and generator arguments exist nowhere on disk, so a
+    reconstructed record carries none: `update` cannot rerun its generator,
+    and naming the tool to `install` again restores them.
+    """
+    completions: Completions = {}
+    for shell, directory in sorted(config.completion_dirs.items()):
+        if not directory.is_dir():
+            continue
+        for path in sorted(directory.iterdir()):
+            tool = _completion_from_link(shell, path, config)
+            if tool is None:
+                continue
+            target = path.readlink()
+            completions.setdefault(tool, {})[shell] = CompletionEntry(
+                path=path,
+                target=target,
+                source=_RECONSTRUCTED_SOURCE,
+                checksum=checksum_of(resolve_symlink_target(path) or target),
+            )
+    return completions
 
 
 def manpage_owner(page: Path) -> str:
@@ -542,6 +614,10 @@ class Recovery:
     from_checkpoint: tuple[str, ...] = ()
     reconstructed: tuple[str, ...] = ()
     dropped: tuple[str, ...] = ()
+    completions_from_checkpoint: tuple[str, ...] = ()
+    completions_reconstructed: tuple[str, ...] = ()
+    completions_dropped: tuple[str, ...] = ()
+    """Completions as `tool:shell`, by the same rules as pages (ADR-0066)."""
 
 
 def read_provenance_header(file_path: str | Path) -> dict[str, str] | None:
@@ -679,7 +755,9 @@ def _adopt_orphans(entries: dict[str, Entry], config: Config) -> tuple[str, ...]
     return tuple(sorted(adopted))
 
 
-def _recover(current: Read, config: Config) -> tuple[dict[str, Entry], Recovery]:
+def _recover(
+    current: Read, config: Config
+) -> tuple[dict[str, Entry], Completions, Recovery]:
     """Rebuild a manifest from every source with evidence, strongest first.
 
     Salvaged rows win: they are the most recent state, and `backup`,
@@ -688,7 +766,7 @@ def _recover(current: Read, config: Config) -> tuple[dict[str, Entry], Recovery]
     it -- a checkpoint record whose page is gone is an uninstall that
     happened after the checkpoint, and resurrecting it would authorize
     MANIAC to delete a page it no longer owns.  The link scan fills whatever
-    neither supplies.
+    neither supplies.  Completions are rebuilt by the same three rules.
     """
     entries = dict(current.entries)
     checkpoint = _read_document(checkpoint_path(config))
@@ -713,13 +791,67 @@ def _recover(current: Read, config: Config) -> tuple[dict[str, Entry], Recovery]
         entries[tool] = entry
         reconstructed.append(tool)
 
-    return entries, Recovery(
-        reason=current.reason or _damage_reason(current),
-        salvaged=tuple(sorted(current.entries)),
-        from_checkpoint=tuple(adopted),
-        reconstructed=tuple(reconstructed),
-        dropped=tuple(dropped),
+    completions, completion_recovery = _recover_completions(current, checkpoint, config)
+    return (
+        entries,
+        completions,
+        Recovery(
+            reason=current.reason or _damage_reason(current),
+            salvaged=tuple(sorted(current.entries)),
+            from_checkpoint=tuple(adopted),
+            reconstructed=tuple(reconstructed),
+            dropped=tuple(dropped),
+            **completion_recovery,
+        ),
     )
+
+
+def _recover_completions(
+    current: Read, checkpoint: Read, config: Config
+) -> tuple[Completions, dict[str, tuple[str, ...]]]:
+    """Salvaged completion rows, then the checkpoint's where the link still
+    points at its target, then the links that prove themselves maniac's."""
+    completions = {tool: dict(shells) for tool, shells in current.completions.items()}
+    adopted: list[str] = []
+    dropped: list[str] = []
+    for tool, shells in sorted(checkpoint.completions.items()):
+        for shell, entry in sorted(shells.items()):
+            if shell in completions.get(tool, {}):
+                continue
+            if not completion_link_holds(entry):
+                dropped.append(f"{tool}:{shell}")
+                continue
+            completions.setdefault(tool, {})[shell] = entry
+            adopted.append(f"{tool}:{shell}")
+    reconstructed = _adopt_completions(completions, config)
+    return completions, {
+        "completions_from_checkpoint": tuple(adopted),
+        "completions_reconstructed": reconstructed,
+        "completions_dropped": tuple(dropped),
+    }
+
+
+def _adopt_completions(completions: Completions, config: Config) -> tuple[str, ...]:
+    """Record every completion link maniac provably made and nothing records,
+    naming each as `tool:shell`.
+
+    An install interrupted between linking and recording leaves exactly
+    this, and left unrecorded the next `install` refuses maniac's own link
+    as one it did not install.
+    """
+    recorded = {
+        entry.path.absolute()
+        for shells in completions.values()
+        for entry in shells.values()
+    }
+    adopted: list[str] = []
+    for tool, shells in sorted(_linked_completions(config).items()):
+        for shell, entry in sorted(shells.items()):
+            if shell in completions.get(tool, {}) or entry.path.absolute() in recorded:
+                continue
+            completions.setdefault(tool, {})[shell] = entry
+            adopted.append(f"{tool}:{shell}")
+    return tuple(adopted)
 
 
 def _damage_reason(current: Read) -> str:
@@ -741,6 +873,9 @@ def _report_recovery(recovery: Recovery, config: Config) -> None:
         or recovery.from_checkpoint
         or recovery.reconstructed
         or recovery.dropped
+        or recovery.completions_from_checkpoint
+        or recovery.completions_reconstructed
+        or recovery.completions_dropped
     )
     log = logger.debug if nothing_recovered else logger.warning
     log(
@@ -751,6 +886,9 @@ def _report_recovery(recovery: Recovery, config: Config) -> None:
         from_checkpoint=list(recovery.from_checkpoint),
         reconstructed=list(recovery.reconstructed),
         dropped=list(recovery.dropped),
+        completions_from_checkpoint=list(recovery.completions_from_checkpoint),
+        completions_reconstructed=list(recovery.completions_reconstructed),
+        completions_dropped=list(recovery.completions_dropped),
     )
     for tool in recovery.reconstructed:
         logger.warning(
@@ -846,6 +984,9 @@ def transaction(config: Config | None = None) -> Iterator[Transaction]:
     with _exclusive(cfg):
         current = read(cfg)
         recovery: Recovery | None = None
+        completions = {
+            tool: dict(shells) for tool, shells in current.completions.items()
+        }
         if current.health is Health.INTACT:
             # A sound scan is the second half of the promotion test: rows
             # that parse but name pages that are gone are not a good copy.
@@ -853,22 +994,24 @@ def transaction(config: Config | None = None) -> Iterator[Transaction]:
                 promote(current, cfg)
             entries = dict(current.entries)
         else:
-            entries, recovery = _recover(current, cfg)
+            entries, completions, recovery = _recover(current, cfg)
             _report_recovery(recovery, cfg)
         adopted = _adopt_orphans(entries, cfg)
         if adopted:
             logger.warning("Adopted unrecorded manpath links", tools=list(adopted))
+        adopted_completions = _adopt_completions(completions, cfg)
+        if adopted_completions:
+            logger.warning(
+                "Adopted unrecorded completion links",
+                completions=list(adopted_completions),
+            )
         txn = Transaction(
             config=cfg,
             read=current,
             entries=entries,
-            dirty=recovery is not None or bool(adopted),
+            dirty=recovery is not None or bool(adopted) or bool(adopted_completions),
             recovery=recovery,
-            # Salvaged rows only: completions are not rebuilt from links
-            # (ADR-0066); naming the tool again reinstalls them.
-            completions={
-                tool: dict(shells) for tool, shells in current.completions.items()
-            },
+            completions=completions,
         )
         yield txn
         if txn.dirty:
