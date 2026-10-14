@@ -6,6 +6,7 @@ are pinned here rather than through rendered output.
 """
 
 import json
+import os
 import threading
 import time
 from dataclasses import replace
@@ -2320,6 +2321,7 @@ def test_target_clusters_never_hash_singletons_of_distinct_size(
     assert clustered[0].target_cluster != clustered[1].target_cluster
 
 
+@pytest.mark.skipif(os.geteuid() == 0, reason="root reads a mode-000 file")
 def test_target_clusters_unreadable_file_gets_own_cluster(
     tmp_path: Path,
 ) -> None:

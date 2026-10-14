@@ -1,5 +1,6 @@
 import io
 import json
+import os
 import tarfile
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -721,6 +722,7 @@ class _FakeResponse:
         return self._body
 
 
+@pytest.mark.skipif(os.geteuid() == 0, reason="root reads a mode-000 file")
 def test_read_mise_registry_archive_self_heals_an_unreadable_fresh_cache(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -740,6 +742,7 @@ def test_read_mise_registry_archive_self_heals_an_unreadable_fresh_cache(
         cache_path.chmod(0o644)
 
 
+@pytest.mark.skipif(os.geteuid() == 0, reason="root reads a mode-000 file")
 def test_read_mise_registry_archive_reports_a_corrupt_cache_only_if_rebuild_fails(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -760,6 +763,7 @@ def test_read_mise_registry_archive_reports_a_corrupt_cache_only_if_rebuild_fail
     assert not cache_path.exists()
 
 
+@pytest.mark.skipif(os.geteuid() == 0, reason="root reads a mode-000 file")
 def test_read_mise_registry_archive_raises_when_the_cache_cannot_even_be_stat_ed(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
