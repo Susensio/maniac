@@ -150,6 +150,11 @@ def synthesize(
                 selected_model or "unknown",
                 version=recorded_version,
                 binary=tool.documented_binary,
+                repository=(
+                    tool.documentation_source.identity
+                    if tool.documentation_source is not None
+                    else None
+                ),
             ),
             force=force,
             config=cfg,

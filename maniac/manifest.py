@@ -96,6 +96,10 @@ class Entry:
     provider_target: bool = False
     group: str | None = None
     binary: Path | None = None
+    repository: str | None = None
+    """The repository the page, or the docs it was generated from, came from
+    (`owner/repo`), so the next install can say when that changed (ADR-0067).
+    None for a shipped page and on every entry written before this field."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -322,6 +326,7 @@ def _entry_to_row(entry: Entry) -> dict[str, Any]:
         "provider_target": entry.provider_target,
         "group": entry.group,
         "binary": str(entry.binary) if entry.binary is not None else None,
+        "repository": entry.repository,
     }
 
 
@@ -360,6 +365,9 @@ def _row_to_entry(row: Any) -> Entry:
         # read as ungrouped, not fail to parse.
         group=raw_group if isinstance(raw_group, str) else None,
         binary=Path(raw_binary) if isinstance(raw_binary, str) else None,
+        repository=(
+            row.get("repository") if isinstance(row.get("repository"), str) else None
+        ),
     )
 
 

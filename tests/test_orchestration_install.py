@@ -598,7 +598,7 @@ def test_run_install_follows_the_repository_tmux_builds_points_at(
     assert outcome.tier is Tier.REPOSITORY
     assert observed == [RepoSource(name="tmux", target="tmux/tmux", is_local=False)]
     # Detected, so `install` warns, and says how to keep the record instead.
-    assert outcome.repository_detected
+    assert outcome.repository_warns
     assert outcome.repository[0].startswith(
         "repository: tmux/tmux, not tmux/tmux-builds its installer records"
     )
@@ -2239,4 +2239,48 @@ def test_install_names_the_seed_a_generated_page_started_from(tmp_path: Path) ->
     assert _generated_detail(result) == (
         "generated page, from --help (3 commands), "
         "seeded with the tool package's page (1.4.0)"
+    )
+
+
+def test_install_warns_when_the_repository_differs_from_the_replaced_pages(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """ADR-0067: a redirect that applied last time and no longer does (here,
+    detection found nothing) is said, not left to a silently different page."""
+    builds = RepoSource(name="tmux", target="tmux/tmux-builds", is_local=False)
+    provider = _FakeProvider(source=builds)
+    inst = _installation(version="3.7b", binary="tmux")
+    page = tmp_path / "tmux.1"
+    page.write_text(".TH TMUX 1\n", encoding="utf-8")
+    record_entry(
+        "tmux",
+        Entry(
+            path=Config().man_dir / "tmux.1",
+            tier=Tier.REPOSITORY,
+            source="tmux/tmux",
+            checksum="old",
+            version="3.7a",
+        ),
+    )
+    monkeypatch.setattr(
+        "maniac.orchestration.context.resolution.find_installation",
+        lambda name, bin_dir=None, **_: (provider, inst),
+    )
+    monkeypatch.setattr(
+        "maniac.sources.lookup.candidates.discover_repo_manpages",
+        lambda *args, **kwargs: ([page], True),
+    )
+    monkeypatch.setattr(
+        "maniac.orchestration.install.install_manpage",
+        lambda *args, **kwargs: InstallResult(
+            path=Path("/installed/tmux.1"), materialized=None, backup_path=None
+        ),
+    )
+
+    outcome = run_install("tmux", no_generate=True)
+
+    assert outcome.tier is Tier.REPOSITORY
+    assert outcome.repository_warns
+    assert outcome.repository == (
+        "repository changed: the page it replaces came from tmux/tmux",
     )

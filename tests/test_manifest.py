@@ -1281,3 +1281,21 @@ def test_a_malformed_completion_row_makes_the_read_damaged(tmp_path: Path) -> No
 
     assert read.health is manifest.Health.DAMAGED
     assert "completion:tool:zsh" in read.lost
+
+
+def test_the_repository_a_page_came_from_survives_a_reload(tmp_path: Path) -> None:
+    """ADR-0067: the next install compares against it; older rows have none."""
+    cfg = Config(manifest_path=tmp_path / "installed.json")
+    entry = Entry(
+        path=tmp_path / "tool.1",
+        tier=Tier.SYNTHESIS,
+        source="model",
+        checksum="c",
+        repository="owner/tool",
+    )
+    record_entry("tool", entry, cfg)
+    row = json.loads(cfg.manifest_path.read_text())["entries"]["tool"]
+    del row["repository"]
+
+    assert manifest.lookup("tool", cfg) == entry
+    assert manifest._row_to_entry(row).repository is None

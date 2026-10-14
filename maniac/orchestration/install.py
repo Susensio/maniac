@@ -103,20 +103,37 @@ class InstallOutcome:
     repository: tuple[str, ...] = ()
     """How the repository the page or its docs came from differs from the
     installer's record (ADR-0067); empty when it does not."""
-    repository_detected: bool = False
-    """Detection chose it, so `install` warns rather than notes it."""
+    repository_warns: bool = False
+    """Detection chose it, or it differs from the replaced page's, so
+    `install` warns rather than notes it."""
 
 
-def _with_repository(outcome: InstallOutcome, tool: ResolvedTool) -> InstallOutcome:
+def _with_repository(
+    outcome: InstallOutcome, tool: ResolvedTool, previous: manifest.Entry | None
+) -> InstallOutcome:
     """Say so when the page, or the docs it was generated from, came from a
-    repository other than the installer's record (ADR-0067)."""
+    repository other than the installer's record, or other than the one the
+    page it replaces came from (ADR-0067)."""
     if outcome.tier not in (Tier.REPOSITORY, Tier.SYNTHESIS) or tool.repository is None:
         return outcome
-    return replace(
-        outcome,
-        repository=tuple(redirect_lines(tool.repository, tool.config)),
-        repository_detected=tool.repository.decided is Decided.DETECTED,
-    )
+    lines = redirect_lines(tool.repository, tool.config)
+    warns = tool.repository.decided is Decided.DETECTED
+    now = tool.repository.source
+    before = _repository_of_entry(previous)
+    if now is not None and before is not None and before != now.identity:
+        lines.append(f"repository changed: the page it replaces came from {before}")
+        warns = True
+    return replace(outcome, repository=tuple(lines), repository_warns=warns)
+
+
+def _repository_of_entry(entry: manifest.Entry | None) -> str | None:
+    """The repository a recorded page came from; an upstream page recorded
+    before `Entry.repository` existed names it as its source."""
+    if entry is None:
+        return None
+    if entry.repository is not None:
+        return entry.repository
+    return entry.source if entry.tier is Tier.REPOSITORY else None
 
 
 def run_install(
@@ -170,11 +187,13 @@ def run_install(
                 f"{tool_name}` documents the copy your login shell runs now."
             )
         tool = resolve_tool(tool_name, config=cfg, bin_dir=copy.parent, here=True)
+        previous = manifest.lookup(tool_name, cfg)
         outcome = _with_repository(
             _select_page(
                 tool, model=model, no_generate=no_generate, force=force, dry_run=dry_run
             ),
             tool,
+            previous,
         )
         return _with_completions(
             replace(outcome, resolution=_resolution(tool, bin_dir=copy.parent)),
@@ -215,6 +234,7 @@ def run_install(
                 dry_run=dry_run,
             )
 
+    previous = manifest.lookup(tool_name, cfg)
     outcome = _with_repository(
         _select_page(
             tool,
@@ -224,6 +244,7 @@ def run_install(
             dry_run=dry_run,
         ),
         tool,
+        previous,
     )
     return _with_completions(
         replace(
@@ -680,6 +701,7 @@ def _upstream_pages(
                 source_uri=page.uri,
                 group=group,
                 binary=tool.documented_binary,
+                repository=found.source.identity,
             ),
             target_dir=_manpage_directory(page.path, tool.config),
             primary=page == found.primary,

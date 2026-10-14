@@ -75,7 +75,7 @@ A `[documentation_repositories]` table decides which repository a tool's docs co
 "some/wrapper" = "some/wrapper"
 ```
 
-Without an entry, maniac follows the repository a recorded one points at when the recorded one is not named like the tool, it links a repository that is, and that one has a tag for the installed version: pyright from PyPI records its Python wrapper, tmux from mise a repository of static builds. `install` warns when it does, with the line that undoes it; `why` explains every redirect.
+Without an entry, maniac follows the repository a recorded one points at when the recorded one is not named like the tool, it links a repository that is, and that one has a tag for the installed version: pyright from PyPI records its Python wrapper, tmux from mise a repository of static builds. Two links, or one from a build script, are needed; a single "inspired by" line is not enough. `install` warns when it follows one, with the line that undoes it, and when a page's repository differs from the one the page it replaces came from; `why` explains every redirect.
 
 maniac autoloads credentials from the neighbouring `.env` without replacing variables already set in your shell.
 For example, `~/.config/maniac/.env` can hold credentials for several providers at once:

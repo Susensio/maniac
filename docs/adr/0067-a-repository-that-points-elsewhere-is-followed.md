@@ -36,3 +36,11 @@ The built-in table is deleted: detection covers tmux, and a user who disagrees h
 
 The option overlap that measured pyright is evidence `why` could show but detection does not use: it needs every file of the recorded repository, and the name, the link and the matching tag already have to agree.
 A redirect is asked once per recorded repository, binary, package and version, and its answer cached; one whose check did not finish is asked again (rule 4).
+
+## Corrections
+
+2026-10-14, later: three tightenings, after weighing where detection could misfire.
+Names compare with `-`, `_` and `.` as one separator (`ripgrep_all` is `ripgrep-all`), so a repository named like its package is not searched for want of spelling.
+The links must be evidence, not a mention: two of them, or one from a build script or workflow, which builds or fetches what it names; a single README line can be an "inspired by", and a young tool's `0.1.0` tag is one many namesakes share.
+`install` also warns when the repository a page comes from differs from the one the page it replaces came from, so a redirect that applied last time and no longer does is said rather than left to a silently different page; the manifest records each page's repository for that comparison, and an upstream page recorded before then names it as its source.
+A fork that links the project it forked, and keeps its tags, is still followed to that project: legitimately ambiguous, it is warned about and left to the user's table.

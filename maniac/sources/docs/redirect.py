@@ -60,8 +60,23 @@ def is_asked(source: RepoSource, binary: str, package: str) -> bool:
         return False
     if source.identity.count("/") != 1:
         return False
-    name = source.identity.split("/")[1].lower()
-    return name not in {binary.lower(), package.lower()}
+    return _named(source.identity.split("/")[1]) not in {
+        _named(binary),
+        _named(package),
+    }
+
+
+def _named(name: str) -> str:
+    """A name as packages spell it either way: `ripgrep_all` is `ripgrep-all`."""
+    return re.sub(r"[-_.]+", "-", name.lower())
+
+
+def _enough(links: int, files: list[str]) -> bool:
+    """Whether the links are evidence rather than a mention: two of them, or
+    one from a build script or workflow, which builds or fetches the target.
+    A single README line can be an "inspired by"."""
+    built = any(not PurePosixPath(f).name.lower().startswith("readme") for f in files)
+    return links >= 2 or built
 
 
 def detect(
@@ -123,7 +138,7 @@ def _detect(
         return None, False
     links: Counter[str] = Counter()
     files: dict[str, list[str]] = {}
-    names = {binary.lower(), package.lower()}
+    names = {_named(binary), _named(package)}
     own = source.identity.lower()
     for path in _build_files(listing)[:_MAX_FILES]:
         content = repository._git_bytes(
@@ -135,12 +150,14 @@ def _detect(
             continue
         for owner, name in _LINK.findall(content.decode("utf-8", errors="replace")):
             target = f"{owner}/{name}"
-            if name.lower() in names and target.lower() != own:
+            if _named(name) in names and target.lower() != own:
                 links[target] += 1
                 files.setdefault(target, []).append(path)
     if not links:
         return None, True
     target, count = links.most_common(1)[0]
+    if not _enough(count, files[target]):
+        return None, True
     target_tag, target_definitive = repository._find_matching_tag_cached_result(
         cache_dir, f"https://github.com/{target}.git", version, config
     )

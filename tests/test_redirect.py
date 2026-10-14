@@ -30,7 +30,8 @@ class _Remote:
 
     files: dict[str, bytes] = field(
         default_factory=lambda: {
-            "README.md": b"Wraps https://github.com/microsoft/pyright ."
+            "README.md": b"Wraps https://github.com/microsoft/pyright ; see "
+            b"https://github.com/microsoft/pyright/blob/main/docs ."
         }
     )
     tags: dict[str, str] = field(
@@ -76,6 +77,9 @@ def test_a_repository_named_like_its_tool_is_never_searched() -> None:
     assert not is_asked(black, "black", "black")
     assert not is_asked(dmypy, "dmypy", "mypy")  # named like its package
     assert is_asked(_WRAPPER, "pyright", "pyright")
+    # `-`, `_` and `.` are one separator, as package names spell it.
+    rga = RepoSource(name="rga", target="phiresky/ripgrep-all", is_local=False)
+    assert not is_asked(rga, "rga", "ripgrep_all")
 
 
 def test_a_wrapper_pointing_at_the_tools_repository_is_followed(
@@ -84,8 +88,8 @@ def test_a_wrapper_pointing_at_the_tools_repository_is_followed(
     found, final = _detect(cfg)
 
     assert final
-    assert found == Redirect("microsoft/pyright", 1, ("README.md",), "1.1.414")
-    assert "links microsoft/pyright once (README.md)" in found.evidence(_WRAPPER)
+    assert found == Redirect("microsoft/pyright", 2, ("README.md",), "1.1.414")
+    assert "links microsoft/pyright 2 times (README.md)" in found.evidence(_WRAPPER)
 
 
 def test_build_scripts_count_and_the_most_linked_wins(
@@ -215,3 +219,19 @@ def test_a_record_that_stood_unexamined_says_nothing(cfg: Config) -> None:
         redirect_lines(repository_of(_FakeProvider(source=black), _inst(), cfg), cfg)
         == []
     )
+
+
+def test_a_single_readme_mention_is_not_evidence(cfg: Config, git: _Remote) -> None:
+    """An "inspired by" line, even to a namesake with a colliding tag."""
+    git.files = {"README.md": b"Inspired by https://github.com/microsoft/pyright ."}
+
+    assert _detect(cfg) == (None, True)
+
+
+def test_one_link_from_a_build_script_is_evidence(cfg: Config, git: _Remote) -> None:
+    """A script that clones or fetches the target builds from it."""
+    git.files = {"scripts/build.sh": b"git clone https://github.com/microsoft/pyright"}
+
+    found, _ = _detect(cfg)
+
+    assert found is not None and found.files == ("scripts/build.sh",)

@@ -27,6 +27,7 @@ class PageRequest:
     provider_target: bool = False
     group: str | None = None
     binary: Path | None = None
+    repository: str | None = None
 
 
 @dataclass(frozen=True)
@@ -156,6 +157,7 @@ def install_manpage(
                 provider_target=request.provider_target,
                 group=request.group,
                 binary=request.binary,
+                repository=request.repository,
             ),
         )
     logger.info("Installed manpage", path=str(dest_file))

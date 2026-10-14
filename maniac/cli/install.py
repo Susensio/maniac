@@ -62,7 +62,7 @@ def render_install(
         target_console.print(f"[bold green]{tool}[/bold green]   {verdict}: {detail}")
     for line in _resolution_lines(outcome):
         target_console.print(f"  [dim]{escape(line)}[/dim]")
-    style = "yellow" if outcome.repository_detected else "dim"
+    style = "yellow" if outcome.repository_warns else "dim"
     for line in outcome.repository:
         target_console.print(f"  [{style}]{escape(line)}[/{style}]", soft_wrap=True)
     for completion in outcome.completions:
