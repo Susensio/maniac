@@ -30,8 +30,8 @@ Settled decisions live in `docs/adr/`; defects with a line to sit beside are mar
   Preserve each source's provenance.
 - Add tldr-pages as an examples source, preferring an installed tealdeer cache before its release zip and recording provenance in generated output.
   Its examples are additive; do not substitute it for authoritative option documentation.
-- Completions beyond ADR-0066's first cut.
-  For a tool maniac installs no page for (today they go with a page, so `list`, `update` and `remove` see every one); recovered from their links when the manifest is damaged, as pages are; counted by `scan`; for shells beyond bash, zsh and fish (nu, PowerShell, elvish).
+- Completions for a tool maniac installs no page for: a system tool it refuses, or `install --no-generate` with no shipped or upstream page.
+  Today they go with a page, so `list`, `update` and `remove` see every one; both cases are niche, and dropping this is proposed.
 
 ## Verification and research
 
@@ -59,6 +59,8 @@ Move one back up when that turns up.
 - Judge whether an existing `shipped` or `system` page is worth replacing.
   ADR-0016 deferred the verdict layer; blocked on a robust classification model and real output to judge.
   `.HP` option counting has two known dead ends: unconditional counts mistake synopsis markers for options, and rendered bold-hyphen regexes miss common roff forms.
+- Completions for shells beyond bash, zsh and fish (nu, PowerShell, elvish).
+  Parked by the user's choice (2026-10-14); unblocked by someone using one.
 - Exercise the standalone Homebrew `detect()` against a real installation.
   Mise-composed metadata coverage does not verify its path layout; npm and pipx are covered by `tests/integration/test_providers.py`.
   Blocked on a real Homebrew installation.

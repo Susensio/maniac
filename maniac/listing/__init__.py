@@ -4,6 +4,8 @@ The states are `maniac.state`'s. The unit is a binary a provider detected (`reso
 not a manpath scan, since that is what bounds what a bulk install could act on.
 Each row's *state* is a reachability fact checked against `man` directly
 (ADR-0018, reversing ADR-0013/ADR-0016's "the manpath is never scanned").
+Each row's *completion* is where `install` would take the login shell's
+completion from (`completions.completion_source`, cached per binary).
 
 No module here renders, reads a console or touches Typer. Rich does appear in
 `sys.modules` after importing this package, but only because `..logging` imports

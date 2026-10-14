@@ -19,8 +19,10 @@ from rich.progress import Progress
 from rich.table import Table
 
 from ..listing import InventoryObserver, compute_rows, group_rows
+from ..listing.completions import NONE
 from ..listing.inventory import MANAGED, Skip
 from ..models import RepoSource
+from ..sources.lookup.completions import login_shell
 from ..state.models import ActionState, PageSource, RowSnapshot, ToolRow
 from . import app, console, get_config, require_login_path
 from .options import NamesOption, OutdatedOption, UnknownOption
@@ -46,6 +48,10 @@ _SOURCE_COLUMN_MAX_WIDTH = 24
 _UPSTREAM_COLUMN_MAX_WIDTH = 48
 # Four columns of single-space padding on each side, plus five box rules.
 _TABLE_CHROME_WIDTH = 13
+# The Completion column, when shown: its header is its widest value, and it
+# adds one more column's padding and rule.
+_COMPLETION_COLUMN_WIDTH = len("Completion")
+_COMPLETION_COLUMN_CHROME = 3
 
 
 class _ProgressReporter:
@@ -191,8 +197,27 @@ def _source_column_width(labels: list[str]) -> int:
     )
 
 
+def _shows_completions() -> bool:
+    """Whether `scan` has a Completion column: only for a login shell maniac
+    installs completions for, the one each row's answer is about (ADR-0066)."""
+    return login_shell() is not None
+
+
+def _completion_cell(row: ToolRow, *, pending: bool) -> Any:
+    """Where `install` would take the login shell's completion from."""
+    from rich.text import Text
+
+    if pending or row.completion is None:
+        return Text("")
+    return Text(row.completion, style="dim" if row.completion == NONE else "")
+
+
 def _upstream_budget(
-    tool_labels: list[str], source_width: int, terminal_width: int
+    tool_labels: list[str],
+    source_width: int,
+    terminal_width: int,
+    *,
+    completions: bool = False,
 ) -> int:
     """Columns Upstream may take: the cap, less whatever the terminal cannot spare.
 
@@ -205,6 +230,7 @@ def _upstream_budget(
         + STATE_COLUMN_WIDTH
         + source_width
         + _TABLE_CHROME_WIDTH
+        + (_COMPLETION_COLUMN_WIDTH + _COMPLETION_COLUMN_CHROME if completions else 0)
     )
     return max(len("Upstream"), min(_UPSTREAM_COLUMN_MAX_WIDTH, terminal_width - fixed))
 
@@ -276,6 +302,7 @@ def _scan_table(
     source_width: int | None,
     upstream_width: int,
     hidden_rows: int = 0,
+    completions: bool = False,
 ) -> Table:
     """`scan`'s table, final or live: one row per `(label, row, pending, upstream)`.
 
@@ -293,6 +320,8 @@ def _scan_table(
         no_wrap=True,
         overflow="ellipsis",
     )
+    if completions:
+        table.add_column("Completion", width=_COMPLETION_COLUMN_WIDTH, no_wrap=True)
     table.add_column(
         "Upstream", width=upstream_width, no_wrap=True, overflow="ellipsis"
     )
@@ -301,6 +330,7 @@ def _scan_table(
             _tool_cell(label, drift=row.drift),
             "[dim]checking…[/dim]" if pending else state_cell(row.state),
             _source_cell(row),
+            *([_completion_cell(row, pending=pending)] if completions else []),
             upstream,
         )
     if hidden_rows:
@@ -308,6 +338,7 @@ def _scan_table(
             Text(f"… {hidden_rows} more tools", style="dim"),
             Text(""),
             Text(""),
+            *([Text("")] if completions else []),
             Text("full table after completion", style="dim"),
         )
     return table
@@ -320,12 +351,14 @@ def _list_table(rows: list[ToolRow], *, terminal_width: int) -> Table:
         for label, row in _grouped_for_display(rows)
     ]
     source_width = _source_column_width([_source_label(row) for _, row, _ in rendered])
+    completions = _shows_completions()
     upstream_width = _upstream_width(
         [cell for _, _, cell in rendered],
         _upstream_budget(
             [_tool_display(label, drift=row.drift) for label, row, _ in rendered],
             source_width,
             terminal_width,
+            completions=completions,
         ),
     )
     return _scan_table(
@@ -333,6 +366,7 @@ def _list_table(rows: list[ToolRow], *, terminal_width: int) -> Table:
         tool_width=None,
         source_width=None,
         upstream_width=upstream_width,
+        completions=completions,
     )
 
 
@@ -364,9 +398,13 @@ def _streaming_table(
     # -- recomputing per frame would jitter the column exactly as an
     # unpinned Upstream would (see the docstring above).
     source_width = _SOURCE_COLUMN_MAX_WIDTH
+    completions = _shows_completions()
     if upstream_width is None:
         upstream_width = _upstream_width(
-            upstream_cells, _upstream_budget(tool_labels, source_width, terminal_width)
+            upstream_cells,
+            _upstream_budget(
+                tool_labels, source_width, terminal_width, completions=completions
+            ),
         )
     return _scan_table(
         [
@@ -379,6 +417,7 @@ def _streaming_table(
         source_width=source_width,
         upstream_width=upstream_width,
         hidden_rows=len(rows) - len(visible_rows),
+        completions=completions,
     )
 
 
@@ -445,6 +484,7 @@ class _StreamingList:
             [row.tool for row in rows],
             _SOURCE_COLUMN_MAX_WIDTH,
             rich_console.size.width,
+            completions=_shows_completions(),
         )
         self._terminal_width = rich_console.size.width
         self._row_limit = self._live_row_limit(rows)

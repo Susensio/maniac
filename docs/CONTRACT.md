@@ -93,7 +93,7 @@ Completions go with a page: a tool maniac installs no page for gets none.
 | `update` | maniac's pages | Reinstalls each page and completion whose tool changed version. |
 | `remove <tool>...` | maniac's pages | Removes the page and completions, and restores any page it replaced. |
 | `list` | maniac's pages | Each page: the version it documents, the version installed, its state, the shells it has completions for. |
-| `scan` | your `$PATH` | Your other tools and the state of their pages, best effort, with every skip counted. |
+| `scan` | your `$PATH` | Your other tools, the state of their pages and where your shell's completion would come from, best effort, with every skip counted. |
 | `why <tool>` | one tool | The full decision trace (rule 3). |
 
 Piped, `list` and `scan` print bare tool names, so `maniac scan --available --missing | xargs maniac install` installs every page that is missing.

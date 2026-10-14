@@ -105,6 +105,10 @@ class ToolRow:
     """Set together with `state is ActionState.ERROR`: the file and reason
     a provider could not read this tool's own metadata, or a Mise install
     refused as project-only (ADR-0060, ADR-0061)."""
+    completion: str | None = None
+    """Where `install` would take the login shell's completion from --
+    `shipped`, `upstream`, `generated`, `derived` or `none` (ADR-0066) --
+    or None when no login shell has completions or nothing was asked."""
 
 
 @dataclass(frozen=True, slots=True)

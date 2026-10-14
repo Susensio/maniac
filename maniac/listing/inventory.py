@@ -29,6 +29,7 @@ from ..logging import logger
 from ..models import Installation, RepoSource
 from ..sources.lookup import resolution
 from ..sources.lookup.candidates import repository_of
+from ..sources.lookup.completions import login_shell
 from ..state.candidates import candidate_from, named_candidate
 from ..state.classification import classify
 from ..state.models import (
@@ -44,6 +45,7 @@ from ..state.models import (
 # Both name a tool's own broken evidence (ADR-0060, ADR-0061): a metadata
 # file that cannot be read, or a Mise install that resolves but isn't
 # globally selected. Every discovery-time catch here treats them alike.
+from .completions import completion_source
 from .upstream import (
     ProbeKey,
     ProbePage,
@@ -55,7 +57,7 @@ from .upstream import (
 LOCAL_CLASSIFY_WORKERS = 8
 UPSTREAM_PROBE_WORKERS = 8
 
-_LocalResult = tuple[LocalClassification, RepoSource | None]
+_LocalResult = tuple[LocalClassification, RepoSource | None, str | None]
 _Launch = tuple[ProbeKey, RepoSource, Installation]
 
 
@@ -189,7 +191,10 @@ def _skeleton_row(candidate: Candidate) -> ToolRow:
 
 
 def _classified_row(
-    candidate: Candidate, classified: LocalClassification, upstream: RepoSource | None
+    candidate: Candidate,
+    classified: LocalClassification,
+    upstream: RepoSource | None,
+    completion: str | None,
 ) -> ToolRow:
     """Apply local classification and repository identity to one skeleton row."""
     return ToolRow(
@@ -205,13 +210,18 @@ def _classified_row(
         owning_package=classified.owning_package,
         drift=classified.drift,
         error=classified.error,
+        completion=completion,
     )
 
 
 def _classify_and_resolve(
-    candidate: Candidate, cfg: Config, entries: Mapping[str, manifest.Entry]
+    candidate: Candidate,
+    cfg: Config,
+    entries: Mapping[str, manifest.Entry],
+    shell: str | None,
 ) -> _LocalResult:
-    """One row's local classification paired with its repository identity.
+    """One row's local classification, its repository identity, and where
+    `shell`'s completion would come from (`listing.completions`).
 
     Identity is resolved unconditionally (ADR-0036), and reported beside
     the row regardless of what `classify` decides; only the remote page
@@ -235,6 +245,7 @@ def _classify_and_resolve(
                 error=candidate.error,
             ),
             None,
+            None,
         )
     upstream = None
     if candidate.provider is not None and candidate.installation is not None:
@@ -249,9 +260,11 @@ def _classify_and_resolve(
                     error=ToolError(repository.error.path, repository.error.reason),
                 ),
                 None,
+                None,
             )
         upstream = repository.source
-    return classify(candidate, cfg, entries), upstream
+    completion = completion_source(candidate, shell, cfg) if shell else None
+    return classify(candidate, cfg, entries), upstream, completion
 
 
 def _with_probe_result(row: ToolRow, page: ProbePage | None) -> ToolRow:
@@ -286,11 +299,15 @@ class _RowCoordinator:
     local_eligible: set[int] = field(default_factory=set)
 
     def complete_local(
-        self, index: int, classified: LocalClassification, upstream: RepoSource | None
+        self,
+        index: int,
+        classified: LocalClassification,
+        upstream: RepoSource | None,
+        completion: str | None,
     ) -> _Launch | None:
         """Record one local result and return its new upstream probe, if any."""
         candidate = self.candidates[index]
-        row = _classified_row(candidate, classified, upstream)
+        row = _classified_row(candidate, classified, upstream, completion)
         self.rows[index] = row
         self.local_rows[index] = row
         pending_probe = is_upstream_eligible(row, candidate.installation)
@@ -367,8 +384,8 @@ def _complete_local_futures(
         key=local_pending.__getitem__,
     ):
         index = local_pending.pop(future)
-        classified, upstream = future.result()
-        launch = coordinator.complete_local(index, classified, upstream)
+        classified, upstream, completion = future.result()
+        launch = coordinator.complete_local(index, classified, upstream, completion)
         if launch is not None:
             launches.append(launch)
     return launches
@@ -484,11 +501,16 @@ def _with_target_clusters(
     return [replace(row, target_cluster=assignment[i]) for i, row in enumerate(rows)]
 
 
+_GroupKey = tuple[
+    str, str, ActionState, PageSource, Path | None, str | None, int | None, str | None
+]
+
+
 def group_rows(rows: list[ToolRow]) -> list[list[ToolRow]]:
     """Partition rows into groups a caller may render as one (ADR-0049).
 
     The key is `(provider, package, state, source, page_path, owning_package,
-    target_cluster)`. `page_path` and `owning_package` join the key because a
+    target_cluster, completion)`. `page_path` and `owning_package` join the key because a
     group can only exist where every member already agrees on both, so any
     representative drawn from the group has a correct Source link and
     owning-package label by construction. `target_cluster` refines a
@@ -499,12 +521,10 @@ def group_rows(rows: list[ToolRow]) -> list[list[ToolRow]]:
     Groups come back in first-seen order.
     """
     groups: dict[
-        tuple[str, str, ActionState, PageSource, Path | None, str | None, int | None],
+        _GroupKey,
         list[ToolRow],
     ] = {}
-    order: list[
-        tuple[str, str, ActionState, PageSource, Path | None, str | None, int | None]
-    ] = []
+    order: list[_GroupKey] = []
     for row in rows:
         key = (
             row.provider,
@@ -514,6 +534,7 @@ def group_rows(rows: list[ToolRow]) -> list[list[ToolRow]]:
             row.page_path,
             row.owning_package,
             row.target_cluster,
+            row.completion,
         )
         if key not in groups:
             order.append(key)
@@ -537,6 +558,7 @@ def compute_rows(
     """
     cfg = config or Config()
     watcher = observer or InventoryObserver()
+    shell = login_shell()
     # Entries are frozen dataclasses; the proxy prevents a worker from
     # accidentally changing the single read snapshot while it classifies.
     started_at = monotonic()
@@ -571,7 +593,9 @@ def compute_rows(
         ThreadPoolExecutor(max_workers=UPSTREAM_PROBE_WORKERS) as probe_executor,
     ):
         local_pending: dict[Future[_LocalResult], int] = {
-            local_executor.submit(_classify_and_resolve, candidate, cfg, entries): index
+            local_executor.submit(
+                _classify_and_resolve, candidate, cfg, entries, shell
+            ): index
             for index, candidate in enumerate(candidates)
         }
 

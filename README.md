@@ -90,7 +90,7 @@ Zero keys present is a hard error; two or more prints one line to stderr naming 
 | `update [tool]...` | maniac's pages | Reinstalls each page whose tool changed version. |
 | `remove <tool>...` | maniac's pages | Removes them and their completions, and restores any page each replaced. |
 | `list [tool]...` | maniac's pages | The version each documents, the version installed, its state. |
-| `scan [tool]...` | your login `$PATH` | Your other tools and their pages, best effort. |
+| `scan [tool]...` | your login `$PATH` | Your other tools, their pages and their completions, best effort. |
 | `why <tool>` | one tool | Every decision maniac makes about it. |
 
 ### `install`
@@ -155,14 +155,14 @@ An `unknown` page is left alone until you name it to `maniac install`. A page `-
 
 ```text
 $ maniac scan
-                  Other tools on your $PATH
-┏━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━━━━━━━━━━┓
-┃ Tool                ┃ State     ┃ Source ┃ Upstream        ┃
-┡━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━━━━━━━━━━┩
-│ corepack            │ missing   │        │ nodejs/corepack │
-│ cowsay (2 binaries) │ available │        │ piuccio/cowsay  │
-│ hx                  │ ok        │ system │ helix-editor/…  │
-└─────────────────────┴───────────┴────────┴─────────────────┘
+                         Other tools on your $PATH
+┏━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┓
+┃ Tool                ┃ State     ┃ Source ┃ Completion ┃ Upstream        ┃
+┡━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━┩
+│ corepack            │ missing   │        │ none       │ nodejs/corepack │
+│ cowsay (2 binaries) │ available │        │ none       │ piuccio/cowsay  │
+│ hx                  │ ok        │ system │ upstream   │ helix-editor/…  │
+└─────────────────────┴───────────┴────────┴────────────┴─────────────────┘
 Not shown: 2249 more on your $PATH
       2 have a page from maniac: `maniac list`
     377 no installer claims: `maniac why <tool>`
@@ -172,6 +172,8 @@ Not shown: 2249 more on your $PATH
 `scan` finds, best effort, every tool an installer put on your login `$PATH` that maniac has no page for, and the state of the page `man` would show for it. Besides `ok`, `outdated` and `unknown`, a tool with no page reads `available` (a shipped or upstream page can be installed) or `missing` (only a generated one is left). `--outdated`, `--unknown`, `--available` and `--missing` select states.
 
 Source says where the page `man` shows came from: `shipped`, `upstream`, `generated`, or `system` for a page another package owns. Upstream links to the project's repository; on a terminal that supports links, Source links to the exact page.
+
+Completion says where `install` would take your login shell's completion from: `shipped`, `upstream`, `generated` (the tool's own generator), `derived` (your shell's own parser), or `none`. Finding out can run the tool -- its `--help`, then the generator it names -- so each answer is cached per binary and asked again only when the tool changes; an answer whose check did not finish is asked again every time. With a login shell maniac has no completions for, the column is left out.
 
 Nothing is left out silently: `scan` ends by counting everything it passed over, by reason, on stderr. Named tools (`maniac scan hx uv`) are shown exactly, maniac's own included.
 

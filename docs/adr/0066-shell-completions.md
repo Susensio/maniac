@@ -73,3 +73,9 @@ Salvaged rows first, then the checkpoint's where the link still points at its re
 A shipped completion links to the provider's file, which a hand-made link looks the same as, so it is not reconstructed: naming the tool to `install` again records it.
 A reconstructed record has no version or generator arguments, which exist nowhere on disk.
 An unrecorded link to maniac's own copy is adopted on every manifest write too, as an orphaned page link is: an install interrupted between linking and recording otherwise refused its own link next time.
+
+2026-10-14, later: `scan` reports, for each tool, where `install` would take the login shell's completion from, at the user's request; the contract's `scan` row says so.
+The answer is the same lookup `install` acts on, generator included: measured on twenty tools, reading each one's `--help` cost 0.1 to 2 seconds (the generator itself under 0.2), doubling a warm `scan` here, so each answer is cached per binary, keyed by the shell, the binary's name, the file that runs (path, size, modification time) and the installed version.
+A new or upgraded tool pays once. An answer a check before it could not finish is never cached (rule 4): an upstream check that did not complete may have had a completion that comes first.
+The column appears only for a login shell maniac installs completions for; every answer is about that shell.
+The lookup moved from `orchestration` to `sources.lookup.completions`, beside the page source order, so `listing` can ask it.

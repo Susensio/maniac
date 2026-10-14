@@ -8,7 +8,7 @@ links what it finds, `why` explains it, and `scan` reports it.
 """
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from ...config import Config
@@ -67,7 +67,8 @@ class Found:
     derived: Derived | None = None
     none_because: str | None = None
     complete: bool = True
-    """False when a check that could have answered did not finish (rule 4)."""
+    """False when a check that would have come first did not finish, so a
+    later source's answer, or none, may not be the final one (rule 4)."""
 
     @property
     def source(self) -> str | None:
@@ -145,7 +146,7 @@ def completion_for(subject: Subject, shell: str, help_: Help | None = None) -> F
                 complete = False
                 passed_over.append("the upstream check did not complete")
     help_ = help_ or Help(subject)
-    found = _generated(subject, shell, help_)
+    found = replace(_generated(subject, shell, help_), complete=complete)
     if found.none_because is not None:
         crawled = help_.get()
         derived = derived_completion(
@@ -156,7 +157,7 @@ def completion_for(subject: Subject, shell: str, help_: Help | None = None) -> F
             timeout=subject.config.timeout_help,
         )
         if derived is not None:
-            return Found(shell, derived=derived)
+            return Found(shell, derived=derived, complete=complete)
     if found.none_because is not None and passed_over:
         return Found(
             shell,

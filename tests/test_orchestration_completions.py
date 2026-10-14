@@ -242,3 +242,25 @@ def test_derived_comes_last_when_nothing_else_answers(
         outcome.detail == "derived by bash-completion's _longopt, reading `tool --help`"
     )
     assert manifest.completions_of("tool", cfg)["bash"].source == "derived"
+
+
+def test_a_generator_answer_after_an_unfinished_upstream_check_is_not_final(
+    tmp_path: Path, cfg: Config, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Rule 4: the repository might have had one, and it would have come first,
+    so `scan` must not cache this answer."""
+    monkeypatch.setattr(
+        "maniac.sources.lookup.completions.upstream_completion",
+        lambda *args, **kwargs: (None, False),
+    )
+    tool = _claimed(tmp_path, cfg)
+
+    found = completion_for(subject(tool), "zsh")
+
+    assert found.generated is not None
+    assert not found.complete
+    monkeypatch.setattr(
+        "maniac.sources.lookup.completions.upstream_completion",
+        lambda *args, **kwargs: (None, True),
+    )
+    assert completion_for(subject(tool), "zsh").complete

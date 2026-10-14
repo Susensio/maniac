@@ -725,8 +725,8 @@ def test_compute_rows_bounds_parallel_local_classification(
     lock = threading.Lock()
 
     def bounded(
-        candidate: Candidate, cfg: Config, entries: object
-    ) -> tuple[LocalClassification, None]:
+        candidate: Candidate, cfg: Config, entries: object, shell: object
+    ) -> tuple[LocalClassification, None, None]:
         nonlocal active, maximum
         with lock:
             active += 1
@@ -736,6 +736,7 @@ def test_compute_rows_bounds_parallel_local_classification(
             active -= 1
         return (
             LocalClassification(ActionState.OK, PageSource.SYSTEM, False, None),
+            None,
             None,
         )
 
@@ -793,14 +794,15 @@ def test_compute_rows_starts_upstream_before_slow_local_work_finishes(
     probe_started = threading.Event()
 
     def blocking(
-        candidate: Candidate, cfg: Config, entries: object
-    ) -> tuple[LocalClassification, RepoSource]:
+        candidate: Candidate, cfg: Config, entries: object, shell: object
+    ) -> tuple[LocalClassification, RepoSource, None]:
         if candidate.tool == "slow":
             slow_started.set()
             assert release_slow.wait(timeout=2)
         return (
             LocalClassification(ActionState.MISSING, PageSource.NONE, False, None),
             source,
+            None,
         )
 
     def probe(*args: object, **kwargs: object) -> tuple[Path, bool]:
@@ -846,13 +848,14 @@ def test_compute_rows_ticks_while_a_slow_future_leaves_a_quiet_gap(
             idle.set()
 
     def blocking(
-        candidate: Candidate, cfg: Config, entries: object
-    ) -> tuple[LocalClassification, RepoSource]:
+        candidate: Candidate, cfg: Config, entries: object, shell: object
+    ) -> tuple[LocalClassification, RepoSource, None]:
         if candidate.tool == "slow":
             assert release_slow.wait(timeout=2)
         return (
             LocalClassification(ActionState.MISSING, PageSource.NONE, False, None),
             source,
+            None,
         )
 
     monkeypatch.setattr("maniac.listing.inventory._classify_and_resolve", blocking)
@@ -2884,6 +2887,6 @@ def test_a_tool_no_installer_claims_has_no_upstream(
         lambda man_bin, tool_name: None,
     )
 
-    _, upstream = _classify_and_resolve(_candidate(), _config(tmp_path), {})
+    _, upstream, _ = _classify_and_resolve(_candidate(), _config(tmp_path), {}, None)
 
     assert upstream is None
