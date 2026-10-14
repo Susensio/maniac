@@ -11,12 +11,10 @@ Settled decisions live in `docs/adr/`; defects with a line to sit beside are mar
 
 ## Refactors and architecture
 
-- Retain competing providers claiming the same `bin_path` at one `$PATH` entry.
-  `_detect_via_registry` stops at the first matching provider, and it is also the single-name lookup path behind `resolution.locate`, so collecting all claims changes that hot path's cost.
 - Re-measure warm `maniac scan` on a real inventory, and cut what is left if it is still slow there.
   Profile on record (2026-10-13, at 19cc4c6, a cloud container: 1922 binaries, 20 shown, 4 cores): ~2.7s end to end, after 19cc4c6 stopped a `**` glob over each uv/pipx venv (it was ~5.3s).
   The 18 `api.github.com` requests in that profile (~1.8s of wall-union) were the container's proxy refusing GitHub with 403, which is never cached; where GitHub answers, release metadata is cached a day and a 404 an hour, and the per-URL cache lock makes a package's sibling binaries share one request.
-  A refusal or rate limit is retried by every sibling binary in the same run (mypy's five asked five times), which spends an unauthenticated user's 60 requests an hour faster; remembering a non-definitive failure for the rest of one run would stop that without caching it.
+  A refusal or rate limit is now remembered for the rest of the run, never on disk, so siblings no longer ask again.
   Without those, what remains is `git -C` ~0.4s, local classify ~0.4s, `locate_all` and `_build_inventory` ~0.3s each, startup ~0.5s.
   Measure thread-aware (wall-clock union across the pool), never by summing per-call durations or plain cProfile -- both misled before.
   Also compare `LOCAL_CLASSIFY_WORKERS=1` against the default: a pool slower than one worker means syscall-heavy work queued on the GIL, which is how the glob was found.
@@ -30,8 +28,6 @@ Settled decisions live in `docs/adr/`; defects with a line to sit beside are mar
   Preserve each source's provenance.
 - Add tldr-pages as an examples source, preferring an installed tealdeer cache before its release zip and recording provenance in generated output.
   Its examples are additive; do not substitute it for authoritative option documentation.
-- Completions for a tool maniac installs no page for: a system tool it refuses, or `install --no-generate` with no shipped or upstream page.
-  Today they go with a page, so `list`, `update` and `remove` see every one; both cases are niche, and dropping this is proposed.
 
 ## Verification and research
 
@@ -59,6 +55,9 @@ Move one back up when that turns up.
 - Judge whether an existing `shipped` or `system` page is worth replacing.
   ADR-0016 deferred the verdict layer; blocked on a robust classification model and real output to judge.
   `.HP` option counting has two known dead ends: unconditional counts mistake synopsis markers for options, and rendered bold-hyphen regexes miss common roff forms.
+- Retain competing providers claiming the same `bin_path` at one `$PATH` entry, so `why` can say two installers claim it.
+  `_detect_via_registry` stops at the first matching provider, and it is also the single-name lookup path behind `resolution.locate`, so collecting all claims changes that hot path's cost.
+  Parked by the user's choice (2026-10-14); unblocked by a real case of two installers claiming one binary.
 - Completions for shells beyond bash, zsh and fish (nu, PowerShell, elvish).
   Parked by the user's choice (2026-10-14); unblocked by someone using one.
 - Exercise the standalone Homebrew `detect()` against a real installation.
