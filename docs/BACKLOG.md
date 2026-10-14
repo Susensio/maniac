@@ -4,12 +4,6 @@ Open work nobody has committed to.
 Each entry names something someone could start, or what would unblock it.
 Settled decisions live in `docs/adr/`; defects with a line to sit beside are marked there, and `rg -n 'BUG:|TODO:'` lists them.
 
-## Bugs and correctness
-
-- Show option overlap in `why` as further evidence about the documentation repository (ADR-0067).
-  Measured 2026-10-14: `RobertCraigie/pyright-python` mentions 1 of the 18 long options `pyright --help` prints; psf/black, python/mypy, pycqa/flake8 and python-poetry/poetry mention 84-100% of theirs.
-  Detection does not use it: it needs the recorded repository's whole tree, a tool with only short options (tmux) gives none, and clap's derive style spells `--dry-run` as `dry_run` in source.
-
 ## Refactors and architecture
 
 - Re-measure warm `maniac scan` on a real inventory, and cut what is left if it is still slow there.
