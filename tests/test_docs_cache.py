@@ -101,7 +101,7 @@ def test_expired_definitively_missing_download_refreshes(
 
 
 @pytest.mark.parametrize("failure", ["url", "server"])
-def test_transient_download_is_not_cached(
+def test_a_transient_failure_is_shared_for_the_run_and_never_cached(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, failure: str
 ) -> None:
     from email.message import Message
@@ -120,14 +120,15 @@ def test_transient_download_is_not_cached(
 
     monkeypatch.setattr(cache, "_open", unavailable)
     cfg = Config(cache_dir=tmp_path)
-    assert (
-        cache._download_cached_result("https://example.test/page", tmp_path, cfg)[0]
-        is None
-    )
-    assert (
-        cache._download_cached_result("https://example.test/page", tmp_path, cfg)[0]
-        is None
-    )
+    url = "https://example.test/page"
+
+    # Sibling binaries asking for one release share the failure for the run...
+    assert cache._download_cached_result(url, tmp_path, cfg) == (None, False)
+    assert cache._download_cached_result(url, tmp_path, cfg) == (None, False)
+    assert calls == 1
+    # ...but nothing reaches the disk: the next run asks again.
+    monkeypatch.setattr(cache, "_failed_this_run", set())
+    assert cache._download_cached_result(url, tmp_path, cfg) == (None, False)
     assert calls == 2
 
 

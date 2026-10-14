@@ -29,6 +29,13 @@ _RELEASE_METADATA_REVALIDATION_TTL = 24 * 60 * 60
 _CACHE_MAX_BYTES = 8 * 1024
 _cache_locks: dict[Path, threading.Lock] = {}
 _cache_locks_guard = threading.Lock()
+# URLs whose download failed without a definitive answer in this process:
+# a refusal, a rate limit, a network error. Never written to disk -- the
+# next run asks again -- but a package's sibling binaries ask for the same
+# release, and each asking again spends an unauthenticated user's 60
+# requests an hour for an answer this run already has. Each URL is only
+# ever touched under its own `_cache_lock`.
+_failed_this_run: set[tuple[Path, str]] = set()
 
 # Every GitHub request goes here, never api.github.com's asset host or
 # anything else derived from repository metadata or a registry entry.
@@ -163,10 +170,14 @@ def _download_cached_result(
             and time.time() - created < _DEFINITIVE_ABSENCE_TTL
         ):
             return None, True
+        if (cache_dir, url) in _failed_this_run:
+            return None, False
         content, definitive = _download(url, cfg)
         if content is None or len(content) > _RELEASE_ARCHIVE_LIMIT:
             if definitive:
                 _write_json_cache(negative_path, {"created": time.time()})
+            else:
+                _failed_this_run.add((cache_dir, url))
             return None, definitive
         destination.parent.mkdir(parents=True, exist_ok=True)
         with tempfile.NamedTemporaryFile(dir=destination.parent, delete=False) as file:
