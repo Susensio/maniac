@@ -23,6 +23,7 @@ from ..sources.lookup.candidates import (
     repository_of,
     seed_for,
 )
+from ..sources.lookup.completions import completion_for, login_shell
 from ..sources.lookup.resolution import Located, Outcome, locate, this_shell_runs
 from ..sources.manpages import find_installed_manpage_path
 from ..sources.pathcache import left_out_dirs, path_dirs
@@ -30,7 +31,7 @@ from ..sources.providers.base import Provider
 from ..state.classification import classify
 from ..state.models import Candidate
 from ..state.pages import managed_pages
-from .completions import completion_for, login_shell, zsh_fpath_hint
+from .completions import subject, zsh_fpath_hint
 from .context import tool_from
 from .profile_fix import login_profile_fix
 
@@ -89,7 +90,7 @@ def _completions_section(
         return section
     resolved = tool_from(located, config=config)
     for shell in shells:
-        found = completion_for(resolved, shell)
+        found = completion_for(subject(resolved), shell)
         entry = recorded.get(shell)
         if entry is not None:
             state = f"installed at {_home(entry.path)}"

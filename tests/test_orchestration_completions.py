@@ -11,14 +11,14 @@ from maniac.cli.options import Shell
 from maniac.config import Config
 from maniac.models import Installation
 from maniac.orchestration.completions import (
-    completion_for,
     install_completions,
-    login_shell,
     recorded_shells,
     remove_tool_completions,
+    subject,
     zsh_fpath_hint,
 )
 from maniac.orchestration.context import ResolvedTool
+from maniac.sources.lookup.completions import completion_for, login_shell
 
 _HELP = (
     "Usage: tool [OPTIONS] COMMAND\\n\\nCommands:\\n  completion  Print completions\\n"
@@ -104,7 +104,7 @@ def test_a_shipped_completion_comes_before_the_generator(
     shipped.parent.mkdir(parents=True)
     shipped.write_text("#compdef tool\n# shipped\n", encoding="utf-8")
 
-    found = completion_for(_tool(tmp_path, cfg, root=root), "zsh")
+    found = completion_for(subject(_tool(tmp_path, cfg, root=root)), "zsh")
 
     assert found.shipped == shipped
 
@@ -193,7 +193,7 @@ def test_the_repositorys_completion_comes_before_the_generator(
         return Upstream("#compdef tool\n# upstream\n", "https://x/_tool"), True
 
     monkeypatch.setattr(
-        "maniac.orchestration.completions.upstream_completion", upstream
+        "maniac.sources.lookup.completions.upstream_completion", upstream
     )
 
     [outcome] = install_completions(_claimed(tmp_path, cfg), ("zsh",), dry_run=False)
@@ -209,13 +209,13 @@ def test_an_upstream_check_that_did_not_complete_is_said_when_nothing_else_answe
 ) -> None:
     """Rule 4: a failed check is not "none"; the generator still answers zsh."""
     monkeypatch.setattr(
-        "maniac.orchestration.completions.upstream_completion",
+        "maniac.sources.lookup.completions.upstream_completion",
         lambda *args, **kwargs: (None, False),
     )
     tool = _claimed(tmp_path, cfg)
 
-    assert completion_for(tool, "zsh").generated is not None
-    fish = completion_for(tool, "fish")
+    assert completion_for(subject(tool), "zsh").generated is not None
+    fish = completion_for(subject(tool), "fish")
     assert fish.none_because is not None
     assert fish.none_because.endswith("the upstream check did not complete")
 

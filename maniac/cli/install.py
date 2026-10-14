@@ -83,7 +83,7 @@ def completion_shells(
         return ()
     if shells:
         return tuple(dict.fromkeys(shell.value for shell in shells))
-    from ..orchestration.completions import login_shell
+    from ..sources.lookup.completions import login_shell
 
     login = login_shell()
     return (login,) if login is not None else ()

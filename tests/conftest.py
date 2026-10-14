@@ -130,7 +130,7 @@ def _no_seed_unless_a_test_asks(
         # The same for a completion's upstream check (ADR-0066): a network
         # and git lookup no unit test may depend on.
         monkeypatch.setattr(
-            "maniac.orchestration.completions.upstream_completion",
+            "maniac.sources.lookup.completions.upstream_completion",
             lambda *args, **kwargs: (None, True),
         )
 
