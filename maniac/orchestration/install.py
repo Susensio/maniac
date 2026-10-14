@@ -39,6 +39,7 @@ from ..models import PipelineResult
 from ..sources.crawler import get_version
 from ..sources.lookup.candidates import (
     Attempt,
+    Decided,
     InstallRootCandidate,
     RepositoryCandidate,
     attempts,
@@ -52,7 +53,7 @@ from ..sources.lookup.resolution import (
 from ..sources.manpages import find_installed_manpage_path
 from ..state.models import ActionState
 from .completions import CompletionOutcome, install_completions, zsh_fpath_hint
-from .context import ResolvedTool, resolve_tool, tool_from
+from .context import ResolvedTool, redirect_lines, resolve_tool, tool_from
 from .profile_fix import login_profile_fix
 
 __all__ = ["InstallOutcome", "InstallRefused", "Tier", "run_install"]
@@ -99,6 +100,23 @@ class InstallOutcome:
     """What was done about each shell's completion (ADR-0066)."""
     fpath_hint: str | None = None
     """The `.zshrc` line zsh needs to find maniac's completions, when missing."""
+    repository: tuple[str, ...] = ()
+    """How the repository the page or its docs came from differs from the
+    installer's record (ADR-0067); empty when it does not."""
+    repository_detected: bool = False
+    """Detection chose it, so `install` warns rather than notes it."""
+
+
+def _with_repository(outcome: InstallOutcome, tool: ResolvedTool) -> InstallOutcome:
+    """Say so when the page, or the docs it was generated from, came from a
+    repository other than the installer's record (ADR-0067)."""
+    if outcome.tier not in (Tier.REPOSITORY, Tier.SYNTHESIS) or tool.repository is None:
+        return outcome
+    return replace(
+        outcome,
+        repository=tuple(redirect_lines(tool.repository, tool.config)),
+        repository_detected=tool.repository.decided is Decided.DETECTED,
+    )
 
 
 def run_install(
@@ -152,8 +170,11 @@ def run_install(
                 f"{tool_name}` documents the copy your login shell runs now."
             )
         tool = resolve_tool(tool_name, config=cfg, bin_dir=copy.parent, here=True)
-        outcome = _select_page(
-            tool, model=model, no_generate=no_generate, force=force, dry_run=dry_run
+        outcome = _with_repository(
+            _select_page(
+                tool, model=model, no_generate=no_generate, force=force, dry_run=dry_run
+            ),
+            tool,
         )
         return _with_completions(
             replace(outcome, resolution=_resolution(tool, bin_dir=copy.parent)),
@@ -194,12 +215,15 @@ def run_install(
                 dry_run=dry_run,
             )
 
-    outcome = _select_page(
+    outcome = _with_repository(
+        _select_page(
+            tool,
+            model=model,
+            no_generate=no_generate,
+            force=force,
+            dry_run=dry_run,
+        ),
         tool,
-        model=model,
-        no_generate=no_generate,
-        force=force,
-        dry_run=dry_run,
     )
     return _with_completions(
         replace(

@@ -17,10 +17,10 @@ from pathlib import Path
 from ... import manifest
 from ...config import Config
 from ...exceptions import MalformedToolMetadata
-from ...models import Installation, LocalRepoSource, RepoSource
+from ...models import Installation, LocalRepoSource, RemoteRepoSource, RepoSource
 from ..docs import discover_repo_manpages
+from ..docs import redirect as redirects
 from ..docs.pages import discovered_manpage_uri
-from ..documentation import documentation_source
 from ..manpages import (
     find_installed_manpage_path,
     is_help2man_content,
@@ -190,12 +190,33 @@ class Attempt:
     repository: RepoSource | None = None
 
 
+class Decided(Enum):
+    """What chose the repository, when the installer's record did not alone."""
+
+    CONFIG = "your config.toml"
+    DETECTED = "detected"
+
+
 @dataclass(frozen=True, slots=True)
 class Repository:
-    """The repository that documents an installation, or why it is unknown."""
+    """The repository that documents an installation, or why it is unknown.
+
+    `recorded` is the installer's own record and `decided` what overruled or
+    confirmed it, both None when the record stood unexamined (ADR-0067).
+    `evidence` is detection's, for `install`'s warning and `why`.
+    `unfinished` says detection was asked and could not finish (rule 4).
+    """
 
     source: RepoSource | None
     error: MalformedToolMetadata | None = None
+    recorded: RepoSource | None = None
+    decided: Decided | None = None
+    evidence: str | None = None
+    unfinished: bool = False
+
+    @property
+    def redirected(self) -> bool:
+        return self.recorded is not None and self.recorded != self.source
 
 
 def repository_of(
@@ -203,9 +224,11 @@ def repository_of(
 ) -> Repository:
     """The repository whose documentation describes `installation`.
 
-    The installer's own record names it (the registry), and the
-    documentation-repository overrides redirect it. An installer record that
-    cannot be read is returned, not raised: `scan` shows it on the tool's row.
+    The installer's own record names it (the registry); the user's
+    `[documentation_repositories]` table, else the repository the record
+    points at as the tool's own (`docs.redirect`), may replace it (ADR-0067).
+    An installer record that cannot be read is returned, not raised: `scan`
+    shows it on the tool's row.
     """
     try:
         raw = registry.resolve_source(installation, config=config, provider=provider)
@@ -213,8 +236,29 @@ def repository_of(
         return Repository(None, e)
     if raw is None:
         return Repository(None)
+    pinned = config.documentation_repository_overrides.get(raw.identity)
+    if pinned is not None:
+        source = (
+            raw
+            if pinned == raw.identity
+            else RemoteRepoSource.from_identifier(raw.name, pinned)
+        )
+        return Repository(source, recorded=raw, decided=Decided.CONFIG)
+    found, final = redirects.detect(
+        raw,
+        binary=installation.binary,
+        package=installation.package,
+        version=installation.version,
+        cache_dir=config.cache_dir,
+        config=config,
+    )
+    if found is None:
+        return Repository(raw, unfinished=not final)
     return Repository(
-        documentation_source(raw, config.documentation_repository_overrides)
+        RemoteRepoSource.from_identifier(raw.name, found.target),
+        recorded=raw,
+        decided=Decided.DETECTED,
+        evidence=found.evidence(raw),
     )
 
 

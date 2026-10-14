@@ -22,6 +22,7 @@ from maniac.orchestration.install import (
     run_install,
 )
 from maniac.sources import pathcache
+from maniac.sources.docs.redirect import Redirect
 from maniac.sources.lookup.candidates import Source, attempts
 from maniac.sources.providers.base import Provider, SourceResolver
 from maniac.sources.providers.registry import registry
@@ -553,9 +554,17 @@ def test_upstream_installs_the_page(
     assert outcome.installed_path == Path("/installed/tool.1")
 
 
-def test_run_install_uses_the_exact_tmux_documentation_repository(
+def test_run_install_follows_the_repository_tmux_builds_points_at(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    monkeypatch.setattr(
+        "maniac.sources.docs.redirect.detect",
+        lambda source, **kwargs: (
+            (Redirect("tmux/tmux", 4, ("README.md",), "3.7b"), True)
+            if source.identity == "tmux/tmux-builds"
+            else (None, True)
+        ),
+    )
     provider = _FakeProvider(
         source=RepoSource(name="tmux", target="tmux/tmux-builds", is_local=False)
     )
@@ -588,6 +597,12 @@ def test_run_install_uses_the_exact_tmux_documentation_repository(
 
     assert outcome.tier is Tier.REPOSITORY
     assert observed == [RepoSource(name="tmux", target="tmux/tmux", is_local=False)]
+    # Detected, so `install` warns, and says how to keep the record instead.
+    assert outcome.repository_detected
+    assert outcome.repository[0].startswith(
+        "repository: tmux/tmux, not tmux/tmux-builds its installer records"
+    )
+    assert '"tmux/tmux-builds" = "tmux/tmux-builds"' in outcome.repository[1]
 
 
 def test_run_install_tier2_rejects_a_page_naming_a_different_binary(

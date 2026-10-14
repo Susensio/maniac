@@ -13,6 +13,7 @@ from maniac.manifest import Entry
 from maniac.models import DocFile, Installation, RepoSource
 from maniac.orchestration.context import ResolvedTool, resolve_tool
 from maniac.orchestration.pipeline import synthesize
+from maniac.sources.docs.redirect import Redirect
 
 
 class _FakeProvider:
@@ -217,9 +218,17 @@ def test_resolve_tool_is_the_direct_synthesis_entry(
     assert result.repo_source.target == "org/testtool"
 
 
-def test_synthesize_fetches_docs_from_the_canonical_repository(
+def test_synthesize_fetches_docs_from_the_repository_the_record_points_at(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    monkeypatch.setattr(
+        "maniac.sources.docs.redirect.detect",
+        lambda source, **kwargs: (
+            (Redirect("tmux/tmux", 4, ("README.md",), "3.7b"), True)
+            if source.identity == "tmux/tmux-builds"
+            else (None, True)
+        ),
+    )
     _help_tree(monkeypatch, {"> tmux --help": "Usage: tmux"})
     observed: list[RepoSource] = []
     monkeypatch.setattr(

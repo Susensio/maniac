@@ -83,11 +83,24 @@ def _load_config_file(config_dir: Path) -> dict[str, Any]:
     except tomllib.TOMLDecodeError as e:
         raise ValueError(f"Invalid configuration file: {config_file}") from e
 
-    return {
+    values: dict[str, Any] = {
         key: contents[key]
         for key in ("provider", "model", "reasoning_effort")
         if key in contents and isinstance(contents[key], str)
     }
+    if "documentation_repositories" not in contents:
+        return values
+    repositories = contents["documentation_repositories"]
+    if not isinstance(repositories, dict) or not all(
+        isinstance(k, str) and isinstance(v, str) and v.count("/") == 1
+        for k, v in repositories.items()
+    ):
+        raise ValueError(
+            f"{config_file}: [documentation_repositories] maps a repository "
+            'to one, both "owner/repo": "tmux/tmux-builds" = "tmux/tmux"'
+        )
+    values["documentation_repositories"] = repositories
+    return values
 
 
 def _configured_reasoning_effort(config_values: dict[str, Any]) -> str | None:
@@ -248,12 +261,10 @@ class Config:
         kw_only=True,
     )
     documentation_repository_overrides: dict[str, str] = field(
-        default_factory=lambda: dict(
-            cast(dict[str, str], _load_defaults()["documentation_repositories"])
-        ),
-        repr=False,
-        kw_only=True,
+        default_factory=dict, repr=False, kw_only=True
     )
+    """`config.toml`'s `[documentation_repositories]`: a recorded repository
+    mapped to the one to take docs from, or to itself to keep it (ADR-0067)."""
     _config_values: dict[str, Any] = field(default_factory=dict, init=False, repr=False)
     _model_from_environment: str | None = field(default=None, init=False, repr=False)
     _configured_model: str | None = field(default=None, init=False, repr=False)
@@ -268,6 +279,10 @@ class Config:
     def __post_init__(self) -> None:
         _load_config_env(self.config_dir)
         self._config_values = _load_config_file(self.config_dir)
+        self.documentation_repository_overrides = {
+            **self._config_values.get("documentation_repositories", {}),
+            **self.documentation_repository_overrides,
+        }
         if self.llm_api_key is _UNSET:
             self.llm_api_key = os.environ.get("MANIAC_LLM_API_KEY")
         if self.llm_reasoning_effort is _UNSET:

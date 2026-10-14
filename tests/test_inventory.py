@@ -25,6 +25,7 @@ from maniac.listing.inventory import _build_inventory, _with_target_clusters, gr
 from maniac.manifest import Entry, Tier
 from maniac.models import Installation, RepoSource
 from maniac.sources import discovery
+from maniac.sources.docs.redirect import Redirect
 from maniac.sources.lookup.candidates import Repository, repository_of
 from maniac.sources.lookup.resolution import Located, Outcome
 from maniac.sources.packages import ExternalPageFreshness, ExternalPageVerification
@@ -568,9 +569,17 @@ def test_local_repository_page_links_to_its_source_file(
     assert row.page_uri == page.absolute().as_uri()
 
 
-def test_compute_rows_uses_the_exact_tmux_documentation_repository(
+def test_compute_rows_follows_the_repository_tmux_builds_points_at(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    monkeypatch.setattr(
+        "maniac.sources.docs.redirect.detect",
+        lambda source, **kwargs: (
+            (Redirect("tmux/tmux", 4, ("README.md",), "3.7b"), True)
+            if source.identity == "tmux/tmux-builds"
+            else (None, True)
+        ),
+    )
     distribution_source = RepoSource(
         name="tmux", target="tmux/tmux-builds", is_local=False
     )

@@ -67,6 +67,16 @@ All three keys are optional.
 Setting `provider` alone picks that provider's packaged default model; setting `model` pins an exact identifier and takes priority over `provider`.
 `reasoning_effort` is sent to LiteLLM only for models that support it.
 
+A `[documentation_repositories]` table decides which repository a tool's docs come from when its installer records the wrong one. It is keyed by the repository the installer records; naming another redirects to it, naming the same one keeps it (and stops maniac second-guessing it):
+
+```toml
+[documentation_repositories]
+"RobertCraigie/pyright-python" = "microsoft/pyright"
+"some/wrapper" = "some/wrapper"
+```
+
+Without an entry, maniac follows the repository a recorded one points at when the recorded one is not named like the tool, it links a repository that is, and that one has a tag for the installed version: pyright from PyPI records its Python wrapper, tmux from mise a repository of static builds. `install` warns when it does, with the line that undoes it; `why` explains every redirect.
+
 maniac autoloads credentials from the neighbouring `.env` without replacing variables already set in your shell.
 For example, `~/.config/maniac/.env` can hold credentials for several providers at once:
 
@@ -219,7 +229,7 @@ install  generated
 
 **Finding the tool.** maniac reads `$PATH` from your login shell (`$SHELL -lc`, started in `$HOME`), not from the shell you run it in, and asks each installer it knows (uv, pipx, cargo, go, npm, Homebrew, mise) whether it owns the binary found there, for the package, version, install root and repository. A mise shim is followed to the tool it runs from `$HOME`.
 
-**Shipped and upstream pages.** A shipped page is linked, not copied, so it follows the package it lives in. Upstream pages come from the repository at the tag matching the installed version, read from cached Git tree objects without a checkout; for GitHub, release assets are inspected too, which is where some projects (eza) publish theirs. A release that ships several pages (companion pages in other sections) is installed, updated and removed as one.
+**Shipped and upstream pages.** A shipped page is linked, not copied, so it follows the package it lives in. Upstream pages come from the tool's repository -- the one its installer records, or the one that repository points at as the tool's own (see `[documentation_repositories]` above) -- at the tag matching the installed version, read from cached Git tree objects without a checkout; for GitHub, release assets are inspected too, which is where some projects (eza) publish theirs. A release that ships several pages (companion pages in other sections) is installed, updated and removed as one.
 
 **Generated pages.**
 

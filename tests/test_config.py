@@ -350,6 +350,37 @@ def test_load_config_file_uses_simple_llm_settings(tmp_path: Path) -> None:
     }
 
 
+def test_config_toml_maps_a_recorded_repository_to_another_or_to_itself(
+    tmp_path: Path,
+) -> None:
+    """ADR-0067: the user's table outranks detection, both ways."""
+    (tmp_path / "config.toml").write_text(
+        "[documentation_repositories]\n"
+        '"RobertCraigie/pyright-python" = "microsoft/pyright"\n'
+        '"some/wrapper" = "some/wrapper"\n',
+        encoding="utf-8",
+    )
+
+    overrides = Config(config_dir=tmp_path).documentation_repository_overrides
+
+    assert overrides == {
+        "RobertCraigie/pyright-python": "microsoft/pyright",
+        "some/wrapper": "some/wrapper",
+    }
+
+
+def test_config_toml_refuses_a_repository_table_it_cannot_read(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "config.toml").write_text(
+        '[documentation_repositories]\n"tmux/tmux-builds" = "tmux"\n',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="documentation_repositories"):
+        _load_config_file(tmp_path)
+
+
 def test_load_config_file_missing_returns_empty(tmp_path: Path) -> None:
     assert _load_config_file(tmp_path) == {}
 

@@ -2,7 +2,8 @@
 
 One facade over repository acquisition (`repository`), GitHub release
 retrieval (`release`), page selection (`pages`), cache primitives (`cache`),
-and documentation extraction (`extraction`).
+documentation extraction (`extraction`), and the tool's own repository a
+recorded one points at (`redirect`, ADR-0067).
 """
 
 from dataclasses import replace

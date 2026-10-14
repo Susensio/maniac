@@ -15,7 +15,13 @@ from pathlib import Path
 from ..config import Config
 from ..models import Installation, RepoSource
 from ..sources.lookup import resolution
-from ..sources.lookup.candidates import Seed, repository_of, seed_for
+from ..sources.lookup.candidates import (
+    Decided,
+    Repository,
+    Seed,
+    repository_of,
+    seed_for,
+)
 from ..sources.providers.base import Provider
 
 __all__ = ["ResolvedTool", "resolve_tool"]
@@ -75,8 +81,9 @@ class ResolvedTool:
         return self.installation.version if self.installation is not None else None
 
     @cached_property
-    def documentation_source(self) -> RepoSource | None:
-        """Canonical documentation repository, or None when none resolves.
+    def repository(self) -> Repository | None:
+        """The documentation repository and what decided it, or None when
+        nothing claims the binary.
 
         Resolved on first use rather than at construction: tier 1 answering
         from the install root must not pay provider source resolution.
@@ -84,10 +91,16 @@ class ResolvedTool:
         """
         if self.provider is None or self.installation is None:
             return None
-        repository = repository_of(self.provider, self.installation, self.config)
-        if repository.error is not None:
-            raise repository.error
-        return repository.source
+        return repository_of(self.provider, self.installation, self.config)
+
+    @property
+    def documentation_source(self) -> RepoSource | None:
+        """Canonical documentation repository, or None when none resolves."""
+        if self.repository is None:
+            return None
+        if self.repository.error is not None:
+            raise self.repository.error
+        return self.repository.source
 
     @cached_property
     def seed(self) -> Seed | None:
@@ -148,3 +161,34 @@ def tool_from(
         installation=located.installation,
         pinned=pinned,
     )
+
+
+def redirect_lines(repository: Repository | None, config: Config) -> list[str]:
+    """How the documentation repository differs from the installer's record,
+    and the `config.toml` line that pins either one (ADR-0067)."""
+    if repository is None or repository.recorded is None or repository.source is None:
+        return []
+    recorded, source = repository.recorded, repository.source
+    table = (
+        f"[documentation_repositories] in {_home(config.config_dir / 'config.toml')}"
+    )
+    if repository.decided is Decided.CONFIG:
+        if not repository.redirected:
+            return [f"repository: {recorded.identity}, kept by {table}"]
+        return [f"repository: {source.identity}, not {recorded.identity}, by {table}"]
+    detected = (
+        f"repository: {source.identity}, not {recorded.identity} its installer "
+        f"records: {repository.evidence}"
+    )
+    keep = (
+        f'to keep {recorded.identity}, add "{recorded.identity}" = '
+        f'"{recorded.identity}" to {table}'
+    )
+    return [detected, keep]
+
+
+def _home(path: Path) -> str:
+    try:
+        return f"~/{path.relative_to(Path.home())}"
+    except ValueError:
+        return str(path)

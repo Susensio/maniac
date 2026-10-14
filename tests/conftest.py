@@ -133,6 +133,12 @@ def _no_seed_unless_a_test_asks(
             "maniac.sources.lookup.completions.upstream_completion",
             lambda *args, **kwargs: (None, True),
         )
+        # And for the repository a recorded one points at (ADR-0067): the
+        # record stands. `test_redirect.py` calls `detect` itself.
+        monkeypatch.setattr(
+            "maniac.sources.docs.redirect.detect",
+            lambda *args, **kwargs: (None, True),
+        )
 
 
 @pytest.fixture(autouse=True)

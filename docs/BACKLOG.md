@@ -6,8 +6,9 @@ Settled decisions live in `docs/adr/`; defects with a line to sit beside are mar
 
 ## Bugs and correctness
 
-- Distinguish a wrong documentation repository from one that legitimately has no manpage.
-  Flag-inventory overlap and whether the repository contains implementation source are possible evidence, but absence is a normal synthesis fallback and must not be treated as proof of misresolution.
+- Show option overlap in `why` as further evidence about the documentation repository (ADR-0067).
+  Measured 2026-10-14: `RobertCraigie/pyright-python` mentions 1 of the 18 long options `pyright --help` prints; psf/black, python/mypy, pycqa/flake8 and python-poetry/poetry mention 84-100% of theirs.
+  Detection does not use it: it needs the recorded repository's whole tree, a tool with only short options (tmux) gives none, and clap's derive style spells `--dry-run` as `dry_run` in source.
 
 ## Refactors and architecture
 

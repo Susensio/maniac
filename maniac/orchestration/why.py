@@ -18,6 +18,7 @@ from ..sources.crawler import get_version
 from ..sources.lookup.candidates import (
     Attempt,
     InstallRootCandidate,
+    Repository,
     Source,
     attempts,
     repository_of,
@@ -32,7 +33,7 @@ from ..state.classification import classify
 from ..state.models import Candidate
 from ..state.pages import managed_pages
 from .completions import subject, zsh_fpath_hint
-from .context import tool_from
+from .context import redirect_lines, tool_from
 from .profile_fix import login_profile_fix
 
 
@@ -301,11 +302,20 @@ def _sources_section(
 
     provider, inst = claim
     repository: list[RepoSource | None] = []
+    decided: list[Repository] = []
 
     def known_repository() -> RepoSource | None:
         found = repository_of(provider, inst, config)
         if found.error is not None:
             raise found.error
+        if not decided:
+            decided.append(found)
+            section.lines.extend(redirect_lines(found, config))
+            if found.unfinished and found.source is not None:
+                section.lines.append(
+                    f"repository: whether {found.source.identity} points at the "
+                    "tool's own could not be checked; asked again next time"
+                )
         repository.append(found.source)
         return found.source
 

@@ -55,7 +55,7 @@ maniac takes the first of these that exists:
 | Source | What it is |
 |---|---|
 | `shipped` | The page the tool itself installed, linked where `man` finds it. |
-| `upstream` | The upstream project's page for exactly the installed version. |
+| `upstream` | The upstream project's page for exactly the installed version. The project is the one the installer records, or the one that repository points at as the tool's own, with a warning; `config.toml` decides over both. |
 | `generated` | Written by an LLM from the tool's own `--help` and its repository's documentation, for the installed version. |
 
 Only `generated` costs a model call, and `--no-generate` forbids it.
